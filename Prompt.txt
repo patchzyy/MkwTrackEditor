@@ -1,0 +1,173 @@
+Build a Mario Kart Wii track creator/editor as a React + TypeScript web app.
+
+Core direction:
+- Do not reinvent the renderer or build a new game engine.
+- Use noclip.website as the rendering BASE.
+- Treat the vendored noclip.website source as part of this project, not as an untouchable dependency.
+- Prefer modifying noclip's Mario Kart Wii renderer/editor path directly whenever viewport editing behavior belongs in the real 3D scene.
+- Strip noclip systems that are not needed for Mario Kart Wii, but preserve the renderer modules required by MKWii.
+- READ DONT USE Lorenzi's KMP Editor as the behavioral reference for KMP editing logic, KMP section handling, path graph behavior, KCL collision/raycasting behavior, and save/export rules.
+- EDIT noclips renderer and TRANSFORM it into a track editor, give it collapsable UI and IN VIEW editing. We should visually be able to move around objects, itemboxes exact
+- EDIT noclips renderer so its no longer just a VIEWER! but an EDITOR.
+- Keep the implementation simple, organized, and incremental.
+
+Reference repositories:
+- noclip.website: https://github.com/magcius/noclip.website
+- KMP Editor: https://github.com/hlorenzi/kmp-editor
+- BrawlCrate: https://github.com/soopercool101/BrawlCrate
+
+Important architectural decision:
+- Base the project on noclip.website, not on KMP Editor.
+- Base the editor viewport architecture on noclip.website itself, not on projected DOM overlays pretending to be 3D scene content.
+- Noclip already has the accurate Wii/Nintendo renderer stack needed for Mario Kart Wii:
+  - BRRES / MDL0 / TEX0 parsing
+  - GX and TEV material emulation
+  - Wii texture handling
+  - SRT0, PAT0, CLR0, CHR0, VIS0, and SCN0 animation support
+  - Yaz0 + U8 archive loading
+  - Mario Kart Wii `.szs` loading
+  - `course_model.brres`, `vrcorn_model.brres`, `course.kmp`, `Common.szs`, `ObjFlow.bin`, lighting, bloom, and depth-of-field support
+
+- KMP Editor is useful for editor logic, but its renderer is a simple custom WebGL renderer and is not suitable as the visual base.
+BUT you must PORT DIRECTLY everything the KMP editor has!
+
+Editor integration rule:
+- Anything that should look and behave like part of the 3D scene must be implemented inside noclip's render/picking/editor pipeline.
+- Do not rely on long-term fake screen-space HTML/SVG overlays for viewport handles, route lines, gizmos, or point markers.
+- Temporary overlays are acceptable only as short-lived scaffolding during implementation, not as the finished editor architecture.
+
+
+Primary goal:
+- The user should be able to drag and drop a Mario Kart Wii `.szs` file onto the app.
+- The app should open the track and render it as accurately as possible, matching in-game visuals and noclip's rendering behavior.
+- The app should then allow the user to edit track data, place objects, edit paths, and export a playable `.szs`.
+
+Rendering requirements:
+- Rendering must be based on noclip.website's Mario Kart Wii renderer and shared rendering stack.
+- Do not replace noclip's renderer
+- Extend noclip's renderer into an editor renderer instead of layering a separate fake editor on top of it.
+- Preserve accurate BRRES rendering, material state, texture animation, skeletal animation, visibility animation, color animation, scene lighting, fog, bloom, and depth-of-field where supported by noclip.
+
+React + TypeScript app requirements:
+- The final app should run as a React + TypeScript website.
+- provide the editor UI, layout, panels, asset browser, inspectors, validation UI, and export controls.
+
+Editor UI and UX:
+- Make the editor straightforward and user friendly.
+- Main viewport: accurate 3D editor. You can drag objects from the Content browser into the view.
+- Viewport editing affordances must feel native to the 3D scene: depth-aware, properly occluded when appropriate, and rendered as part of the real editor scene.
+- Bottom-docked content browser: dynamically list available game assets and objects that can be dragged into the track.
+- Inspector/sidebar: show selected object/path/checkpoint properties.
+- The UI should feel like a real 3D editor, not a demo page.
+- Do not build a landing page; the first screen must be the editor.
+
+Required editor tools:
+- 3D transform gizmos for translate, rotate, and scale.
+- Noclip-style fly camera controls: WASD + mouse look.
+- Object selection and picking.
+- Scene-native point/route/handle rendering and picking inside noclip's viewport pipeline.
+- Raycasting from mouse position into the track.
+- Drag-and-drop object placement from the content browser into the 3D scene.
+- Collision snapping against the KCL collision mesh so objects land on the track surface instead of floating.
+- Node/path editing tools for:
+  - enemy routes
+  - item routes
+  - object routes
+  - camera routes
+  - checkpoints
+  - respawn points
+  - cannon points
+  - start points
+- Spline/path editor with draggable nodes and visible connections.
+
+Content browser:
+- The content browser should be docked at the bottom of the app. and be collapstable
+- It should load real Mario Kart Wii stuff that can be placed in the level
+- It should include objects such as item boxes, enemies, route-based objects, checkpoints, and other usable track elements.
+- It should generate 2D thumbnails for 3D objects so users know what they are dragging.
+- Prefer using real game models!
+
+you MAY bundle ANY game file needed straight into this website: G:\Games\Wii\mkwii-europe
+I think you only need common.szs and `ObjFlow.bin`
+
+Mario Kart Wii data requirements:
+- Load `.szs` archives.
+- Decompress Yaz0.
+- Parse U8 archives.
+- Load and render:
+  - `course_model.brres`
+  - `vrcorn_model.brres`
+  - object BRRES files
+  - `course.kmp`
+  - `course.kcl`
+  - posteffect data where available
+- Use `Common.szs` and `ObjFlow.bin` to map KMP object IDs to object resource names.
+- Use real game assets from the user's Mario Kart Wii dump where possible.
+
+KMP editing requirements:
+- Support reading, editing, and writing KMP sections:
+  - KTPT start points
+  - ENPT / ENPH enemy paths
+  - ITPT / ITPH item paths
+  - CKPT / CKPH checkpoints
+  - GOBJ objects
+  - POTI routes
+  - AREA areas
+  - CAME cameras
+  - JGPT respawn points
+  - CNPT cannon points
+  - MSPT battle finish points
+  - STGI track information
+- Preserve unknown or unsupported sections/data when possible.
+- Use KMP Editor's behavior as the reference for graph conversion and graph serialization.
+
+KCL requirements:
+- Parse Mario Kart Wii KCL collision.
+- Build a collision mesh suitable for raycasting.
+- Support snapping selected objects/path nodes to collision.
+- Support visualizing collision types as an optional editor overlay.
+- Use KMP Editor's KCL loader/raycasting as reference logic.
+
+Export and packaging:
+- Add a Save/Export command that repacks edited data into a valid playable `.szs`.
+- Export should compile:
+  - modified KMP
+  - existing or injected BRRES models
+  - collision files
+  - required archive structure
+- Implement or reuse an SZS repacker.
+- Preserve files that the editor did not modify.
+- Inject Common object BRRES files only when needed and only for resources referenced by edited KMP objects.
+
+Validation checker:
+- Before export, run validation and warn the user about game-breaking mistakes.
+- Example warnings:
+  - no starting position defined
+  - checkpoints missing
+  - checkpoints not connected properly
+  - missing respawn points
+  - enemy/item paths disconnected
+  - object references route index that does not exist
+  - required course files missing
+  - unsupported object/resource missing
+- Validation should not silently block all exports; show clear warnings/errors.
+
+Testing data:
+- Test against real Mario Kart Wii tracks from:
+  - `C:\Users\patchzy\AppData\Roaming\Dolphin Emulator\Load\Riivolution\WheelWizard\RRBeta\Tracks`
+  - `C:\Users\patchzy\AppData\Roaming\Dolphin Emulator\Load\Riivolution\WheelWizard\RRBeta\CT\Tracks`
+- On this Linux/WSL filesystem, those paths correspond to:
+  - `/mnt/c/Users/patchzy/AppData/Roaming/Dolphin Emulator/Load/Riivolution/WheelWizard/RRBeta/Tracks`
+  - `/mnt/c/Users/patchzy/AppData/Roaming/Dolphin Emulator/Load/Riivolution/WheelWizard/RRBeta/CT/Tracks`
+- Real game assets can be found at:
+  - `G:\Games\Wii\mkwii-europe`
+  - `/mnt/g/Games/Wii/mkwii-europe`
+
+
+Non-goals:
+- Do not build a custom rendering engine.
+- Do not replace noclip's GX/TEV/BRRES renderer with Three.js.
+- Do not make placeholder-only visuals when real game models exist.
+- Do not ship the finished editor with fake projected viewport handles as the core interaction model.
+- Do not start with export before basic accurate loading/rendering works.
+- Do not build a landing page; build the actual editor.
