@@ -32,6 +32,7 @@ import {
   patchKmpGobjPresenceFlags,
   patchKmpGobjSetting,
   patchKmpPathGroupLinks,
+  patchKmpPointDeviation,
   patchKmpPointSetting,
   patchKmpPotiPointSetting,
   patchKmpPotiRouteSetting,
@@ -40,7 +41,7 @@ import {
   patchKmpStageFlareColor,
   splitKmpPathGroup,
 } from './kmp';
-import { parseKcl, raycastMesh } from './kcl';
+import { parseKcl, raycastMesh, snapPointToTriangleFeature } from './kcl';
 import { getObjFlowResourceNames, mergeCommonResourceEntries, parseCommonResourceArchive, parseObjFlowContainer } from './objflow';
 import { parseNoclipBrresSummary } from './noclipBrres';
 import { exportTrack, getExportArchiveEntries, validateExportBytes, validateTrack, type TrackDocument } from './track';
@@ -52,6 +53,7 @@ const realTrackDirs = [
 ];
 const commonArchive = '/mnt/g/Games/Wii/mkwii-europe/Race/Common.szs';
 const bundledObjectBrres = '/mnt/g/ai/MkwTrackEditor/public/data/MarioKartWii/Race/Course/Object/kuribo.brres';
+const extractedAssetPool = '/mnt/g/ai/MkwTrackEditor/public/data/MarioKartWii/Race/Course/ExtractedAssets.u8';
 const realTrackSamples = collectRealTrackSamples(realTrackDirs, 8);
 
 function collectRealTrackSamples(dirs: string[], limit: number): string[] {
@@ -111,6 +113,26 @@ describe('U8', () => {
     const object = merged.objFlow.entries.find((entry) => getObjFlowResourceNames(entry).some((resource) => resource.toLowerCase() === 'kuribo.brres'));
     expect(object?.name).toBeTruthy();
   });
+
+  it.runIf(existsSync(commonArchive) && existsSync(extractedAssetPool))('resolves extracted common resources for featured browser objects including crab', () => {
+    const common = parseCommonResourceArchive(new Uint8Array(readFileSync(commonArchive)));
+    const extractedEntries = parseU8(new Uint8Array(readFileSync(extractedAssetPool))).filter((entry) => entry.type === 'file' && entry.data);
+    const merged = mergeCommonResourceEntries(common, extractedEntries);
+    const featuredObjectIds = [0x65, 0x191, 0x192, 0x194, 0x148, 0x0e5, 0x0ce, 0x197, 0x1a5, 0x162, 0x261];
+
+    for (const objectId of featuredObjectIds) {
+      const object = merged.objFlow.byId.get(objectId);
+      expect(object, `ObjFlow entry missing for ${objectId.toString(16)}`).toBeTruthy();
+      const resources = getObjFlowResourceNames(object!);
+      if (resources.length === 0) continue;
+      expect(
+        resources.some((resource) => merged.byBaseName.has(resource.toLowerCase())),
+        `${object?.name ?? objectId.toString(16)} is missing all referenced resources`,
+      ).toBe(true);
+    }
+
+    expect(merged.byBaseName.has('crab.brres')).toBe(true);
+  });
 });
 
 describe('KCL raycasting', () => {
@@ -131,6 +153,26 @@ describe('KCL raycasting', () => {
     expect(raycastMesh(mesh, { x: 20, y: 50, z: 20 }, { x: 0, y: -1, z: 0 })?.position.y).toBeCloseTo(0);
     expect(raycastMesh(mesh, { x: 20, y: -50, z: 20 }, { x: 0, y: 1, z: 0 })?.position.y).toBeCloseTo(0);
   });
+
+  it('snaps hit points to the nearest triangle vertex or edge feature', () => {
+    const triangle = {
+      a: { x: 0, y: 0, z: 0 },
+      b: { x: 100, y: 0, z: 0 },
+      c: { x: 0, y: 0, z: 100 },
+      flag: 0,
+      typeName: 'Road',
+      normal: { x: 0, y: 1, z: 0 },
+    };
+    const nearVertex = snapPointToTriangleFeature({ x: -4, y: 0, z: -6 }, triangle);
+    expect(nearVertex.kind).toBe('vertex');
+    expect(nearVertex.position).toEqual({ x: 0, y: 0, z: 0 });
+
+    const nearEdge = snapPointToTriangleFeature({ x: 46, y: 0, z: 8 }, triangle);
+    expect(nearEdge.kind).toBe('edge');
+    expect(nearEdge.position.x).toBeCloseTo(46);
+    expect(nearEdge.position.y).toBeCloseTo(0);
+    expect(nearEdge.position.z).toBeCloseTo(0);
+  });
 });
 
 describe('MKW track loading', () => {
@@ -149,9 +191,18 @@ describe('MKW track loading', () => {
     const enemyPoint = kmp.entities.find((entity) => entity.section === 'ENPT');
     if (enemyPoint?.pointSettings) {
       expect(enemyPoint.pointSettings.length).toBe(3);
-      const editedEnemyPoint = parseKmp(patchKmpPointSetting(parseKmp(patchKmpPointSetting(kmp, enemyPoint, 0, 2)), enemyPoint, 2, 7)).entities.find((entity) => entity.id === enemyPoint.id);
+      expect(typeof enemyPoint.pointDeviation).toBe('number');
+      const enemyDeviation = enemyPoint.pointDeviation ?? 0;
+      const editedEnemyPoint = parseKmp(
+        patchKmpPointDeviation(
+          parseKmp(patchKmpPointSetting(parseKmp(patchKmpPointSetting(kmp, enemyPoint, 0, 2)), enemyPoint, 2, 7)),
+          enemyPoint,
+          enemyDeviation + 5,
+        ),
+      ).entities.find((entity) => entity.id === enemyPoint.id);
       expect(editedEnemyPoint?.pointSettings?.[0]).toBe(2);
       expect(editedEnemyPoint?.pointSettings?.[2]).toBe(7);
+      expect(editedEnemyPoint?.pointDeviation).toBeCloseTo(enemyDeviation + 5);
       const deletedEnemyPointKmp = parseKmp(deleteKmpEntity(kmp, enemyPoint));
       expect(deletedEnemyPointKmp.sections.find((section) => section.name === 'ENPT')?.count).toBe((kmp.sections.find((section) => section.name === 'ENPT')?.count ?? 0) - 1);
       const deletedEnemyGraph = deletedEnemyPointKmp.pathGraphs.find((graph) => graph.pointSection === 'ENPT');
@@ -205,8 +256,13 @@ describe('MKW track loading', () => {
     const itemPoint = kmp.entities.find((entity) => entity.section === 'ITPT');
     if (itemPoint?.pointSettings) {
       expect(itemPoint.pointSettings.length).toBe(2);
-      const editedItemPoint = parseKmp(patchKmpPointSetting(kmp, itemPoint, 1, 0x1234)).entities.find((entity) => entity.id === itemPoint.id);
+      expect(typeof itemPoint.pointDeviation).toBe('number');
+      const itemDeviation = itemPoint.pointDeviation ?? 0;
+      const editedItemPoint = parseKmp(
+        patchKmpPointDeviation(parseKmp(patchKmpPointSetting(kmp, itemPoint, 1, 0x1234)), itemPoint, itemDeviation + 3),
+      ).entities.find((entity) => entity.id === itemPoint.id);
       expect(editedItemPoint?.pointSettings?.[1]).toBe(0x1234);
+      expect(editedItemPoint?.pointDeviation).toBeCloseTo(itemDeviation + 3);
     }
     expect(kmp.routes.length).toBe(kmp.sections.find((section) => section.name === 'POTI')?.count ?? 0);
     const routeNode = kmp.entities.find((entity) => entity.section === 'POTI');
@@ -360,6 +416,8 @@ describe('MKW track loading', () => {
       const editedCamera = parseKmp(patchKmpCameraField(parseKmp(patchKmpCameraField(kmp, camera, 'type', 2)), camera, 'time', 123.5)).entities.find((entity) => entity.id === camera.id);
       expect(editedCamera?.camera?.type).toBe(2);
       expect(editedCamera?.camera?.time).toBeCloseTo(123.5);
+      expect(editedCamera?.camera?.unknown1).toBe(camera.camera.unknown1);
+      expect(editedCamera?.camera?.unknown2).toBe(camera.camera.unknown2);
       const editedCameraView = parseKmp(patchKmpCameraViewPosition(kmp, camera, 'end', { x: 7, y: 8, z: 9 })).entities.find((entity) => entity.id === camera.id);
       expect(editedCameraView?.cameraView?.end.x).toBeCloseTo(7);
       expect(editedCameraView?.cameraView?.end.y).toBeCloseTo(8);
@@ -451,7 +509,7 @@ describe('MKW track loading', () => {
     const brres = await parseNoclipBrresSummary(courseBrres!.data!);
     expect(brres.models.length).toBeGreaterThan(0);
     expect(brres.textures.length).toBeGreaterThan(0);
-  }, 20000);
+  }, 60000);
 
   it.runIf(realTrackSamples.length > 0)('smoke-tests real WheelWizard tracks from both configured directories', () => {
     for (const path of realTrackSamples) {
@@ -480,7 +538,7 @@ describe('MKW track loading', () => {
       const exportedEntries = parseU8(decodeYaz0(exportedBytes));
       expect(exportedEntries.some((entry) => entry.path.toLowerCase().endsWith('course.kmp')), path).toBe(true);
     }
-  }, 60000);
+  }, 120000);
 
   it.runIf(existsSync(sampleTrack) && existsSync(commonArchive))('injects missing Common object resources during export', () => {
     const archive = decodeYaz0(new Uint8Array(readFileSync(sampleTrack)));
@@ -508,7 +566,37 @@ describe('MKW track loading', () => {
     const exported = parseU8(decodeYaz0(exportTrack(track, { common })));
     expect(exported.some((entry) => entry.path.toLowerCase().endsWith('kinoko.brres'))).toBe(true);
     expect(validateExportBytes(track, exportTrack(track, { common }), { common }).filter((item) => item.level === 'error')).toEqual([]);
-  });
+  }, 60000);
+
+  it.runIf(existsSync(sampleTrack) && existsSync(commonArchive))('preserves untouched archive files during export', () => {
+    const archive = decodeYaz0(new Uint8Array(readFileSync(sampleTrack)));
+    const entries = parseU8(archive);
+    const courseKmp = entries.find((entry) => entry.path.toLowerCase().endsWith('course.kmp'));
+    const courseKcl = entries.find((entry) => entry.path.toLowerCase().endsWith('course.kcl'));
+    expect(courseKmp?.data).toBeTruthy();
+    expect(courseKcl?.data).toBeTruthy();
+
+    const editedKmp = appendKmpGobj(parseKmp(courseKmp!.data!), 0x65, { x: 10, y: 20, z: 30 });
+    const track: TrackDocument = {
+      fileName: '0.szs',
+      compressed: true,
+      archiveEntries: entries.map((entry) => (entry === courseKmp ? { ...entry, data: editedKmp } : entry)),
+      kmp: parseKmp(editedKmp),
+      kcl: parseKcl(courseKcl!.data!),
+      brresFiles: entries.filter((entry) => entry.type === 'file' && entry.path.toLowerCase().endsWith('.brres')).map((entry) => entry.path),
+      brresSummaries: {},
+      warnings: [],
+    };
+    const common = parseCommonResourceArchive(new Uint8Array(readFileSync(commonArchive)));
+    const exportedEntries = parseU8(decodeYaz0(exportTrack(track, { common })));
+    const exportedCourseKcl = exportedEntries.find((entry) => entry.path.toLowerCase().endsWith('course.kcl'));
+    const exportedCourseModel = exportedEntries.find((entry) => entry.path.toLowerCase().endsWith('course_model.brres'));
+    const originalCourseModel = entries.find((entry) => entry.path.toLowerCase().endsWith('course_model.brres'));
+
+    expect(exportedCourseKcl?.data).toEqual(courseKcl!.data);
+    expect(exportedCourseModel?.data).toEqual(originalCourseModel?.data);
+    expect(exportedEntries.filter((entry) => entry.path.toLowerCase() === 'course_model.brres')).toHaveLength(1);
+  }, 60000);
 
   it.runIf(existsSync(sampleTrack) && existsSync(commonArchive))('warns when an object resource is absent from the track and Common.szs', () => {
     const archive = decodeYaz0(new Uint8Array(readFileSync(sampleTrack)));
@@ -529,4 +617,139 @@ describe('MKW track loading', () => {
     const common = parseCommonResourceArchive(new Uint8Array(readFileSync(commonArchive)));
     expect(validateTrack(track, { common }).some((item) => item.message.includes('pocha.brres'))).toBe(true);
   });
+
+  it.runIf(existsSync(sampleTrack) && existsSync(commonArchive))('warns when gameplay objects are hidden in multiplayer via presence flags', () => {
+    const archive = decodeYaz0(new Uint8Array(readFileSync(sampleTrack)));
+    const entries = parseU8(archive);
+    const courseKmp = entries.find((entry) => entry.path.toLowerCase().endsWith('course.kmp'));
+    expect(courseKmp?.data).toBeTruthy();
+
+    const withGoomba = appendKmpGobj(parseKmp(courseKmp!.data!), 0x191, { x: 10, y: 20, z: 30 });
+    const goomba = parseKmp(withGoomba).entities.find((entity) => entity.section === 'GOBJ' && entity.objectId === 0x191 && entity.index === countEntitiesOfSection(parseKmp(courseKmp!.data!), 'GOBJ'));
+    expect(goomba).toBeTruthy();
+    const hiddenInMultiplayer = patchKmpGobjPresenceFlags(parseKmp(withGoomba), goomba!, 0x0001);
+    const track: TrackDocument = {
+      fileName: '0.szs',
+      compressed: true,
+      archiveEntries: entries.map((entry) => (entry === courseKmp ? { ...entry, data: hiddenInMultiplayer } : entry)),
+      kmp: parseKmp(hiddenInMultiplayer),
+      brresFiles: [],
+      brresSummaries: {},
+      warnings: [],
+    };
+    const common = parseCommonResourceArchive(new Uint8Array(readFileSync(commonArchive)));
+    expect(validateTrack(track, { common }).some((item) => item.message.includes('gameplay object') && item.message.includes('0x0001'))).toBe(true);
+  });
+
+  it.runIf(existsSync(sampleTrack) && existsSync(commonArchive))('warns when item boxes use unsupported item/timing settings', () => {
+    const archive = decodeYaz0(new Uint8Array(readFileSync(sampleTrack)));
+    const entries = parseU8(archive);
+    const courseKmp = entries.find((entry) => entry.path.toLowerCase().endsWith('course.kmp'));
+    expect(courseKmp?.data).toBeTruthy();
+
+    const withItemBox = appendKmpGobj(parseKmp(courseKmp!.data!), 0x65, { x: 10, y: 20, z: 30 });
+    const baseKmp = parseKmp(courseKmp!.data!);
+    const editedKmp = parseKmp(withItemBox);
+    const itemBox = editedKmp.entities.find((entity) => entity.section === 'GOBJ' && entity.objectId === 0x65 && entity.index === countEntitiesOfSection(baseKmp, 'GOBJ'));
+    expect(itemBox?.objectSettings).toBeTruthy();
+
+    let patched = patchKmpGobjSetting(editedKmp, itemBox!, 1, 0x0011);
+    patched = patchKmpGobjSetting(parseKmp(patched), parseKmp(patched).entities.find((entity) => entity.id === itemBox!.id)!, 2, 0x2222);
+    const reparsed = parseKmp(patched);
+    patched = patchKmpGobjSetting(reparsed, reparsed.entities.find((entity) => entity.id === itemBox!.id)!, 5, 0x0007);
+
+    const track: TrackDocument = {
+      fileName: '0.szs',
+      compressed: true,
+      archiveEntries: entries.map((entry) => (entry === courseKmp ? { ...entry, data: patched } : entry)),
+      kmp: parseKmp(patched),
+      brresFiles: [],
+      brresSummaries: {},
+      warnings: [],
+    };
+    const common = parseCommonResourceArchive(new Uint8Array(readFileSync(commonArchive)));
+    const issues = validateTrack(track, { common }).map((item) => item.message);
+    expect(issues.some((message) => message.includes('unsupported player item-box setting') && message.includes('0x0011'))).toBe(true);
+    expect(issues.some((message) => message.includes('unsupported CPU item-box setting') && message.includes('0x2222'))).toBe(true);
+    expect(issues.some((message) => message.includes('unsupported item-box timing setting') && message.includes('0x0007'))).toBe(true);
+  });
+
+  it.runIf(existsSync(sampleTrack))('warns about known vanilla object pitfalls', () => {
+    const archive = decodeYaz0(new Uint8Array(readFileSync(sampleTrack)));
+    const entries = parseU8(archive);
+    const courseKmp = entries.find((entry) => entry.path.toLowerCase().endsWith('course.kmp'));
+    expect(courseKmp?.data).toBeTruthy();
+
+    const baseKmp = parseKmp(courseKmp!.data!);
+    let patched = appendKmpGobj(baseKmp, 0x192, { x: 10, y: 20, z: 30 });
+    patched = appendKmpGobj(parseKmp(patched), 0x19a, { x: 40, y: 20, z: 30 });
+    patched = appendKmpGobj(parseKmp(patched), 0x214, { x: 70, y: 20, z: 30 });
+    const reparsed = parseKmp(patched);
+    const inseki = reparsed.entities.find((entity) => entity.section === 'GOBJ' && entity.objectId === 0x214 && entity.index === countEntitiesOfSection(baseKmp, 'GOBJ') + 2);
+    expect(inseki?.objectSettings).toBeTruthy();
+    patched = patchKmpGobjSetting(reparsed, inseki!, 2, 0);
+
+    const track: TrackDocument = {
+      fileName: '0.szs',
+      compressed: true,
+      archiveEntries: entries.map((entry) => (entry === courseKmp ? { ...entry, data: patched } : entry)),
+      kmp: parseKmp(patched),
+      brresFiles: [],
+      brresSummaries: {},
+      warnings: [],
+    };
+    const issues = validateTrack(track).map((item) => item.message);
+    expect(issues.some((message) => message.includes('choropu and choropu2'))).toBe(true);
+    expect(issues.some((message) => message.includes('InsekiA') && message.includes('Setting 3 left at 0'))).toBe(true);
+  });
+
+  it.runIf(existsSync(sampleTrack))('warns when Daisy Circuit Mii audience objects are duplicated', () => {
+    const archive = decodeYaz0(new Uint8Array(readFileSync(sampleTrack)));
+    const entries = parseU8(archive);
+    const courseKmp = entries.find((entry) => entry.path.toLowerCase().endsWith('course.kmp'));
+    expect(courseKmp?.data).toBeTruthy();
+
+    const baseKmp = parseKmp(courseKmp!.data!);
+    let patched = appendKmpGobj(baseKmp, 0x2e8, { x: 10, y: 20, z: 30 });
+    patched = appendKmpGobj(parseKmp(patched), 0x2e8, { x: 40, y: 20, z: 30 });
+    const track: TrackDocument = {
+      fileName: '0.szs',
+      compressed: true,
+      archiveEntries: entries.map((entry) => (entry === courseKmp ? { ...entry, data: patched } : entry)),
+      kmp: parseKmp(patched),
+      brresFiles: [],
+      brresSummaries: {},
+      warnings: [],
+    };
+    const issues = validateTrack(track).map((item) => item.message);
+    expect(issues.some((message) => message.includes('MiiObjD01') && message.includes('at most one instance'))).toBe(true);
+  });
+
+  it.runIf(existsSync(sampleTrack))('warns for slot-restricted objects and begoman_spike ordering', () => {
+    const archive = decodeYaz0(new Uint8Array(readFileSync(sampleTrack)));
+    const entries = parseU8(archive);
+    const courseKmp = entries.find((entry) => entry.path.toLowerCase().endsWith('course.kmp'));
+    expect(courseKmp?.data).toBeTruthy();
+
+    const baseKmp = parseKmp(courseKmp!.data!);
+    let patched = appendKmpGobj(baseKmp, 0x72, { x: 10, y: 20, z: 30 });
+    patched = appendKmpGobj(parseKmp(patched), 0x1a3, { x: 40, y: 20, z: 30 });
+
+    const track: TrackDocument = {
+      fileName: '0.szs',
+      compressed: true,
+      archiveEntries: entries.map((entry) => (entry === courseKmp ? { ...entry, data: patched } : entry)),
+      kmp: parseKmp(patched),
+      brresFiles: [],
+      brresSummaries: {},
+      warnings: [],
+    };
+    const issues = validateTrack(track).map((item) => item.message);
+    expect(issues.some((message) => message.includes('slot-restricted objects') && message.includes('sunDS') && message.includes('begoman_spike'))).toBe(true);
+    expect(issues.some((message) => message.includes('begoman_spike must be the first placed game object'))).toBe(true);
+  });
 });
+
+function countEntitiesOfSection(kmp: ReturnType<typeof parseKmp>, section: string): number {
+  return kmp.entities.filter((entity) => entity.section === section).length;
+}

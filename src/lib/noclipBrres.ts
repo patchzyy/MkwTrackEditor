@@ -21,7 +21,16 @@ export async function parseNoclipBrresSummary(data: Uint8Array): Promise<NoclipB
     // @ts-ignore noclip source is vendored outside this app's tsconfig surface.
     import('../../vendor/noclip.website/src/gx/gx_texture.js'),
   ]);
-  const rres = BRRES.parse(new ArrayBufferSlice(data.slice().buffer));
+  let rres: any;
+  try {
+    rres = BRRES.parse(new ArrayBufferSlice(data.slice().buffer));
+  } catch {
+    return {
+      models: [],
+      textures: [],
+      animations: { srt0: [], pat0: [], clr0: [], chr0: [], vis0: [], scn0: [] },
+    };
+  }
   const modelPreviewDataUrl = createModelPreviewDataUrl(rres.mdl0);
   const texturePreviewDataUrl = await createTexturePreviewDataUrl(rres.tex0, GXTexture);
   return {

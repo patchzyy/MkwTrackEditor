@@ -1,0 +1,4509 @@
+{
+  "generatedFrom": "/mnt/g/Games/Wii/mkwii-europe/Race/Course",
+  "generatedAt": "2026-05-06T00:58:34.817Z",
+  "trackCount": 51,
+  "assetCount": 500,
+  "uniqueBaseNames": 198,
+  "assets": [
+    {
+      "id": "beginner_course.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "beginner_course.szs",
+      "trackLabel": "beginner course",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "beginner_course.szs:./dokan_sfc.brres",
+      "source": "courseArchive",
+      "trackFile": "beginner_course.szs",
+      "trackLabel": "beginner course",
+      "path": "./dokan_sfc.brres",
+      "baseName": "dokan_sfc.brres",
+      "kind": "object"
+    },
+    {
+      "id": "beginner_course.szs:./FlagB2.brres",
+      "source": "courseArchive",
+      "trackFile": "beginner_course.szs",
+      "trackLabel": "beginner course",
+      "path": "./FlagB2.brres",
+      "baseName": "FlagB2.brres",
+      "kind": "object"
+    },
+    {
+      "id": "beginner_course.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "beginner_course.szs",
+      "trackLabel": "beginner course",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "beginner_course.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "beginner_course.szs",
+      "trackLabel": "beginner course",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "beginner_course.szs:./MiiKanban.brres",
+      "source": "courseArchive",
+      "trackFile": "beginner_course.szs",
+      "trackLabel": "beginner course",
+      "path": "./MiiKanban.brres",
+      "baseName": "MiiKanban.brres",
+      "kind": "object"
+    },
+    {
+      "id": "beginner_course.szs:./MiiObj01.brres",
+      "source": "courseArchive",
+      "trackFile": "beginner_course.szs",
+      "trackLabel": "beginner course",
+      "path": "./MiiObj01.brres",
+      "baseName": "MiiObj01.brres",
+      "kind": "object"
+    },
+    {
+      "id": "beginner_course.szs:./MiiObj02.brres",
+      "source": "courseArchive",
+      "trackFile": "beginner_course.szs",
+      "trackLabel": "beginner course",
+      "path": "./MiiObj02.brres",
+      "baseName": "MiiObj02.brres",
+      "kind": "object"
+    },
+    {
+      "id": "beginner_course.szs:./MiiObj03.brres",
+      "source": "courseArchive",
+      "trackFile": "beginner_course.szs",
+      "trackLabel": "beginner course",
+      "path": "./MiiObj03.brres",
+      "baseName": "MiiObj03.brres",
+      "kind": "object"
+    },
+    {
+      "id": "beginner_course.szs:./MiiStatueL3.brres",
+      "source": "courseArchive",
+      "trackFile": "beginner_course.szs",
+      "trackLabel": "beginner course",
+      "path": "./MiiStatueL3.brres",
+      "baseName": "MiiStatueL3.brres",
+      "kind": "object"
+    },
+    {
+      "id": "beginner_course.szs:./skyship.brres",
+      "source": "courseArchive",
+      "trackFile": "beginner_course.szs",
+      "trackLabel": "beginner course",
+      "path": "./skyship.brres",
+      "baseName": "skyship.brres",
+      "kind": "object"
+    },
+    {
+      "id": "beginner_course.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "beginner_course.szs",
+      "trackLabel": "beginner course",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "beginner_course.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "beginner_course.szs",
+      "trackLabel": "beginner course",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "block_battle.szs:./bblock1.brres",
+      "source": "courseArchive",
+      "trackFile": "block_battle.szs",
+      "trackLabel": "block battle",
+      "path": "./bblock1.brres",
+      "baseName": "bblock1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "block_battle.szs:./coin.brres",
+      "source": "courseArchive",
+      "trackFile": "block_battle.szs",
+      "trackLabel": "block battle",
+      "path": "./coin.brres",
+      "baseName": "coin.brres",
+      "kind": "object"
+    },
+    {
+      "id": "block_battle.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "block_battle.szs",
+      "trackLabel": "block battle",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "block_battle.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "block_battle.szs",
+      "trackLabel": "block battle",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "block_battle.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "block_battle.szs",
+      "trackLabel": "block battle",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "block_battle.szs:./MiiStatueD2.brres",
+      "source": "courseArchive",
+      "trackFile": "block_battle.szs",
+      "trackLabel": "block battle",
+      "path": "./MiiStatueD2.brres",
+      "baseName": "MiiStatueD2.brres",
+      "kind": "object"
+    },
+    {
+      "id": "block_battle.szs:./MiiStatueL2.brres",
+      "source": "courseArchive",
+      "trackFile": "block_battle.szs",
+      "trackLabel": "block battle",
+      "path": "./MiiStatueL2.brres",
+      "baseName": "MiiStatueL2.brres",
+      "kind": "object"
+    },
+    {
+      "id": "block_battle.szs:./MiiStatueM1.brres",
+      "source": "courseArchive",
+      "trackFile": "block_battle.szs",
+      "trackLabel": "block battle",
+      "path": "./MiiStatueM1.brres",
+      "baseName": "MiiStatueM1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "block_battle.szs:./MiiStatueP1.brres",
+      "source": "courseArchive",
+      "trackFile": "block_battle.szs",
+      "trackLabel": "block battle",
+      "path": "./MiiStatueP1.brres",
+      "baseName": "MiiStatueP1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "block_battle.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "block_battle.szs",
+      "trackLabel": "block battle",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "boardcross_course.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "boardcross_course.szs",
+      "trackLabel": "boardcross course",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "boardcross_course.szs:./dkmonitor.brres",
+      "source": "courseArchive",
+      "trackFile": "boardcross_course.szs",
+      "trackLabel": "boardcross course",
+      "path": "./dkmonitor.brres",
+      "baseName": "dkmonitor.brres",
+      "kind": "object"
+    },
+    {
+      "id": "boardcross_course.szs:./dk_miiobj00.brres",
+      "source": "courseArchive",
+      "trackFile": "boardcross_course.szs",
+      "trackLabel": "boardcross course",
+      "path": "./dk_miiobj00.brres",
+      "baseName": "dk_miiobj00.brres",
+      "kind": "object"
+    },
+    {
+      "id": "boardcross_course.szs:./DonkyCannon_wii.brres",
+      "source": "courseArchive",
+      "trackFile": "boardcross_course.szs",
+      "trackLabel": "boardcross course",
+      "path": "./DonkyCannon_wii.brres",
+      "baseName": "DonkyCannon_wii.brres",
+      "kind": "object"
+    },
+    {
+      "id": "boardcross_course.szs:./heyho.brres",
+      "source": "courseArchive",
+      "trackFile": "boardcross_course.szs",
+      "trackLabel": "boardcross course",
+      "path": "./heyho.brres",
+      "baseName": "heyho.brres",
+      "kind": "object"
+    },
+    {
+      "id": "boardcross_course.szs:./heyho2.brres",
+      "source": "courseArchive",
+      "trackFile": "boardcross_course.szs",
+      "trackLabel": "boardcross course",
+      "path": "./heyho2.brres",
+      "baseName": "heyho2.brres",
+      "kind": "object"
+    },
+    {
+      "id": "boardcross_course.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "boardcross_course.szs",
+      "trackLabel": "boardcross course",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "boardcross_course.szs:./K_chairlift00.brres",
+      "source": "courseArchive",
+      "trackFile": "boardcross_course.szs",
+      "trackLabel": "boardcross course",
+      "path": "./K_chairlift00.brres",
+      "baseName": "K_chairlift00.brres",
+      "kind": "object"
+    },
+    {
+      "id": "boardcross_course.szs:./K_sticklift00.brres",
+      "source": "courseArchive",
+      "trackFile": "boardcross_course.szs",
+      "trackLabel": "boardcross course",
+      "path": "./K_sticklift00.brres",
+      "baseName": "K_sticklift00.brres",
+      "kind": "object"
+    },
+    {
+      "id": "boardcross_course.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "boardcross_course.szs",
+      "trackLabel": "boardcross course",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "boardcross_course.szs:./MiiStatueM2.brres",
+      "source": "courseArchive",
+      "trackFile": "boardcross_course.szs",
+      "trackLabel": "boardcross course",
+      "path": "./MiiStatueM2.brres",
+      "baseName": "MiiStatueM2.brres",
+      "kind": "object"
+    },
+    {
+      "id": "boardcross_course.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "boardcross_course.szs",
+      "trackLabel": "boardcross course",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "boardcross_course.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "boardcross_course.szs",
+      "trackLabel": "boardcross course",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "casino_battle.szs:./casino_roulette.brres",
+      "source": "courseArchive",
+      "trackFile": "casino_battle.szs",
+      "trackLabel": "casino battle",
+      "path": "./casino_roulette.brres",
+      "baseName": "casino_roulette.brres",
+      "kind": "object"
+    },
+    {
+      "id": "casino_battle.szs:./coin.brres",
+      "source": "courseArchive",
+      "trackFile": "casino_battle.szs",
+      "trackLabel": "casino battle",
+      "path": "./coin.brres",
+      "baseName": "coin.brres",
+      "kind": "object"
+    },
+    {
+      "id": "casino_battle.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "casino_battle.szs",
+      "trackLabel": "casino battle",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "casino_battle.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "casino_battle.szs",
+      "trackLabel": "casino battle",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "casino_battle.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "casino_battle.szs",
+      "trackLabel": "casino battle",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "casino_battle.szs:./moray.brres",
+      "source": "courseArchive",
+      "trackFile": "casino_battle.szs",
+      "trackLabel": "casino battle",
+      "path": "./moray.brres",
+      "baseName": "moray.brres",
+      "kind": "object"
+    },
+    {
+      "id": "casino_battle.szs:./pukupuku.brres",
+      "source": "courseArchive",
+      "trackFile": "casino_battle.szs",
+      "trackLabel": "casino battle",
+      "path": "./pukupuku.brres",
+      "baseName": "pukupuku.brres",
+      "kind": "object"
+    },
+    {
+      "id": "casino_battle.szs:./spot.brres",
+      "source": "courseArchive",
+      "trackFile": "casino_battle.szs",
+      "trackLabel": "casino battle",
+      "path": "./spot.brres",
+      "baseName": "spot.brres",
+      "kind": "object"
+    },
+    {
+      "id": "casino_battle.szs:./Twanwan.brres",
+      "source": "courseArchive",
+      "trackFile": "casino_battle.szs",
+      "trackLabel": "casino battle",
+      "path": "./Twanwan.brres",
+      "baseName": "Twanwan.brres",
+      "kind": "object"
+    },
+    {
+      "id": "casino_battle.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "casino_battle.szs",
+      "trackLabel": "casino battle",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "castle_course.szs:./castleballoon1.brres",
+      "source": "courseArchive",
+      "trackFile": "castle_course.szs",
+      "trackLabel": "castle course",
+      "path": "./castleballoon1.brres",
+      "baseName": "castleballoon1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "castle_course.szs:./castleflower1.brres",
+      "source": "courseArchive",
+      "trackFile": "castle_course.szs",
+      "trackLabel": "castle course",
+      "path": "./castleflower1.brres",
+      "baseName": "castleflower1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "castle_course.szs:./castletree1.brres",
+      "source": "courseArchive",
+      "trackFile": "castle_course.szs",
+      "trackLabel": "castle course",
+      "path": "./castletree1.brres",
+      "baseName": "castletree1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "castle_course.szs:./castletree2.brres",
+      "source": "courseArchive",
+      "trackFile": "castle_course.szs",
+      "trackLabel": "castle course",
+      "path": "./castletree2.brres",
+      "baseName": "castletree2.brres",
+      "kind": "object"
+    },
+    {
+      "id": "castle_course.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "castle_course.szs",
+      "trackLabel": "castle course",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "castle_course.szs:./group_enemy_e.brres",
+      "source": "courseArchive",
+      "trackFile": "castle_course.szs",
+      "trackLabel": "castle course",
+      "path": "./group_enemy_e.brres",
+      "baseName": "group_enemy_e.brres",
+      "kind": "object"
+    },
+    {
+      "id": "castle_course.szs:./group_enemy_f.brres",
+      "source": "courseArchive",
+      "trackFile": "castle_course.szs",
+      "trackLabel": "castle course",
+      "path": "./group_enemy_f.brres",
+      "baseName": "group_enemy_f.brres",
+      "kind": "object"
+    },
+    {
+      "id": "castle_course.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "castle_course.szs",
+      "trackLabel": "castle course",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "castle_course.szs:./kuribo.brres",
+      "source": "courseArchive",
+      "trackFile": "castle_course.szs",
+      "trackLabel": "castle course",
+      "path": "./kuribo.brres",
+      "baseName": "kuribo.brres",
+      "kind": "object"
+    },
+    {
+      "id": "castle_course.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "castle_course.szs",
+      "trackLabel": "castle course",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "castle_course.szs:./Mdush.brres",
+      "source": "courseArchive",
+      "trackFile": "castle_course.szs",
+      "trackLabel": "castle course",
+      "path": "./Mdush.brres",
+      "baseName": "Mdush.brres",
+      "kind": "object"
+    },
+    {
+      "id": "castle_course.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "castle_course.szs",
+      "trackLabel": "castle course",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "castle_course.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "castle_course.szs",
+      "trackLabel": "castle course",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "castle_course.szs:./wanwan.brres",
+      "source": "courseArchive",
+      "trackFile": "castle_course.szs",
+      "trackLabel": "castle course",
+      "path": "./wanwan.brres",
+      "baseName": "wanwan.brres",
+      "kind": "object"
+    },
+    {
+      "id": "desert_course.szs:./basabasa.brres",
+      "source": "courseArchive",
+      "trackFile": "desert_course.szs",
+      "trackLabel": "desert course",
+      "path": "./basabasa.brres",
+      "baseName": "basabasa.brres",
+      "kind": "object"
+    },
+    {
+      "id": "desert_course.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "desert_course.szs",
+      "trackLabel": "desert course",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "desert_course.szs:./dc_pillar.brres",
+      "source": "courseArchive",
+      "trackFile": "desert_course.szs",
+      "trackLabel": "desert course",
+      "path": "./dc_pillar.brres",
+      "baseName": "dc_pillar.brres",
+      "kind": "object"
+    },
+    {
+      "id": "desert_course.szs:./dc_sandcone.brres",
+      "source": "courseArchive",
+      "trackFile": "desert_course.szs",
+      "trackLabel": "desert course",
+      "path": "./dc_sandcone.brres",
+      "baseName": "dc_sandcone.brres",
+      "kind": "object"
+    },
+    {
+      "id": "desert_course.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "desert_course.szs",
+      "trackLabel": "desert course",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "desert_course.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "desert_course.szs",
+      "trackLabel": "desert course",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "desert_course.szs:./MiiSphinxY2.brres",
+      "source": "courseArchive",
+      "trackFile": "desert_course.szs",
+      "trackLabel": "desert course",
+      "path": "./MiiSphinxY2.brres",
+      "baseName": "MiiSphinxY2.brres",
+      "kind": "object"
+    },
+    {
+      "id": "desert_course.szs:./pocha.brres",
+      "source": "courseArchive",
+      "trackFile": "desert_course.szs",
+      "trackLabel": "desert course",
+      "path": "./pocha.brres",
+      "baseName": "pocha.brres",
+      "kind": "object"
+    },
+    {
+      "id": "desert_course.szs:./sanbo.brres",
+      "source": "courseArchive",
+      "trackFile": "desert_course.szs",
+      "trackLabel": "desert course",
+      "path": "./sanbo.brres",
+      "baseName": "sanbo.brres",
+      "kind": "object"
+    },
+    {
+      "id": "desert_course.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "desert_course.szs",
+      "trackLabel": "desert course",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "desert_course.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "desert_course.szs",
+      "trackLabel": "desert course",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "draw_demo.szs:./castleflower1.brres",
+      "source": "courseArchive",
+      "trackFile": "draw_demo.szs",
+      "trackLabel": "draw demo",
+      "path": "./castleflower1.brres",
+      "baseName": "castleflower1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "draw_demo.szs:./castletree1.brres",
+      "source": "courseArchive",
+      "trackFile": "draw_demo.szs",
+      "trackLabel": "draw demo",
+      "path": "./castletree1.brres",
+      "baseName": "castletree1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "draw_demo.szs:./castletree2.brres",
+      "source": "courseArchive",
+      "trackFile": "draw_demo.szs",
+      "trackLabel": "draw demo",
+      "path": "./castletree2.brres",
+      "baseName": "castletree2.brres",
+      "kind": "object"
+    },
+    {
+      "id": "draw_demo.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "draw_demo.szs",
+      "trackLabel": "draw demo",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "draw_demo.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "draw_demo.szs",
+      "trackLabel": "draw demo",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "draw_demo.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "draw_demo.szs",
+      "trackLabel": "draw demo",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "ending_demo.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "ending_demo.szs",
+      "trackLabel": "ending demo",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "ending_demo.szs:./FlagB2.brres",
+      "source": "courseArchive",
+      "trackFile": "ending_demo.szs",
+      "trackLabel": "ending demo",
+      "path": "./FlagB2.brres",
+      "baseName": "FlagB2.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ending_demo.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "ending_demo.szs",
+      "trackLabel": "ending demo",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ending_demo.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "ending_demo.szs",
+      "trackLabel": "ending demo",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ending_demo.szs:./MiiKanban.brres",
+      "source": "courseArchive",
+      "trackFile": "ending_demo.szs",
+      "trackLabel": "ending demo",
+      "path": "./MiiKanban.brres",
+      "baseName": "MiiKanban.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ending_demo.szs:./MiiObj01.brres",
+      "source": "courseArchive",
+      "trackFile": "ending_demo.szs",
+      "trackLabel": "ending demo",
+      "path": "./MiiObj01.brres",
+      "baseName": "MiiObj01.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ending_demo.szs:./MiiObj02.brres",
+      "source": "courseArchive",
+      "trackFile": "ending_demo.szs",
+      "trackLabel": "ending demo",
+      "path": "./MiiObj02.brres",
+      "baseName": "MiiObj02.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ending_demo.szs:./MiiObj03.brres",
+      "source": "courseArchive",
+      "trackFile": "ending_demo.szs",
+      "trackLabel": "ending demo",
+      "path": "./MiiObj03.brres",
+      "baseName": "MiiObj03.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ending_demo.szs:./MiiStatueL3.brres",
+      "source": "courseArchive",
+      "trackFile": "ending_demo.szs",
+      "trackLabel": "ending demo",
+      "path": "./MiiStatueL3.brres",
+      "baseName": "MiiStatueL3.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ending_demo.szs:./skyship.brres",
+      "source": "courseArchive",
+      "trackFile": "ending_demo.szs",
+      "trackLabel": "ending demo",
+      "path": "./skyship.brres",
+      "baseName": "skyship.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ending_demo.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "ending_demo.szs",
+      "trackLabel": "ending demo",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "factory_course.szs:./BeltCrossing.brres",
+      "source": "courseArchive",
+      "trackFile": "factory_course.szs",
+      "trackLabel": "factory course",
+      "path": "./BeltCrossing.brres",
+      "baseName": "BeltCrossing.brres",
+      "kind": "object"
+    },
+    {
+      "id": "factory_course.szs:./BeltCurveA.brres",
+      "source": "courseArchive",
+      "trackFile": "factory_course.szs",
+      "trackLabel": "factory course",
+      "path": "./BeltCurveA.brres",
+      "baseName": "BeltCurveA.brres",
+      "kind": "object"
+    },
+    {
+      "id": "factory_course.szs:./BeltEasy.brres",
+      "source": "courseArchive",
+      "trackFile": "factory_course.szs",
+      "trackLabel": "factory course",
+      "path": "./BeltEasy.brres",
+      "baseName": "BeltEasy.brres",
+      "kind": "object"
+    },
+    {
+      "id": "factory_course.szs:./Block.brres",
+      "source": "courseArchive",
+      "trackFile": "factory_course.szs",
+      "trackLabel": "factory course",
+      "path": "./Block.brres",
+      "baseName": "Block.brres",
+      "kind": "object"
+    },
+    {
+      "id": "factory_course.szs:./bulldozer_left.brres",
+      "source": "courseArchive",
+      "trackFile": "factory_course.szs",
+      "trackLabel": "factory course",
+      "path": "./bulldozer_left.brres",
+      "baseName": "bulldozer_left.brres",
+      "kind": "object"
+    },
+    {
+      "id": "factory_course.szs:./bulldozer_right.brres",
+      "source": "courseArchive",
+      "trackFile": "factory_course.szs",
+      "trackLabel": "factory course",
+      "path": "./bulldozer_right.brres",
+      "baseName": "bulldozer_right.brres",
+      "kind": "object"
+    },
+    {
+      "id": "factory_course.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "factory_course.szs",
+      "trackLabel": "factory course",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "factory_course.szs:./Crane.brres",
+      "source": "courseArchive",
+      "trackFile": "factory_course.szs",
+      "trackLabel": "factory course",
+      "path": "./Crane.brres",
+      "baseName": "Crane.brres",
+      "kind": "object"
+    },
+    {
+      "id": "factory_course.szs:./group_enemy_c.brres",
+      "source": "courseArchive",
+      "trackFile": "factory_course.szs",
+      "trackLabel": "factory course",
+      "path": "./group_enemy_c.brres",
+      "baseName": "group_enemy_c.brres",
+      "kind": "object"
+    },
+    {
+      "id": "factory_course.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "factory_course.szs",
+      "trackLabel": "factory course",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "factory_course.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "factory_course.szs",
+      "trackLabel": "factory course",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "factory_course.szs:./MiiSighKino.brres",
+      "source": "courseArchive",
+      "trackFile": "factory_course.szs",
+      "trackLabel": "factory course",
+      "path": "./MiiSighKino.brres",
+      "baseName": "MiiSighKino.brres",
+      "kind": "object"
+    },
+    {
+      "id": "factory_course.szs:./Piston.brres",
+      "source": "courseArchive",
+      "trackFile": "factory_course.szs",
+      "trackLabel": "factory course",
+      "path": "./Piston.brres",
+      "baseName": "Piston.brres",
+      "kind": "object"
+    },
+    {
+      "id": "factory_course.szs:./pocha.brres",
+      "source": "courseArchive",
+      "trackFile": "factory_course.szs",
+      "trackLabel": "factory course",
+      "path": "./pocha.brres",
+      "baseName": "pocha.brres",
+      "kind": "object"
+    },
+    {
+      "id": "factory_course.szs:./Press.brres",
+      "source": "courseArchive",
+      "trackFile": "factory_course.szs",
+      "trackLabel": "factory course",
+      "path": "./Press.brres",
+      "baseName": "Press.brres",
+      "kind": "object"
+    },
+    {
+      "id": "factory_course.szs:./seagull.brres",
+      "source": "courseArchive",
+      "trackFile": "factory_course.szs",
+      "trackLabel": "factory course",
+      "path": "./seagull.brres",
+      "baseName": "seagull.brres",
+      "kind": "object"
+    },
+    {
+      "id": "factory_course.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "factory_course.szs",
+      "trackLabel": "factory course",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "factory_course.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "factory_course.szs",
+      "trackLabel": "factory course",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "factory_course.szs:./woodbox.brres",
+      "source": "courseArchive",
+      "trackFile": "factory_course.szs",
+      "trackLabel": "factory course",
+      "path": "./woodbox.brres",
+      "baseName": "woodbox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "farm_course.szs:./castletree1.brres",
+      "source": "courseArchive",
+      "trackFile": "farm_course.szs",
+      "trackLabel": "farm course",
+      "path": "./castletree1.brres",
+      "baseName": "castletree1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "farm_course.szs:./castletree2.brres",
+      "source": "courseArchive",
+      "trackFile": "farm_course.szs",
+      "trackLabel": "farm course",
+      "path": "./castletree2.brres",
+      "baseName": "castletree2.brres",
+      "kind": "object"
+    },
+    {
+      "id": "farm_course.szs:./choropu.brres",
+      "source": "courseArchive",
+      "trackFile": "farm_course.szs",
+      "trackLabel": "farm course",
+      "path": "./choropu.brres",
+      "baseName": "choropu.brres",
+      "kind": "object"
+    },
+    {
+      "id": "farm_course.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "farm_course.szs",
+      "trackLabel": "farm course",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "farm_course.szs:./cow.brres",
+      "source": "courseArchive",
+      "trackFile": "farm_course.szs",
+      "trackLabel": "farm course",
+      "path": "./cow.brres",
+      "baseName": "cow.brres",
+      "kind": "object"
+    },
+    {
+      "id": "farm_course.szs:./FlagA2.brres",
+      "source": "courseArchive",
+      "trackFile": "farm_course.szs",
+      "trackLabel": "farm course",
+      "path": "./FlagA2.brres",
+      "baseName": "FlagA2.brres",
+      "kind": "object"
+    },
+    {
+      "id": "farm_course.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "farm_course.szs",
+      "trackLabel": "farm course",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "farm_course.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "farm_course.szs",
+      "trackLabel": "farm course",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "farm_course.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "farm_course.szs",
+      "trackLabel": "farm course",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "farm_course.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "farm_course.szs",
+      "trackLabel": "farm course",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "farm_course.szs:./windmill.brres",
+      "source": "courseArchive",
+      "trackFile": "farm_course.szs",
+      "trackLabel": "farm course",
+      "path": "./windmill.brres",
+      "baseName": "windmill.brres",
+      "kind": "object"
+    },
+    {
+      "id": "kinoko_course.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "kinoko_course.szs",
+      "trackLabel": "kinoko course",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "kinoko_course.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "kinoko_course.szs",
+      "trackLabel": "kinoko course",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "kinoko_course.szs:./kinoko.brres",
+      "source": "courseArchive",
+      "trackFile": "kinoko_course.szs",
+      "trackLabel": "kinoko course",
+      "path": "./kinoko.brres",
+      "baseName": "kinoko.brres",
+      "kind": "object"
+    },
+    {
+      "id": "kinoko_course.szs:./kinokoT1.brres",
+      "source": "courseArchive",
+      "trackFile": "kinoko_course.szs",
+      "trackLabel": "kinoko course",
+      "path": "./kinokoT1.brres",
+      "baseName": "kinokoT1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "kinoko_course.szs:./kuribo.brres",
+      "source": "courseArchive",
+      "trackFile": "kinoko_course.szs",
+      "trackLabel": "kinoko course",
+      "path": "./kuribo.brres",
+      "baseName": "kuribo.brres",
+      "kind": "object"
+    },
+    {
+      "id": "kinoko_course.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "kinoko_course.szs",
+      "trackLabel": "kinoko course",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "kinoko_course.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "kinoko_course.szs",
+      "trackLabel": "kinoko course",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "kinoko_course.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "kinoko_course.szs",
+      "trackLabel": "kinoko course",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "koopa_course.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "koopa_course.szs",
+      "trackLabel": "koopa course",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "koopa_course.szs:./dossun.brres",
+      "source": "courseArchive",
+      "trackFile": "koopa_course.szs",
+      "trackLabel": "koopa course",
+      "path": "./dossun.brres",
+      "baseName": "dossun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "koopa_course.szs:./FlamePole.brres",
+      "source": "courseArchive",
+      "trackFile": "koopa_course.szs",
+      "trackLabel": "koopa course",
+      "path": "./FlamePole.brres",
+      "baseName": "FlamePole.brres",
+      "kind": "object"
+    },
+    {
+      "id": "koopa_course.szs:./FlamePole_v.brres",
+      "source": "courseArchive",
+      "trackFile": "koopa_course.szs",
+      "trackLabel": "koopa course",
+      "path": "./FlamePole_v.brres",
+      "baseName": "FlamePole_v.brres",
+      "kind": "object"
+    },
+    {
+      "id": "koopa_course.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "koopa_course.szs",
+      "trackLabel": "koopa course",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "koopa_course.szs:./koopaBall.brres",
+      "source": "courseArchive",
+      "trackFile": "koopa_course.szs",
+      "trackLabel": "koopa course",
+      "path": "./koopaBall.brres",
+      "baseName": "koopaBall.brres",
+      "kind": "object"
+    },
+    {
+      "id": "koopa_course.szs:./koopaFigure.brres",
+      "source": "courseArchive",
+      "trackFile": "koopa_course.szs",
+      "trackLabel": "koopa course",
+      "path": "./koopaFigure.brres",
+      "baseName": "koopaFigure.brres",
+      "kind": "object"
+    },
+    {
+      "id": "koopa_course.szs:./koopaFirebar.brres",
+      "source": "courseArchive",
+      "trackFile": "koopa_course.szs",
+      "trackLabel": "koopa course",
+      "path": "./koopaFirebar.brres",
+      "baseName": "koopaFirebar.brres",
+      "kind": "object"
+    },
+    {
+      "id": "koopa_course.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "koopa_course.szs",
+      "trackLabel": "koopa course",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "koopa_course.szs:./pochaYogan.brres",
+      "source": "courseArchive",
+      "trackFile": "koopa_course.szs",
+      "trackLabel": "koopa course",
+      "path": "./pochaYogan.brres",
+      "baseName": "pochaYogan.brres",
+      "kind": "object"
+    },
+    {
+      "id": "koopa_course.szs:./TwistedWay.brres",
+      "source": "courseArchive",
+      "trackFile": "koopa_course.szs",
+      "trackLabel": "koopa course",
+      "path": "./TwistedWay.brres",
+      "baseName": "TwistedWay.brres",
+      "kind": "object"
+    },
+    {
+      "id": "koopa_course.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "koopa_course.szs",
+      "trackLabel": "koopa course",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "koopa_course.szs:./WLfirebarGC.brres",
+      "source": "courseArchive",
+      "trackFile": "koopa_course.szs",
+      "trackLabel": "koopa course",
+      "path": "./WLfirebarGC.brres",
+      "baseName": "WLfirebarGC.brres",
+      "kind": "object"
+    },
+    {
+      "id": "loser_demo.szs:./castleflower1.brres",
+      "source": "courseArchive",
+      "trackFile": "loser_demo.szs",
+      "trackLabel": "loser demo",
+      "path": "./castleflower1.brres",
+      "baseName": "castleflower1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "loser_demo.szs:./castletree1.brres",
+      "source": "courseArchive",
+      "trackFile": "loser_demo.szs",
+      "trackLabel": "loser demo",
+      "path": "./castletree1.brres",
+      "baseName": "castletree1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "loser_demo.szs:./castletree2.brres",
+      "source": "courseArchive",
+      "trackFile": "loser_demo.szs",
+      "trackLabel": "loser demo",
+      "path": "./castletree2.brres",
+      "baseName": "castletree2.brres",
+      "kind": "object"
+    },
+    {
+      "id": "loser_demo.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "loser_demo.szs",
+      "trackLabel": "loser demo",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "loser_demo.szs:./DemoCol.brres",
+      "source": "courseArchive",
+      "trackFile": "loser_demo.szs",
+      "trackLabel": "loser demo",
+      "path": "./DemoCol.brres",
+      "baseName": "DemoCol.brres",
+      "kind": "object"
+    },
+    {
+      "id": "loser_demo.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "loser_demo.szs",
+      "trackLabel": "loser demo",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "loser_demo.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "loser_demo.szs",
+      "trackLabel": "loser demo",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_CookieLand_gc.szs:./coin.brres",
+      "source": "courseArchive",
+      "trackFile": "old_CookieLand_gc.szs",
+      "trackLabel": "old CookieLand gc",
+      "path": "./coin.brres",
+      "baseName": "coin.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_CookieLand_gc.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_CookieLand_gc.szs",
+      "trackLabel": "old CookieLand gc",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_CookieLand_gc.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_CookieLand_gc.szs",
+      "trackLabel": "old CookieLand gc",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_CookieLand_gc.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_CookieLand_gc.szs",
+      "trackLabel": "old CookieLand gc",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_CookieLand_gc.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_CookieLand_gc.szs",
+      "trackLabel": "old CookieLand gc",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_House_ds.szs:./coin.brres",
+      "source": "courseArchive",
+      "trackFile": "old_House_ds.szs",
+      "trackLabel": "old House ds",
+      "path": "./coin.brres",
+      "baseName": "coin.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_House_ds.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_House_ds.szs",
+      "trackLabel": "old House ds",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_House_ds.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_House_ds.szs",
+      "trackLabel": "old House ds",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_House_ds.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_House_ds.szs",
+      "trackLabel": "old House ds",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_House_ds.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_House_ds.szs",
+      "trackLabel": "old House ds",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_battle3_gba.szs:./coin.brres",
+      "source": "courseArchive",
+      "trackFile": "old_battle3_gba.szs",
+      "trackLabel": "old battle3 gba",
+      "path": "./coin.brres",
+      "baseName": "coin.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_battle3_gba.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_battle3_gba.szs",
+      "trackLabel": "old battle3 gba",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_battle3_gba.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_battle3_gba.szs",
+      "trackLabel": "old battle3 gba",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_battle3_gba.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_battle3_gba.szs",
+      "trackLabel": "old battle3 gba",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_battle3_gba.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_battle3_gba.szs",
+      "trackLabel": "old battle3 gba",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_battle4_sfc.szs:./coin.brres",
+      "source": "courseArchive",
+      "trackFile": "old_battle4_sfc.szs",
+      "trackLabel": "old battle4 sfc",
+      "path": "./coin.brres",
+      "baseName": "coin.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_battle4_sfc.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_battle4_sfc.szs",
+      "trackLabel": "old battle4 sfc",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_battle4_sfc.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_battle4_sfc.szs",
+      "trackLabel": "old battle4 sfc",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_battle4_sfc.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_battle4_sfc.szs",
+      "trackLabel": "old battle4 sfc",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_battle4_sfc.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_battle4_sfc.szs",
+      "trackLabel": "old battle4 sfc",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_desert_ds.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_desert_ds.szs",
+      "trackLabel": "old desert ds",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_desert_ds.szs:./FireSnake.brres",
+      "source": "courseArchive",
+      "trackFile": "old_desert_ds.szs",
+      "trackLabel": "old desert ds",
+      "path": "./FireSnake.brres",
+      "baseName": "FireSnake.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_desert_ds.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_desert_ds.szs",
+      "trackLabel": "old desert ds",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_desert_ds.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_desert_ds.szs",
+      "trackLabel": "old desert ds",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_desert_ds.szs:./pocha.brres",
+      "source": "courseArchive",
+      "trackFile": "old_desert_ds.szs",
+      "trackLabel": "old desert ds",
+      "path": "./pocha.brres",
+      "baseName": "pocha.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_desert_ds.szs:./sanbo.brres",
+      "source": "courseArchive",
+      "trackFile": "old_desert_ds.szs",
+      "trackLabel": "old desert ds",
+      "path": "./sanbo.brres",
+      "baseName": "sanbo.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_desert_ds.szs:./sunDS.brres",
+      "source": "courseArchive",
+      "trackFile": "old_desert_ds.szs",
+      "trackLabel": "old desert ds",
+      "path": "./sunDS.brres",
+      "baseName": "sunDS.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_desert_ds.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_desert_ds.szs",
+      "trackLabel": "old desert ds",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_donkey_64.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_64.szs",
+      "trackLabel": "old donkey 64",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_donkey_64.szs:./DKship64.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_64.szs",
+      "trackLabel": "old donkey 64",
+      "path": "./DKship64.brres",
+      "baseName": "DKship64.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_donkey_64.szs:./DKtreeA64.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_64.szs",
+      "trackLabel": "old donkey 64",
+      "path": "./DKtreeA64.brres",
+      "baseName": "DKtreeA64.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_donkey_64.szs:./DKtreeB64.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_64.szs",
+      "trackLabel": "old donkey 64",
+      "path": "./DKtreeB64.brres",
+      "baseName": "DKtreeB64.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_donkey_64.szs:./group_enemy_a.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_64.szs",
+      "trackLabel": "old donkey 64",
+      "path": "./group_enemy_a.brres",
+      "baseName": "group_enemy_a.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_donkey_64.szs:./group_enemy_b.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_64.szs",
+      "trackLabel": "old donkey 64",
+      "path": "./group_enemy_b.brres",
+      "baseName": "group_enemy_b.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_donkey_64.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_64.szs",
+      "trackLabel": "old donkey 64",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_donkey_64.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_64.szs",
+      "trackLabel": "old donkey 64",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_donkey_64.szs:./pocha.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_64.szs",
+      "trackLabel": "old donkey 64",
+      "path": "./pocha.brres",
+      "baseName": "pocha.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_donkey_64.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_64.szs",
+      "trackLabel": "old donkey 64",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_donkey_gc.szs:./bird.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_gc.szs",
+      "trackLabel": "old donkey gc",
+      "path": "./bird.brres",
+      "baseName": "bird.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_donkey_gc.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_gc.szs",
+      "trackLabel": "old donkey gc",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_donkey_gc.szs:./DKrockGC.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_gc.szs",
+      "trackLabel": "old donkey gc",
+      "path": "./DKrockGC.brres",
+      "baseName": "DKrockGC.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_donkey_gc.szs:./DKturibashiGC.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_gc.szs",
+      "trackLabel": "old donkey gc",
+      "path": "./DKturibashiGC.brres",
+      "baseName": "DKturibashiGC.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_donkey_gc.szs:./DonkyCannonGC.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_gc.szs",
+      "trackLabel": "old donkey gc",
+      "path": "./DonkyCannonGC.brres",
+      "baseName": "DonkyCannonGC.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_donkey_gc.szs:./donkytree1GC.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_gc.szs",
+      "trackLabel": "old donkey gc",
+      "path": "./donkytree1GC.brres",
+      "baseName": "donkytree1GC.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_donkey_gc.szs:./donkytree2GC.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_gc.szs",
+      "trackLabel": "old donkey gc",
+      "path": "./donkytree2GC.brres",
+      "baseName": "donkytree2GC.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_donkey_gc.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_gc.szs",
+      "trackLabel": "old donkey gc",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_donkey_gc.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_gc.szs",
+      "trackLabel": "old donkey gc",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_donkey_gc.szs:./pocha.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_gc.szs",
+      "trackLabel": "old donkey gc",
+      "path": "./pocha.brres",
+      "baseName": "pocha.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_donkey_gc.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_gc.szs",
+      "trackLabel": "old donkey gc",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_donkey_gc.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_donkey_gc.szs",
+      "trackLabel": "old donkey gc",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_falls_ds.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_falls_ds.szs",
+      "trackLabel": "old falls ds",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_falls_ds.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_falls_ds.szs",
+      "trackLabel": "old falls ds",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_falls_ds.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_falls_ds.szs",
+      "trackLabel": "old falls ds",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_falls_ds.szs:./pocha.brres",
+      "source": "courseArchive",
+      "trackFile": "old_falls_ds.szs",
+      "trackLabel": "old falls ds",
+      "path": "./pocha.brres",
+      "baseName": "pocha.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_falls_ds.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "old_falls_ds.szs",
+      "trackLabel": "old falls ds",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_falls_ds.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_falls_ds.szs",
+      "trackLabel": "old falls ds",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_garden_ds.szs:./choropu.brres",
+      "source": "courseArchive",
+      "trackFile": "old_garden_ds.szs",
+      "trackLabel": "old garden ds",
+      "path": "./choropu.brres",
+      "baseName": "choropu.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_garden_ds.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_garden_ds.szs",
+      "trackLabel": "old garden ds",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_garden_ds.szs:./gardentreeDS.brres",
+      "source": "courseArchive",
+      "trackFile": "old_garden_ds.szs",
+      "trackLabel": "old garden ds",
+      "path": "./gardentreeDS.brres",
+      "baseName": "gardentreeDS.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_garden_ds.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_garden_ds.szs",
+      "trackLabel": "old garden ds",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_garden_ds.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_garden_ds.szs",
+      "trackLabel": "old garden ds",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_garden_ds.szs:./pocha.brres",
+      "source": "courseArchive",
+      "trackFile": "old_garden_ds.szs",
+      "trackLabel": "old garden ds",
+      "path": "./pocha.brres",
+      "baseName": "pocha.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_garden_ds.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "old_garden_ds.szs",
+      "trackLabel": "old garden ds",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_garden_ds.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_garden_ds.szs",
+      "trackLabel": "old garden ds",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_garden_ds.szs:./wanwan.brres",
+      "source": "courseArchive",
+      "trackFile": "old_garden_ds.szs",
+      "trackLabel": "old garden ds",
+      "path": "./wanwan.brres",
+      "baseName": "wanwan.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_heyho_gba.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_heyho_gba.szs",
+      "trackLabel": "old heyho gba",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_heyho_gba.szs:./crab.brres",
+      "source": "courseArchive",
+      "trackFile": "old_heyho_gba.szs",
+      "trackLabel": "old heyho gba",
+      "path": "./crab.brres",
+      "baseName": "crab.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_heyho_gba.szs:./HeyhoBallGBA.brres",
+      "source": "courseArchive",
+      "trackFile": "old_heyho_gba.szs",
+      "trackLabel": "old heyho gba",
+      "path": "./HeyhoBallGBA.brres",
+      "baseName": "HeyhoBallGBA.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_heyho_gba.szs:./HeyhoShipGBA.brres",
+      "source": "courseArchive",
+      "trackFile": "old_heyho_gba.szs",
+      "trackLabel": "old heyho gba",
+      "path": "./HeyhoShipGBA.brres",
+      "baseName": "HeyhoShipGBA.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_heyho_gba.szs:./HeyhoTreeGBA.brres",
+      "source": "courseArchive",
+      "trackFile": "old_heyho_gba.szs",
+      "trackLabel": "old heyho gba",
+      "path": "./HeyhoTreeGBA.brres",
+      "baseName": "HeyhoTreeGBA.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_heyho_gba.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_heyho_gba.szs",
+      "trackLabel": "old heyho gba",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_heyho_gba.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_heyho_gba.szs",
+      "trackLabel": "old heyho gba",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_heyho_gba.szs:./pocha.brres",
+      "source": "courseArchive",
+      "trackFile": "old_heyho_gba.szs",
+      "trackLabel": "old heyho gba",
+      "path": "./pocha.brres",
+      "baseName": "pocha.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_heyho_gba.szs:./r_parasol.brres",
+      "source": "courseArchive",
+      "trackFile": "old_heyho_gba.szs",
+      "trackLabel": "old heyho gba",
+      "path": "./r_parasol.brres",
+      "baseName": "r_parasol.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_heyho_gba.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "old_heyho_gba.szs",
+      "trackLabel": "old heyho gba",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_heyho_gba.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_heyho_gba.szs",
+      "trackLabel": "old heyho gba",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_koopa_64.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_koopa_64.szs",
+      "trackLabel": "old koopa 64",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_koopa_64.szs:./dossun.brres",
+      "source": "courseArchive",
+      "trackFile": "old_koopa_64.szs",
+      "trackLabel": "old koopa 64",
+      "path": "./dossun.brres",
+      "baseName": "dossun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_koopa_64.szs:./FlamePole_v.brres",
+      "source": "courseArchive",
+      "trackFile": "old_koopa_64.szs",
+      "trackLabel": "old koopa 64",
+      "path": "./FlamePole_v.brres",
+      "baseName": "FlamePole_v.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_koopa_64.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_koopa_64.szs",
+      "trackLabel": "old koopa 64",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_koopa_64.szs:./KoopaFigure64.brres",
+      "source": "courseArchive",
+      "trackFile": "old_koopa_64.szs",
+      "trackLabel": "old koopa 64",
+      "path": "./KoopaFigure64.brres",
+      "baseName": "KoopaFigure64.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_koopa_64.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_koopa_64.szs",
+      "trackLabel": "old koopa 64",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_koopa_64.szs:./pochaYogan.brres",
+      "source": "courseArchive",
+      "trackFile": "old_koopa_64.szs",
+      "trackLabel": "old koopa 64",
+      "path": "./pochaYogan.brres",
+      "baseName": "pochaYogan.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_koopa_64.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_koopa_64.szs",
+      "trackLabel": "old koopa 64",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_koopa_gba.szs:./boble.brres",
+      "source": "courseArchive",
+      "trackFile": "old_koopa_gba.szs",
+      "trackLabel": "old koopa gba",
+      "path": "./boble.brres",
+      "baseName": "boble.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_koopa_gba.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_koopa_gba.szs",
+      "trackLabel": "old koopa gba",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_koopa_gba.szs:./dossun.brres",
+      "source": "courseArchive",
+      "trackFile": "old_koopa_gba.szs",
+      "trackLabel": "old koopa gba",
+      "path": "./dossun.brres",
+      "baseName": "dossun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_koopa_gba.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_koopa_gba.szs",
+      "trackLabel": "old koopa gba",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_koopa_gba.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_koopa_gba.szs",
+      "trackLabel": "old koopa gba",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_koopa_gba.szs:./pochaYogan.brres",
+      "source": "courseArchive",
+      "trackFile": "old_koopa_gba.szs",
+      "trackLabel": "old koopa gba",
+      "path": "./pochaYogan.brres",
+      "baseName": "pochaYogan.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_koopa_gba.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_koopa_gba.szs",
+      "trackLabel": "old koopa gba",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_mario_64.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_64.szs",
+      "trackLabel": "old mario 64",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_mario_64.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_64.szs",
+      "trackLabel": "old mario 64",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_64.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_64.szs",
+      "trackLabel": "old mario 64",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_64.szs:./MarioGo64.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_64.szs",
+      "trackLabel": "old mario 64",
+      "path": "./MarioGo64.brres",
+      "baseName": "MarioGo64.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_64.szs:./puchi_pakkun.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_64.szs",
+      "trackLabel": "old mario 64",
+      "path": "./puchi_pakkun.brres",
+      "baseName": "puchi_pakkun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_64.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_64.szs",
+      "trackLabel": "old mario 64",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_64.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_64.szs",
+      "trackLabel": "old mario 64",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_mario_gc.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc.szs",
+      "trackLabel": "old mario gc",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_mario_gc.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc.szs",
+      "trackLabel": "old mario gc",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_gc.szs:./kuribo.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc.szs",
+      "trackLabel": "old mario gc",
+      "path": "./kuribo.brres",
+      "baseName": "kuribo.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_gc.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc.szs",
+      "trackLabel": "old mario gc",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_gc.szs:./mariotreeGC.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc.szs",
+      "trackLabel": "old mario gc",
+      "path": "./mariotreeGC.brres",
+      "baseName": "mariotreeGC.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_gc.szs:./MashBalloonGC.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc.szs",
+      "trackLabel": "old mario gc",
+      "path": "./MashBalloonGC.brres",
+      "baseName": "MashBalloonGC.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_gc.szs:./pakkun_dokan.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc.szs",
+      "trackLabel": "old mario gc",
+      "path": "./pakkun_dokan.brres",
+      "baseName": "pakkun_dokan.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_gc.szs:./pakkun_f.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc.szs",
+      "trackLabel": "old mario gc",
+      "path": "./pakkun_f.brres",
+      "baseName": "pakkun_f.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_gc.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc.szs",
+      "trackLabel": "old mario gc",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_gc.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc.szs",
+      "trackLabel": "old mario gc",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_mario_gc.szs:./wanwan.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc.szs",
+      "trackLabel": "old mario gc",
+      "path": "./wanwan.brres",
+      "baseName": "wanwan.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_gc_b.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc_b.szs",
+      "trackLabel": "old mario gc b",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_mario_gc_b.szs:./kuribo.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc_b.szs",
+      "trackLabel": "old mario gc b",
+      "path": "./kuribo.brres",
+      "baseName": "kuribo.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_gc_b.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc_b.szs",
+      "trackLabel": "old mario gc b",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_gc_b.szs:./mariotreeGC.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc_b.szs",
+      "trackLabel": "old mario gc b",
+      "path": "./mariotreeGC.brres",
+      "baseName": "mariotreeGC.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_gc_b.szs:./MashBalloonGC.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc_b.szs",
+      "trackLabel": "old mario gc b",
+      "path": "./MashBalloonGC.brres",
+      "baseName": "MashBalloonGC.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_gc_b.szs:./pakkun_f.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc_b.szs",
+      "trackLabel": "old mario gc b",
+      "path": "./pakkun_f.brres",
+      "baseName": "pakkun_f.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_gc_b.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc_b.szs",
+      "trackLabel": "old mario gc b",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_mario_gc_hayasi.szs:course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc_hayasi.szs",
+      "trackLabel": "old mario gc hayasi",
+      "path": "course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_mario_gc_hayasi.szs:vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc_hayasi.szs",
+      "trackLabel": "old mario gc hayasi",
+      "path": "vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_mario_gc_narita.szs:course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc_narita.szs",
+      "trackLabel": "old mario gc narita",
+      "path": "course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_mario_gc_narita.szs:vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc_narita.szs",
+      "trackLabel": "old mario gc narita",
+      "path": "vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_mario_gc_yabuki.szs:course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc_yabuki.szs",
+      "trackLabel": "old mario gc yabuki",
+      "path": "course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_mario_gc_yabuki.szs:vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_gc_yabuki.szs",
+      "trackLabel": "old mario gc yabuki",
+      "path": "vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_mario_sfc.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_sfc.szs",
+      "trackLabel": "old mario sfc",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_mario_sfc.szs:./dokan_sfc.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_sfc.szs",
+      "trackLabel": "old mario sfc",
+      "path": "./dokan_sfc.brres",
+      "baseName": "dokan_sfc.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_sfc.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_sfc.szs",
+      "trackLabel": "old mario sfc",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_sfc.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_sfc.szs",
+      "trackLabel": "old mario sfc",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_sfc.szs:./oilSFC.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_sfc.szs",
+      "trackLabel": "old mario sfc",
+      "path": "./oilSFC.brres",
+      "baseName": "oilSFC.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_mario_sfc.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_mario_sfc.szs",
+      "trackLabel": "old mario sfc",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_matenro_64.szs:./coin.brres",
+      "source": "courseArchive",
+      "trackFile": "old_matenro_64.szs",
+      "trackLabel": "old matenro 64",
+      "path": "./coin.brres",
+      "baseName": "coin.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_matenro_64.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_matenro_64.szs",
+      "trackLabel": "old matenro 64",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_matenro_64.szs:./Crescent64.brres",
+      "source": "courseArchive",
+      "trackFile": "old_matenro_64.szs",
+      "trackLabel": "old matenro 64",
+      "path": "./Crescent64.brres",
+      "baseName": "Crescent64.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_matenro_64.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_matenro_64.szs",
+      "trackLabel": "old matenro 64",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_matenro_64.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_matenro_64.szs",
+      "trackLabel": "old matenro 64",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_matenro_64.szs:./Spot64.brres",
+      "source": "courseArchive",
+      "trackFile": "old_matenro_64.szs",
+      "trackLabel": "old matenro 64",
+      "path": "./Spot64.brres",
+      "baseName": "Spot64.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_matenro_64.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_matenro_64.szs",
+      "trackLabel": "old matenro 64",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_obake_sfc.szs:./BGteresaSFC.brres",
+      "source": "courseArchive",
+      "trackFile": "old_obake_sfc.szs",
+      "trackLabel": "old obake sfc",
+      "path": "./BGteresaSFC.brres",
+      "baseName": "BGteresaSFC.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_obake_sfc.szs:./b_teresa.brres",
+      "source": "courseArchive",
+      "trackFile": "old_obake_sfc.szs",
+      "trackLabel": "old obake sfc",
+      "path": "./b_teresa.brres",
+      "baseName": "b_teresa.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_obake_sfc.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_obake_sfc.szs",
+      "trackLabel": "old obake sfc",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_obake_sfc.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_obake_sfc.szs",
+      "trackLabel": "old obake sfc",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_obake_sfc.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_obake_sfc.szs",
+      "trackLabel": "old obake sfc",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_obake_sfc.szs:./obakeblockSFC.brres",
+      "source": "courseArchive",
+      "trackFile": "old_obake_sfc.szs",
+      "trackLabel": "old obake sfc",
+      "path": "./obakeblockSFC.brres",
+      "baseName": "obakeblockSFC.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_obake_sfc.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_obake_sfc.szs",
+      "trackLabel": "old obake sfc",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_peach_gc.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_peach_gc.szs",
+      "trackLabel": "old peach gc",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_peach_gc.szs:./group_enemy_a.brres",
+      "source": "courseArchive",
+      "trackFile": "old_peach_gc.szs",
+      "trackLabel": "old peach gc",
+      "path": "./group_enemy_a.brres",
+      "baseName": "group_enemy_a.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_peach_gc.szs:./group_monte_a.brres",
+      "source": "courseArchive",
+      "trackFile": "old_peach_gc.szs",
+      "trackLabel": "old peach gc",
+      "path": "./group_monte_a.brres",
+      "baseName": "group_monte_a.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_peach_gc.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_peach_gc.szs",
+      "trackLabel": "old peach gc",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_peach_gc.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_peach_gc.szs",
+      "trackLabel": "old peach gc",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_peach_gc.szs:./mare_a.brres",
+      "source": "courseArchive",
+      "trackFile": "old_peach_gc.szs",
+      "trackLabel": "old peach gc",
+      "path": "./mare_a.brres",
+      "baseName": "mare_a.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_peach_gc.szs:./mare_b.brres",
+      "source": "courseArchive",
+      "trackFile": "old_peach_gc.szs",
+      "trackLabel": "old peach gc",
+      "path": "./mare_b.brres",
+      "baseName": "mare_b.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_peach_gc.szs:./monte_a.brres",
+      "source": "courseArchive",
+      "trackFile": "old_peach_gc.szs",
+      "trackLabel": "old peach gc",
+      "path": "./monte_a.brres",
+      "baseName": "monte_a.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_peach_gc.szs:./PeachHunsuiGC.brres",
+      "source": "courseArchive",
+      "trackFile": "old_peach_gc.szs",
+      "trackLabel": "old peach gc",
+      "path": "./PeachHunsuiGC.brres",
+      "baseName": "PeachHunsuiGC.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_peach_gc.szs:./peachtreeGC.brres",
+      "source": "courseArchive",
+      "trackFile": "old_peach_gc.szs",
+      "trackLabel": "old peach gc",
+      "path": "./peachtreeGC.brres",
+      "baseName": "peachtreeGC.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_peach_gc.szs:./pocha.brres",
+      "source": "courseArchive",
+      "trackFile": "old_peach_gc.szs",
+      "trackLabel": "old peach gc",
+      "path": "./pocha.brres",
+      "baseName": "pocha.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_peach_gc.szs:./poihana.brres",
+      "source": "courseArchive",
+      "trackFile": "old_peach_gc.szs",
+      "trackLabel": "old peach gc",
+      "path": "./poihana.brres",
+      "baseName": "poihana.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_peach_gc.szs:./Psea.brres",
+      "source": "courseArchive",
+      "trackFile": "old_peach_gc.szs",
+      "trackLabel": "old peach gc",
+      "path": "./Psea.brres",
+      "baseName": "Psea.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_peach_gc.szs:./seagull.brres",
+      "source": "courseArchive",
+      "trackFile": "old_peach_gc.szs",
+      "trackLabel": "old peach gc",
+      "path": "./seagull.brres",
+      "baseName": "seagull.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_peach_gc.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "old_peach_gc.szs",
+      "trackLabel": "old peach gc",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_peach_gc.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_peach_gc.szs",
+      "trackLabel": "old peach gc",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_sherbet_64.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_sherbet_64.szs",
+      "trackLabel": "old sherbet 64",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_sherbet_64.szs:./ice.brres",
+      "source": "courseArchive",
+      "trackFile": "old_sherbet_64.szs",
+      "trackLabel": "old sherbet 64",
+      "path": "./ice.brres",
+      "baseName": "ice.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_sherbet_64.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_sherbet_64.szs",
+      "trackLabel": "old sherbet 64",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_sherbet_64.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_sherbet_64.szs",
+      "trackLabel": "old sherbet 64",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_sherbet_64.szs:./penguin_l.brres",
+      "source": "courseArchive",
+      "trackFile": "old_sherbet_64.szs",
+      "trackLabel": "old sherbet 64",
+      "path": "./penguin_l.brres",
+      "baseName": "penguin_l.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_sherbet_64.szs:./penguin_m.brres",
+      "source": "courseArchive",
+      "trackFile": "old_sherbet_64.szs",
+      "trackLabel": "old sherbet 64",
+      "path": "./penguin_m.brres",
+      "baseName": "penguin_m.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_sherbet_64.szs:./penguin_s.brres",
+      "source": "courseArchive",
+      "trackFile": "old_sherbet_64.szs",
+      "trackLabel": "old sherbet 64",
+      "path": "./penguin_s.brres",
+      "baseName": "penguin_s.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_sherbet_64.szs:./pocha.brres",
+      "source": "courseArchive",
+      "trackFile": "old_sherbet_64.szs",
+      "trackLabel": "old sherbet 64",
+      "path": "./pocha.brres",
+      "baseName": "pocha.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_sherbet_64.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "old_sherbet_64.szs",
+      "trackLabel": "old sherbet 64",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_sherbet_64.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_sherbet_64.szs",
+      "trackLabel": "old sherbet 64",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_town_ds.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_town_ds.szs",
+      "trackLabel": "old town ds",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_town_ds.szs:./FlagA3.brres",
+      "source": "courseArchive",
+      "trackFile": "old_town_ds.szs",
+      "trackLabel": "old town ds",
+      "path": "./FlagA3.brres",
+      "baseName": "FlagA3.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_town_ds.szs:./group_monte_a.brres",
+      "source": "courseArchive",
+      "trackFile": "old_town_ds.szs",
+      "trackLabel": "old town ds",
+      "path": "./group_monte_a.brres",
+      "baseName": "group_monte_a.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_town_ds.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_town_ds.szs",
+      "trackLabel": "old town ds",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_town_ds.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_town_ds.szs",
+      "trackLabel": "old town ds",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_town_ds.szs:./monte_a.brres",
+      "source": "courseArchive",
+      "trackFile": "old_town_ds.szs",
+      "trackLabel": "old town ds",
+      "path": "./monte_a.brres",
+      "baseName": "monte_a.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_town_ds.szs:./pocha.brres",
+      "source": "courseArchive",
+      "trackFile": "old_town_ds.szs",
+      "trackLabel": "old town ds",
+      "path": "./pocha.brres",
+      "baseName": "pocha.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_town_ds.szs:./seagull.brres",
+      "source": "courseArchive",
+      "trackFile": "old_town_ds.szs",
+      "trackLabel": "old town ds",
+      "path": "./seagull.brres",
+      "baseName": "seagull.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_town_ds.szs:./SentakuDS.brres",
+      "source": "courseArchive",
+      "trackFile": "old_town_ds.szs",
+      "trackLabel": "old town ds",
+      "path": "./SentakuDS.brres",
+      "baseName": "SentakuDS.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_town_ds.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "old_town_ds.szs",
+      "trackLabel": "old town ds",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_town_ds.szs:./TownBridgeDS.brres",
+      "source": "courseArchive",
+      "trackFile": "old_town_ds.szs",
+      "trackLabel": "old town ds",
+      "path": "./TownBridgeDS.brres",
+      "baseName": "TownBridgeDS.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_town_ds.szs:./TownTreeDS.brres",
+      "source": "courseArchive",
+      "trackFile": "old_town_ds.szs",
+      "trackLabel": "old town ds",
+      "path": "./TownTreeDS.brres",
+      "baseName": "TownTreeDS.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_town_ds.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_town_ds.szs",
+      "trackLabel": "old town ds",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_town_ds.szs:./woodbox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_town_ds.szs",
+      "trackLabel": "old town ds",
+      "path": "./woodbox.brres",
+      "baseName": "woodbox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_waluigi_gc.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_waluigi_gc.szs",
+      "trackLabel": "old waluigi gc",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "old_waluigi_gc.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "old_waluigi_gc.szs",
+      "trackLabel": "old waluigi gc",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_waluigi_gc.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_waluigi_gc.szs",
+      "trackLabel": "old waluigi gc",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_waluigi_gc.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "old_waluigi_gc.szs",
+      "trackLabel": "old waluigi gc",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "old_waluigi_gc.szs:./WLarrowGC.brres",
+      "source": "courseArchive",
+      "trackFile": "old_waluigi_gc.szs",
+      "trackLabel": "old waluigi gc",
+      "path": "./WLarrowGC.brres",
+      "baseName": "WLarrowGC.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_waluigi_gc.szs:./WLdokanGC.brres",
+      "source": "courseArchive",
+      "trackFile": "old_waluigi_gc.szs",
+      "trackLabel": "old waluigi gc",
+      "path": "./WLdokanGC.brres",
+      "baseName": "WLdokanGC.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_waluigi_gc.szs:./WLfirebarGC.brres",
+      "source": "courseArchive",
+      "trackFile": "old_waluigi_gc.szs",
+      "trackLabel": "old waluigi gc",
+      "path": "./WLfirebarGC.brres",
+      "baseName": "WLfirebarGC.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_waluigi_gc.szs:./WLscreenGC.brres",
+      "source": "courseArchive",
+      "trackFile": "old_waluigi_gc.szs",
+      "trackLabel": "old waluigi gc",
+      "path": "./WLscreenGC.brres",
+      "baseName": "WLscreenGC.brres",
+      "kind": "object"
+    },
+    {
+      "id": "old_waluigi_gc.szs:./WLwallGC.brres",
+      "source": "courseArchive",
+      "trackFile": "old_waluigi_gc.szs",
+      "trackLabel": "old waluigi gc",
+      "path": "./WLwallGC.brres",
+      "baseName": "WLwallGC.brres",
+      "kind": "object"
+    },
+    {
+      "id": "rainbow_course.szs:./aurora.brres",
+      "source": "courseArchive",
+      "trackFile": "rainbow_course.szs",
+      "trackLabel": "rainbow course",
+      "path": "./aurora.brres",
+      "baseName": "aurora.brres",
+      "kind": "object"
+    },
+    {
+      "id": "rainbow_course.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "rainbow_course.szs",
+      "trackLabel": "rainbow course",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "rainbow_course.szs:./EarthRing.brres",
+      "source": "courseArchive",
+      "trackFile": "rainbow_course.szs",
+      "trackLabel": "rainbow course",
+      "path": "./EarthRing.brres",
+      "baseName": "EarthRing.brres",
+      "kind": "object"
+    },
+    {
+      "id": "rainbow_course.szs:./InsekiA.brres",
+      "source": "courseArchive",
+      "trackFile": "rainbow_course.szs",
+      "trackLabel": "rainbow course",
+      "path": "./InsekiA.brres",
+      "baseName": "InsekiA.brres",
+      "kind": "object"
+    },
+    {
+      "id": "rainbow_course.szs:./InsekiB.brres",
+      "source": "courseArchive",
+      "trackFile": "rainbow_course.szs",
+      "trackLabel": "rainbow course",
+      "path": "./InsekiB.brres",
+      "baseName": "InsekiB.brres",
+      "kind": "object"
+    },
+    {
+      "id": "rainbow_course.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "rainbow_course.szs",
+      "trackLabel": "rainbow course",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "rainbow_course.szs:./KmoonZ.brres",
+      "source": "courseArchive",
+      "trackFile": "rainbow_course.szs",
+      "trackLabel": "rainbow course",
+      "path": "./KmoonZ.brres",
+      "baseName": "KmoonZ.brres",
+      "kind": "object"
+    },
+    {
+      "id": "rainbow_course.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "rainbow_course.szs",
+      "trackLabel": "rainbow course",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "rainbow_course.szs:./SpaceSun.brres",
+      "source": "courseArchive",
+      "trackFile": "rainbow_course.szs",
+      "trackLabel": "rainbow course",
+      "path": "./SpaceSun.brres",
+      "baseName": "SpaceSun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "rainbow_course.szs:./StarRing.brres",
+      "source": "courseArchive",
+      "trackFile": "rainbow_course.szs",
+      "trackLabel": "rainbow course",
+      "path": "./StarRing.brres",
+      "baseName": "StarRing.brres",
+      "kind": "object"
+    },
+    {
+      "id": "rainbow_course.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "rainbow_course.szs",
+      "trackLabel": "rainbow course",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "ridgehighway_course.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "ridgehighway_course.szs",
+      "trackLabel": "ridgehighway course",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "ridgehighway_course.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "ridgehighway_course.szs",
+      "trackLabel": "ridgehighway course",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ridgehighway_course.szs:./Ksticketc.brres",
+      "source": "courseArchive",
+      "trackFile": "ridgehighway_course.szs",
+      "trackLabel": "ridgehighway course",
+      "path": "./Ksticketc.brres",
+      "baseName": "Ksticketc.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ridgehighway_course.szs:./K_bomb_car.brres",
+      "source": "courseArchive",
+      "trackFile": "ridgehighway_course.szs",
+      "trackLabel": "ridgehighway course",
+      "path": "./K_bomb_car.brres",
+      "baseName": "K_bomb_car.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ridgehighway_course.szs:./K_car_body.brres",
+      "source": "courseArchive",
+      "trackFile": "ridgehighway_course.szs",
+      "trackLabel": "ridgehighway course",
+      "path": "./K_car_body.brres",
+      "baseName": "K_car_body.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ridgehighway_course.szs:./K_truck.brres",
+      "source": "courseArchive",
+      "trackFile": "ridgehighway_course.szs",
+      "trackLabel": "ridgehighway course",
+      "path": "./K_truck.brres",
+      "baseName": "K_truck.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ridgehighway_course.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "ridgehighway_course.szs",
+      "trackLabel": "ridgehighway course",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ridgehighway_course.szs:./pocha.brres",
+      "source": "courseArchive",
+      "trackFile": "ridgehighway_course.szs",
+      "trackLabel": "ridgehighway course",
+      "path": "./pocha.brres",
+      "baseName": "pocha.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ridgehighway_course.szs:./RhMiiKanban.brres",
+      "source": "courseArchive",
+      "trackFile": "ridgehighway_course.szs",
+      "trackLabel": "ridgehighway course",
+      "path": "./RhMiiKanban.brres",
+      "baseName": "RhMiiKanban.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ridgehighway_course.szs:./ridgemii00.brres",
+      "source": "courseArchive",
+      "trackFile": "ridgehighway_course.szs",
+      "trackLabel": "ridgehighway course",
+      "path": "./ridgemii00.brres",
+      "baseName": "ridgemii00.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ridgehighway_course.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "ridgehighway_course.szs",
+      "trackLabel": "ridgehighway course",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "ring_mission.szs:./begoman_spike.brres",
+      "source": "courseArchive",
+      "trackFile": "ring_mission.szs",
+      "trackLabel": "ring mission",
+      "path": "./begoman_spike.brres",
+      "baseName": "begoman_spike.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ring_mission.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "ring_mission.szs",
+      "trackLabel": "ring mission",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "ring_mission.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "ring_mission.szs",
+      "trackLabel": "ring mission",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ring_mission.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "ring_mission.szs",
+      "trackLabel": "ring mission",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ring_mission.szs:./RM_ring1.brres",
+      "source": "courseArchive",
+      "trackFile": "ring_mission.szs",
+      "trackLabel": "ring mission",
+      "path": "./RM_ring1.brres",
+      "baseName": "RM_ring1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "ring_mission.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "ring_mission.szs",
+      "trackLabel": "ring mission",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "sand_battle.szs:./coin.brres",
+      "source": "courseArchive",
+      "trackFile": "sand_battle.szs",
+      "trackLabel": "sand battle",
+      "path": "./coin.brres",
+      "baseName": "coin.brres",
+      "kind": "object"
+    },
+    {
+      "id": "sand_battle.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "sand_battle.szs",
+      "trackLabel": "sand battle",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "sand_battle.szs:./dossun.brres",
+      "source": "courseArchive",
+      "trackFile": "sand_battle.szs",
+      "trackLabel": "sand battle",
+      "path": "./dossun.brres",
+      "baseName": "dossun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "sand_battle.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "sand_battle.szs",
+      "trackLabel": "sand battle",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "sand_battle.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "sand_battle.szs",
+      "trackLabel": "sand battle",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "sand_battle.szs:./quicksand.brres",
+      "source": "courseArchive",
+      "trackFile": "sand_battle.szs",
+      "trackLabel": "sand battle",
+      "path": "./quicksand.brres",
+      "baseName": "quicksand.brres",
+      "kind": "object"
+    },
+    {
+      "id": "sand_battle.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "sand_battle.szs",
+      "trackLabel": "sand battle",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "sand_battle.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "sand_battle.szs",
+      "trackLabel": "sand battle",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "senior_course.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "senior_course.szs",
+      "trackLabel": "senior course",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "senior_course.szs:./cruiser.brres",
+      "source": "courseArchive",
+      "trackFile": "senior_course.szs",
+      "trackLabel": "senior course",
+      "path": "./cruiser.brres",
+      "baseName": "cruiser.brres",
+      "kind": "object"
+    },
+    {
+      "id": "senior_course.szs:./group_enemy_a.brres",
+      "source": "courseArchive",
+      "trackFile": "senior_course.szs",
+      "trackLabel": "senior course",
+      "path": "./group_enemy_a.brres",
+      "baseName": "group_enemy_a.brres",
+      "kind": "object"
+    },
+    {
+      "id": "senior_course.szs:./group_enemy_b.brres",
+      "source": "courseArchive",
+      "trackFile": "senior_course.szs",
+      "trackLabel": "senior course",
+      "path": "./group_enemy_b.brres",
+      "baseName": "group_enemy_b.brres",
+      "kind": "object"
+    },
+    {
+      "id": "senior_course.szs:./group_enemy_c.brres",
+      "source": "courseArchive",
+      "trackFile": "senior_course.szs",
+      "trackLabel": "senior course",
+      "path": "./group_enemy_c.brres",
+      "baseName": "group_enemy_c.brres",
+      "kind": "object"
+    },
+    {
+      "id": "senior_course.szs:./group_monte_a.brres",
+      "source": "courseArchive",
+      "trackFile": "senior_course.szs",
+      "trackLabel": "senior course",
+      "path": "./group_monte_a.brres",
+      "baseName": "group_monte_a.brres",
+      "kind": "object"
+    },
+    {
+      "id": "senior_course.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "senior_course.szs",
+      "trackLabel": "senior course",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "senior_course.szs:./light_house.brres",
+      "source": "courseArchive",
+      "trackFile": "senior_course.szs",
+      "trackLabel": "senior course",
+      "path": "./light_house.brres",
+      "baseName": "light_house.brres",
+      "kind": "object"
+    },
+    {
+      "id": "senior_course.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "senior_course.szs",
+      "trackLabel": "senior course",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "senior_course.szs:./MiiObjD01.brres",
+      "source": "courseArchive",
+      "trackFile": "senior_course.szs",
+      "trackLabel": "senior course",
+      "path": "./MiiObjD01.brres",
+      "baseName": "MiiObjD01.brres",
+      "kind": "object"
+    },
+    {
+      "id": "senior_course.szs:./MiiObjD02.brres",
+      "source": "courseArchive",
+      "trackFile": "senior_course.szs",
+      "trackLabel": "senior course",
+      "path": "./MiiObjD02.brres",
+      "baseName": "MiiObjD02.brres",
+      "kind": "object"
+    },
+    {
+      "id": "senior_course.szs:./MiiObjD03.brres",
+      "source": "courseArchive",
+      "trackFile": "senior_course.szs",
+      "trackLabel": "senior course",
+      "path": "./MiiObjD03.brres",
+      "baseName": "MiiObjD03.brres",
+      "kind": "object"
+    },
+    {
+      "id": "senior_course.szs:./MiiStatueBD1.brres",
+      "source": "courseArchive",
+      "trackFile": "senior_course.szs",
+      "trackLabel": "senior course",
+      "path": "./MiiStatueBD1.brres",
+      "baseName": "MiiStatueBD1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "senior_course.szs:./MiiStatueBL1.brres",
+      "source": "courseArchive",
+      "trackFile": "senior_course.szs",
+      "trackLabel": "senior course",
+      "path": "./MiiStatueBL1.brres",
+      "baseName": "MiiStatueBL1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "senior_course.szs:./MiiStatueD1.brres",
+      "source": "courseArchive",
+      "trackFile": "senior_course.szs",
+      "trackLabel": "senior course",
+      "path": "./MiiStatueD1.brres",
+      "baseName": "MiiStatueD1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "senior_course.szs:./MiiStatueL1.brres",
+      "source": "courseArchive",
+      "trackFile": "senior_course.szs",
+      "trackLabel": "senior course",
+      "path": "./MiiStatueL1.brres",
+      "baseName": "MiiStatueL1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "senior_course.szs:./pylon01.brres",
+      "source": "courseArchive",
+      "trackFile": "senior_course.szs",
+      "trackLabel": "senior course",
+      "path": "./pylon01.brres",
+      "baseName": "pylon01.brres",
+      "kind": "object"
+    },
+    {
+      "id": "senior_course.szs:./seagull.brres",
+      "source": "courseArchive",
+      "trackFile": "senior_course.szs",
+      "trackLabel": "senior course",
+      "path": "./seagull.brres",
+      "baseName": "seagull.brres",
+      "kind": "object"
+    },
+    {
+      "id": "senior_course.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "senior_course.szs",
+      "trackLabel": "senior course",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "senior_course.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "senior_course.szs",
+      "trackLabel": "senior course",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "shopping_course.szs:./CarA1.brres",
+      "source": "courseArchive",
+      "trackFile": "shopping_course.szs",
+      "trackLabel": "shopping course",
+      "path": "./CarA1.brres",
+      "baseName": "CarA1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "shopping_course.szs:./CarA2.brres",
+      "source": "courseArchive",
+      "trackFile": "shopping_course.szs",
+      "trackLabel": "shopping course",
+      "path": "./CarA2.brres",
+      "baseName": "CarA2.brres",
+      "kind": "object"
+    },
+    {
+      "id": "shopping_course.szs:./CarA3.brres",
+      "source": "courseArchive",
+      "trackFile": "shopping_course.szs",
+      "trackLabel": "shopping course",
+      "path": "./CarA3.brres",
+      "baseName": "CarA3.brres",
+      "kind": "object"
+    },
+    {
+      "id": "shopping_course.szs:./CarB.brres",
+      "source": "courseArchive",
+      "trackFile": "shopping_course.szs",
+      "trackLabel": "shopping course",
+      "path": "./CarB.brres",
+      "baseName": "CarB.brres",
+      "kind": "object"
+    },
+    {
+      "id": "shopping_course.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "shopping_course.szs",
+      "trackLabel": "shopping course",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "shopping_course.szs:./escalator.brres",
+      "source": "courseArchive",
+      "trackFile": "shopping_course.szs",
+      "trackLabel": "shopping course",
+      "path": "./escalator.brres",
+      "baseName": "escalator.brres",
+      "kind": "object"
+    },
+    {
+      "id": "shopping_course.szs:./group_monte_a.brres",
+      "source": "courseArchive",
+      "trackFile": "shopping_course.szs",
+      "trackLabel": "shopping course",
+      "path": "./group_monte_a.brres",
+      "baseName": "group_monte_a.brres",
+      "kind": "object"
+    },
+    {
+      "id": "shopping_course.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "shopping_course.szs",
+      "trackLabel": "shopping course",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "shopping_course.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "shopping_course.szs",
+      "trackLabel": "shopping course",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "shopping_course.szs:./miiposter.brres",
+      "source": "courseArchive",
+      "trackFile": "shopping_course.szs",
+      "trackLabel": "shopping course",
+      "path": "./miiposter.brres",
+      "baseName": "miiposter.brres",
+      "kind": "object"
+    },
+    {
+      "id": "shopping_course.szs:./mii_balloon.brres",
+      "source": "courseArchive",
+      "trackFile": "shopping_course.szs",
+      "trackLabel": "shopping course",
+      "path": "./mii_balloon.brres",
+      "baseName": "mii_balloon.brres",
+      "kind": "object"
+    },
+    {
+      "id": "shopping_course.szs:./monte_a.brres",
+      "source": "courseArchive",
+      "trackFile": "shopping_course.szs",
+      "trackLabel": "shopping course",
+      "path": "./monte_a.brres",
+      "baseName": "monte_a.brres",
+      "kind": "object"
+    },
+    {
+      "id": "shopping_course.szs:./PalmTree.brres",
+      "source": "courseArchive",
+      "trackFile": "shopping_course.szs",
+      "trackLabel": "shopping course",
+      "path": "./PalmTree.brres",
+      "baseName": "PalmTree.brres",
+      "kind": "object"
+    },
+    {
+      "id": "shopping_course.szs:./parasol.brres",
+      "source": "courseArchive",
+      "trackFile": "shopping_course.szs",
+      "trackLabel": "shopping course",
+      "path": "./parasol.brres",
+      "baseName": "parasol.brres",
+      "kind": "object"
+    },
+    {
+      "id": "shopping_course.szs:./ShMiiObj01.brres",
+      "source": "courseArchive",
+      "trackFile": "shopping_course.szs",
+      "trackLabel": "shopping course",
+      "path": "./ShMiiObj01.brres",
+      "baseName": "ShMiiObj01.brres",
+      "kind": "object"
+    },
+    {
+      "id": "shopping_course.szs:./ShMiiObj02.brres",
+      "source": "courseArchive",
+      "trackFile": "shopping_course.szs",
+      "trackLabel": "shopping course",
+      "path": "./ShMiiObj02.brres",
+      "baseName": "ShMiiObj02.brres",
+      "kind": "object"
+    },
+    {
+      "id": "shopping_course.szs:./ShMiiObj03.brres",
+      "source": "courseArchive",
+      "trackFile": "shopping_course.szs",
+      "trackLabel": "shopping course",
+      "path": "./ShMiiObj03.brres",
+      "baseName": "ShMiiObj03.brres",
+      "kind": "object"
+    },
+    {
+      "id": "shopping_course.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "shopping_course.szs",
+      "trackLabel": "shopping course",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "shopping_course.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "shopping_course.szs",
+      "trackLabel": "shopping course",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "skate_battle.szs:./coin.brres",
+      "source": "courseArchive",
+      "trackFile": "skate_battle.szs",
+      "trackLabel": "skate battle",
+      "path": "./coin.brres",
+      "baseName": "coin.brres",
+      "kind": "object"
+    },
+    {
+      "id": "skate_battle.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "skate_battle.szs",
+      "trackLabel": "skate battle",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "skate_battle.szs:./fks_screen_wii.brres",
+      "source": "courseArchive",
+      "trackFile": "skate_battle.szs",
+      "trackLabel": "skate battle",
+      "path": "./fks_screen_wii.brres",
+      "baseName": "fks_screen_wii.brres",
+      "kind": "object"
+    },
+    {
+      "id": "skate_battle.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "skate_battle.szs",
+      "trackLabel": "skate battle",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "skate_battle.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "skate_battle.szs",
+      "trackLabel": "skate battle",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "skate_battle.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "skate_battle.szs",
+      "trackLabel": "skate battle",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "treehouse_course.szs:./ami.brres",
+      "source": "courseArchive",
+      "trackFile": "treehouse_course.szs",
+      "trackLabel": "treehouse course",
+      "path": "./ami.brres",
+      "baseName": "ami.brres",
+      "kind": "object"
+    },
+    {
+      "id": "treehouse_course.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "treehouse_course.szs",
+      "trackLabel": "treehouse course",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "treehouse_course.szs:./hanachan.brres",
+      "source": "courseArchive",
+      "trackFile": "treehouse_course.szs",
+      "trackLabel": "treehouse course",
+      "path": "./hanachan.brres",
+      "baseName": "hanachan.brres",
+      "kind": "object"
+    },
+    {
+      "id": "treehouse_course.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "treehouse_course.szs",
+      "trackLabel": "treehouse course",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "treehouse_course.szs:./karehayama.brres",
+      "source": "courseArchive",
+      "trackFile": "treehouse_course.szs",
+      "trackLabel": "treehouse course",
+      "path": "./karehayama.brres",
+      "baseName": "karehayama.brres",
+      "kind": "object"
+    },
+    {
+      "id": "treehouse_course.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "treehouse_course.szs",
+      "trackLabel": "treehouse course",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "treehouse_course.szs:./pocha.brres",
+      "source": "courseArchive",
+      "trackFile": "treehouse_course.szs",
+      "trackLabel": "treehouse course",
+      "path": "./pocha.brres",
+      "baseName": "pocha.brres",
+      "kind": "object"
+    },
+    {
+      "id": "treehouse_course.szs:./tree_cannon.brres",
+      "source": "courseArchive",
+      "trackFile": "treehouse_course.szs",
+      "trackLabel": "treehouse course",
+      "path": "./tree_cannon.brres",
+      "baseName": "tree_cannon.brres",
+      "kind": "object"
+    },
+    {
+      "id": "treehouse_course.szs:./truckChimSmk.brres",
+      "source": "courseArchive",
+      "trackFile": "treehouse_course.szs",
+      "trackLabel": "treehouse course",
+      "path": "./truckChimSmk.brres",
+      "baseName": "truckChimSmk.brres",
+      "kind": "object"
+    },
+    {
+      "id": "treehouse_course.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "treehouse_course.szs",
+      "trackLabel": "treehouse course",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "truck_course.szs:./basabasa.brres",
+      "source": "courseArchive",
+      "trackFile": "truck_course.szs",
+      "trackLabel": "truck course",
+      "path": "./basabasa.brres",
+      "baseName": "basabasa.brres",
+      "kind": "object"
+    },
+    {
+      "id": "truck_course.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "truck_course.szs",
+      "trackLabel": "truck course",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "truck_course.szs:./FlagA1.brres",
+      "source": "courseArchive",
+      "trackFile": "truck_course.szs",
+      "trackLabel": "truck course",
+      "path": "./FlagA1.brres",
+      "baseName": "FlagA1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "truck_course.szs:./FlagB1.brres",
+      "source": "courseArchive",
+      "trackFile": "truck_course.szs",
+      "trackLabel": "truck course",
+      "path": "./FlagB1.brres",
+      "baseName": "FlagB1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "truck_course.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "truck_course.szs",
+      "trackLabel": "truck course",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "truck_course.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "truck_course.szs",
+      "trackLabel": "truck course",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "truck_course.szs:./MiiSignWario.brres",
+      "source": "courseArchive",
+      "trackFile": "truck_course.szs",
+      "trackLabel": "truck course",
+      "path": "./MiiSignWario.brres",
+      "baseName": "MiiSignWario.brres",
+      "kind": "object"
+    },
+    {
+      "id": "truck_course.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "truck_course.szs",
+      "trackLabel": "truck course",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "truck_course.szs:./truckChimSmk.brres",
+      "source": "courseArchive",
+      "trackFile": "truck_course.szs",
+      "trackLabel": "truck course",
+      "path": "./truckChimSmk.brres",
+      "baseName": "truckChimSmk.brres",
+      "kind": "object"
+    },
+    {
+      "id": "truck_course.szs:./TruckWagon.brres",
+      "source": "courseArchive",
+      "trackFile": "truck_course.szs",
+      "trackLabel": "truck course",
+      "path": "./TruckWagon.brres",
+      "baseName": "TruckWagon.brres",
+      "kind": "object"
+    },
+    {
+      "id": "truck_course.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "truck_course.szs",
+      "trackLabel": "truck course",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "venice_battle.szs:./coin.brres",
+      "source": "courseArchive",
+      "trackFile": "venice_battle.szs",
+      "trackLabel": "venice battle",
+      "path": "./coin.brres",
+      "baseName": "coin.brres",
+      "kind": "object"
+    },
+    {
+      "id": "venice_battle.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "venice_battle.szs",
+      "trackLabel": "venice battle",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "venice_battle.szs:./group_monte_a.brres",
+      "source": "courseArchive",
+      "trackFile": "venice_battle.szs",
+      "trackLabel": "venice battle",
+      "path": "./group_monte_a.brres",
+      "baseName": "group_monte_a.brres",
+      "kind": "object"
+    },
+    {
+      "id": "venice_battle.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "venice_battle.szs",
+      "trackLabel": "venice battle",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "venice_battle.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "venice_battle.szs",
+      "trackLabel": "venice battle",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "venice_battle.szs:./pocha.brres",
+      "source": "courseArchive",
+      "trackFile": "venice_battle.szs",
+      "trackLabel": "venice battle",
+      "path": "./pocha.brres",
+      "baseName": "pocha.brres",
+      "kind": "object"
+    },
+    {
+      "id": "venice_battle.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "venice_battle.szs",
+      "trackLabel": "venice battle",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "venice_battle.szs:./truckChimSmkW.brres",
+      "source": "courseArchive",
+      "trackFile": "venice_battle.szs",
+      "trackLabel": "venice battle",
+      "path": "./truckChimSmkW.brres",
+      "baseName": "truckChimSmkW.brres",
+      "kind": "object"
+    },
+    {
+      "id": "venice_battle.szs:./venice_hasi.brres",
+      "source": "courseArchive",
+      "trackFile": "venice_battle.szs",
+      "trackLabel": "venice battle",
+      "path": "./venice_hasi.brres",
+      "baseName": "venice_hasi.brres",
+      "kind": "object"
+    },
+    {
+      "id": "venice_battle.szs:./venice_nami.brres",
+      "source": "courseArchive",
+      "trackFile": "venice_battle.szs",
+      "trackLabel": "venice battle",
+      "path": "./venice_nami.brres",
+      "baseName": "venice_nami.brres",
+      "kind": "object"
+    },
+    {
+      "id": "venice_battle.szs:./venice_saku.brres",
+      "source": "courseArchive",
+      "trackFile": "venice_battle.szs",
+      "trackLabel": "venice battle",
+      "path": "./venice_saku.brres",
+      "baseName": "venice_saku.brres",
+      "kind": "object"
+    },
+    {
+      "id": "venice_battle.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "venice_battle.szs",
+      "trackLabel": "venice battle",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "volcano_course.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "volcano_course.szs",
+      "trackLabel": "volcano course",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "volcano_course.szs:./FireSnake.brres",
+      "source": "courseArchive",
+      "trackFile": "volcano_course.szs",
+      "trackLabel": "volcano course",
+      "path": "./FireSnake.brres",
+      "baseName": "FireSnake.brres",
+      "kind": "object"
+    },
+    {
+      "id": "volcano_course.szs:./FlamePole_v.brres",
+      "source": "courseArchive",
+      "trackFile": "volcano_course.szs",
+      "trackLabel": "volcano course",
+      "path": "./FlamePole_v.brres",
+      "baseName": "FlamePole_v.brres",
+      "kind": "object"
+    },
+    {
+      "id": "volcano_course.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "volcano_course.szs",
+      "trackLabel": "volcano course",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "volcano_course.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "volcano_course.szs",
+      "trackLabel": "volcano course",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "volcano_course.szs:./pochaYogan.brres",
+      "source": "courseArchive",
+      "trackFile": "volcano_course.szs",
+      "trackLabel": "volcano course",
+      "path": "./pochaYogan.brres",
+      "baseName": "pochaYogan.brres",
+      "kind": "object"
+    },
+    {
+      "id": "volcano_course.szs:./VolcanoBall1.brres",
+      "source": "courseArchive",
+      "trackFile": "volcano_course.szs",
+      "trackLabel": "volcano course",
+      "path": "./VolcanoBall1.brres",
+      "baseName": "VolcanoBall1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "volcano_course.szs:./VolcanoPiece1.brres",
+      "source": "courseArchive",
+      "trackFile": "volcano_course.szs",
+      "trackLabel": "volcano course",
+      "path": "./VolcanoPiece1.brres",
+      "baseName": "VolcanoPiece1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "volcano_course.szs:./VolcanoRock1.brres",
+      "source": "courseArchive",
+      "trackFile": "volcano_course.szs",
+      "trackLabel": "volcano course",
+      "path": "./VolcanoRock1.brres",
+      "baseName": "VolcanoRock1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "volcano_course.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "volcano_course.szs",
+      "trackLabel": "volcano course",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "water_course.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "water_course.szs",
+      "trackLabel": "water course",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "water_course.szs:./cruiser.brres",
+      "source": "courseArchive",
+      "trackFile": "water_course.szs",
+      "trackLabel": "water course",
+      "path": "./cruiser.brres",
+      "baseName": "cruiser.brres",
+      "kind": "object"
+    },
+    {
+      "id": "water_course.szs:./Epropeller.brres",
+      "source": "courseArchive",
+      "trackFile": "water_course.szs",
+      "trackLabel": "water course",
+      "path": "./Epropeller.brres",
+      "baseName": "Epropeller.brres",
+      "kind": "object"
+    },
+    {
+      "id": "water_course.szs:./FlagA5.brres",
+      "source": "courseArchive",
+      "trackFile": "water_course.szs",
+      "trackLabel": "water course",
+      "path": "./FlagA5.brres",
+      "baseName": "FlagA5.brres",
+      "kind": "object"
+    },
+    {
+      "id": "water_course.szs:./FlagB3.brres",
+      "source": "courseArchive",
+      "trackFile": "water_course.szs",
+      "trackLabel": "water course",
+      "path": "./FlagB3.brres",
+      "baseName": "FlagB3.brres",
+      "kind": "object"
+    },
+    {
+      "id": "water_course.szs:./FlagB4.brres",
+      "source": "courseArchive",
+      "trackFile": "water_course.szs",
+      "trackLabel": "water course",
+      "path": "./FlagB4.brres",
+      "baseName": "FlagB4.brres",
+      "kind": "object"
+    },
+    {
+      "id": "water_course.szs:./itembox.brres",
+      "source": "courseArchive",
+      "trackFile": "water_course.szs",
+      "trackLabel": "water course",
+      "path": "./itembox.brres",
+      "baseName": "itembox.brres",
+      "kind": "object"
+    },
+    {
+      "id": "water_course.szs:./kuribo.brres",
+      "source": "courseArchive",
+      "trackFile": "water_course.szs",
+      "trackLabel": "water course",
+      "path": "./kuribo.brres",
+      "baseName": "kuribo.brres",
+      "kind": "object"
+    },
+    {
+      "id": "water_course.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "water_course.szs",
+      "trackLabel": "water course",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "water_course.szs:./MiiSignNoko.brres",
+      "source": "courseArchive",
+      "trackFile": "water_course.szs",
+      "trackLabel": "water course",
+      "path": "./MiiSignNoko.brres",
+      "baseName": "MiiSignNoko.brres",
+      "kind": "object"
+    },
+    {
+      "id": "water_course.szs:./moray.brres",
+      "source": "courseArchive",
+      "trackFile": "water_course.szs",
+      "trackLabel": "water course",
+      "path": "./moray.brres",
+      "baseName": "moray.brres",
+      "kind": "object"
+    },
+    {
+      "id": "water_course.szs:./pocha.brres",
+      "source": "courseArchive",
+      "trackFile": "water_course.szs",
+      "trackLabel": "water course",
+      "path": "./pocha.brres",
+      "baseName": "pocha.brres",
+      "kind": "object"
+    },
+    {
+      "id": "water_course.szs:./pukupuku.brres",
+      "source": "courseArchive",
+      "trackFile": "water_course.szs",
+      "trackLabel": "water course",
+      "path": "./pukupuku.brres",
+      "baseName": "pukupuku.brres",
+      "kind": "object"
+    },
+    {
+      "id": "water_course.szs:./seagull.brres",
+      "source": "courseArchive",
+      "trackFile": "water_course.szs",
+      "trackLabel": "water course",
+      "path": "./seagull.brres",
+      "baseName": "seagull.brres",
+      "kind": "object"
+    },
+    {
+      "id": "water_course.szs:./sun.brres",
+      "source": "courseArchive",
+      "trackFile": "water_course.szs",
+      "trackLabel": "water course",
+      "path": "./sun.brres",
+      "baseName": "sun.brres",
+      "kind": "object"
+    },
+    {
+      "id": "water_course.szs:./UtsuboDokan.brres",
+      "source": "courseArchive",
+      "trackFile": "water_course.szs",
+      "trackLabel": "water course",
+      "path": "./UtsuboDokan.brres",
+      "baseName": "UtsuboDokan.brres",
+      "kind": "object"
+    },
+    {
+      "id": "water_course.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "water_course.szs",
+      "trackLabel": "water course",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "winningrun_demo.szs:./castleballoon1.brres",
+      "source": "courseArchive",
+      "trackFile": "winningrun_demo.szs",
+      "trackLabel": "winningrun demo",
+      "path": "./castleballoon1.brres",
+      "baseName": "castleballoon1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "winningrun_demo.szs:./castleflower1.brres",
+      "source": "courseArchive",
+      "trackFile": "winningrun_demo.szs",
+      "trackLabel": "winningrun demo",
+      "path": "./castleflower1.brres",
+      "baseName": "castleflower1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "winningrun_demo.szs:./castletree1.brres",
+      "source": "courseArchive",
+      "trackFile": "winningrun_demo.szs",
+      "trackLabel": "winningrun demo",
+      "path": "./castletree1.brres",
+      "baseName": "castletree1.brres",
+      "kind": "object"
+    },
+    {
+      "id": "winningrun_demo.szs:./castletree2.brres",
+      "source": "courseArchive",
+      "trackFile": "winningrun_demo.szs",
+      "trackLabel": "winningrun demo",
+      "path": "./castletree2.brres",
+      "baseName": "castletree2.brres",
+      "kind": "object"
+    },
+    {
+      "id": "winningrun_demo.szs:./course_model.brres",
+      "source": "courseArchive",
+      "trackFile": "winningrun_demo.szs",
+      "trackLabel": "winningrun demo",
+      "path": "./course_model.brres",
+      "baseName": "course_model.brres",
+      "kind": "course"
+    },
+    {
+      "id": "winningrun_demo.szs:./DemoJugemu.brres",
+      "source": "courseArchive",
+      "trackFile": "winningrun_demo.szs",
+      "trackLabel": "winningrun demo",
+      "path": "./DemoJugemu.brres",
+      "baseName": "DemoJugemu.brres",
+      "kind": "object"
+    },
+    {
+      "id": "winningrun_demo.szs:./group_enemy_a.brres",
+      "source": "courseArchive",
+      "trackFile": "winningrun_demo.szs",
+      "trackLabel": "winningrun demo",
+      "path": "./group_enemy_a.brres",
+      "baseName": "group_enemy_a.brres",
+      "kind": "object"
+    },
+    {
+      "id": "winningrun_demo.szs:./group_enemy_a_demo.brres",
+      "source": "courseArchive",
+      "trackFile": "winningrun_demo.szs",
+      "trackLabel": "winningrun demo",
+      "path": "./group_enemy_a_demo.brres",
+      "baseName": "group_enemy_a_demo.brres",
+      "kind": "object"
+    },
+    {
+      "id": "winningrun_demo.szs:./group_enemy_b.brres",
+      "source": "courseArchive",
+      "trackFile": "winningrun_demo.szs",
+      "trackLabel": "winningrun demo",
+      "path": "./group_enemy_b.brres",
+      "baseName": "group_enemy_b.brres",
+      "kind": "object"
+    },
+    {
+      "id": "winningrun_demo.szs:./group_enemy_c.brres",
+      "source": "courseArchive",
+      "trackFile": "winningrun_demo.szs",
+      "trackLabel": "winningrun demo",
+      "path": "./group_enemy_c.brres",
+      "baseName": "group_enemy_c.brres",
+      "kind": "object"
+    },
+    {
+      "id": "winningrun_demo.szs:./group_monte_a.brres",
+      "source": "courseArchive",
+      "trackFile": "winningrun_demo.szs",
+      "trackLabel": "winningrun demo",
+      "path": "./group_monte_a.brres",
+      "baseName": "group_monte_a.brres",
+      "kind": "object"
+    },
+    {
+      "id": "winningrun_demo.szs:./group_monte_a_demo.brres",
+      "source": "courseArchive",
+      "trackFile": "winningrun_demo.szs",
+      "trackLabel": "winningrun demo",
+      "path": "./group_monte_a_demo.brres",
+      "baseName": "group_monte_a_demo.brres",
+      "kind": "object"
+    },
+    {
+      "id": "winningrun_demo.szs:./map_model.brres",
+      "source": "courseArchive",
+      "trackFile": "winningrun_demo.szs",
+      "trackLabel": "winningrun demo",
+      "path": "./map_model.brres",
+      "baseName": "map_model.brres",
+      "kind": "object"
+    },
+    {
+      "id": "winningrun_demo.szs:./vrcorn_model.brres",
+      "source": "courseArchive",
+      "trackFile": "winningrun_demo.szs",
+      "trackLabel": "winningrun demo",
+      "path": "./vrcorn_model.brres",
+      "baseName": "vrcorn_model.brres",
+      "kind": "skybox"
+    },
+    {
+      "id": "shared:castle_tree1.brres",
+      "source": "sharedObjectDir",
+      "trackFile": null,
+      "trackLabel": "Shared Object",
+      "path": "Object/castle_tree1.brres",
+      "baseName": "castle_tree1.brres",
+      "kind": "sharedObject"
+    },
+    {
+      "id": "shared:castle_tree2.brres",
+      "source": "sharedObjectDir",
+      "trackFile": null,
+      "trackLabel": "Shared Object",
+      "path": "Object/castle_tree2.brres",
+      "baseName": "castle_tree2.brres",
+      "kind": "sharedObject"
+    },
+    {
+      "id": "shared:choropu.brres",
+      "source": "sharedObjectDir",
+      "trackFile": null,
+      "trackLabel": "Shared Object",
+      "path": "Object/choropu.brres",
+      "baseName": "choropu.brres",
+      "kind": "sharedObject"
+    },
+    {
+      "id": "shared:kinoko_lift1.brres",
+      "source": "sharedObjectDir",
+      "trackFile": null,
+      "trackLabel": "Shared Object",
+      "path": "Object/kinoko_lift1.brres",
+      "baseName": "kinoko_lift1.brres",
+      "kind": "sharedObject"
+    },
+    {
+      "id": "shared:kuribo.brres",
+      "source": "sharedObjectDir",
+      "trackFile": null,
+      "trackLabel": "Shared Object",
+      "path": "Object/kuribo.brres",
+      "baseName": "kuribo.brres",
+      "kind": "sharedObject"
+    },
+    {
+      "id": "shared:npc_mii_a.brres",
+      "source": "sharedObjectDir",
+      "trackFile": null,
+      "trackLabel": "Shared Object",
+      "path": "Object/npc_mii_a.brres",
+      "baseName": "npc_mii_a.brres",
+      "kind": "sharedObject"
+    },
+    {
+      "id": "shared:pakkun_f.brres",
+      "source": "sharedObjectDir",
+      "trackFile": null,
+      "trackLabel": "Shared Object",
+      "path": "Object/pakkun_f.brres",
+      "baseName": "pakkun_f.brres",
+      "kind": "sharedObject"
+    },
+    {
+      "id": "shared:pendulum.brres",
+      "source": "sharedObjectDir",
+      "trackFile": null,
+      "trackLabel": "Shared Object",
+      "path": "Object/pendulum.brres",
+      "baseName": "pendulum.brres",
+      "kind": "sharedObject"
+    }
+  ]
+}

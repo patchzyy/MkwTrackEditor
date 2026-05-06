@@ -8,7 +8,11 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",
-    "smoke:browser": "node scripts/browser-smoke.mjs"
+    "smoke:browser": "node scripts/browser-smoke.mjs",
+    "smoke:browser:real-tracks": "node scripts/browser-smoke-real-tracks.mjs",
+    "build:course-assets": "node scripts/build-course-asset-db.mjs",
+    "build:object-names": "node scripts/build-object-name-db.mjs",
+    "build:extracted-assets": "node scripts/build-extracted-asset-pool.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^6.0.1",

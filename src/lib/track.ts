@@ -235,13 +235,39 @@ export function validateTrack(track: TrackDocument, options: ValidateTrackOption
     }
   }
   results.push(...validateObjectResources(track, options.common));
+  results.push(...validateObjectPresenceFlags(track, options.common));
+  results.push(...validateItemBoxSettings(track, options.common));
+  results.push(...validateKnownObjectPitfalls(track));
   return results;
 }
 
 export function describeEntity(entity: KmpEntity): string {
-  if (entity.section === 'GOBJ') return `Object ${entity.objectId ?? 'unknown'} #${entity.index}`;
-  if (entity.section === 'POTI' && entity.routePoint) return `Route ${entity.routePoint.routeIndex} node ${entity.routePoint.pointIndex}`;
-  return `${entity.section} #${entity.index}`;
+  if (entity.section === 'GOBJ') return `game object #${entity.index}`;
+  if (entity.section === 'POTI' && entity.routePoint) return `object route point ${entity.routePoint.pointIndex}`;
+  switch (entity.section) {
+    case 'KTPT':
+      return `start point #${entity.index}`;
+    case 'ENPT':
+      return `enemy route point #${entity.index}`;
+    case 'ITPT':
+      return `item route point #${entity.index}`;
+    case 'CKPT':
+      return `checkpoint #${entity.index}`;
+    case 'AREA':
+      return `area trigger #${entity.index}`;
+    case 'CAME':
+      return `camera #${entity.index}`;
+    case 'JGPT':
+      return `respawn point #${entity.index}`;
+    case 'CNPT':
+      return `cannon point #${entity.index}`;
+    case 'MSPT':
+      return `battle finish point #${entity.index}`;
+    case 'STGI':
+      return 'track settings';
+    default:
+      return `${entity.section.toLowerCase()} #${entity.index}`;
+  }
 }
 
 function findFile(entries: U8Entry[], fileName: string): U8Entry | undefined {
@@ -293,6 +319,118 @@ function validateObjectResources(track: TrackDocument, common?: CommonResourceAr
   return results;
 }
 
+function validateObjectPresenceFlags(track: TrackDocument, common?: CommonResourceArchive | null): Array<{ level: 'error' | 'warning'; message: string }> {
+  if (!track.kmp || !common) return [];
+  const results: Array<{ level: 'error' | 'warning'; message: string }> = [];
+  for (const entity of track.kmp.entities) {
+    if (entity.section !== 'GOBJ' || entity.objectId === undefined || entity.presenceFlags === undefined) continue;
+    const objFlowEntry = common.objFlow.byId.get(entity.objectId);
+    if (!objFlowEntry || !objectHasGameplayImpact(objFlowEntry)) continue;
+    const modeFlags = entity.presenceFlags & 0x0007;
+    if ((modeFlags & 0x0006) !== 0x0006) {
+      results.push({
+        level: 'warning',
+        message: `Object ${entity.index} is a gameplay object but is hidden for some multiplayer player counts (${formatPresenceFlagsHex(entity.presenceFlags)}).`,
+      });
+    }
+  }
+  return results;
+}
+
+function validateItemBoxSettings(track: TrackDocument, common?: CommonResourceArchive | null): Array<{ level: 'error' | 'warning'; message: string }> {
+  if (!track.kmp || !common) return [];
+  const results: Array<{ level: 'error' | 'warning'; message: string }> = [];
+  for (const entity of track.kmp.entities) {
+    if (!isItemBoxObject(entity, common) || !entity.objectSettings) continue;
+    const playerSetting = entity.objectSettings[1];
+    const cpuSetting = entity.objectSettings[2];
+    const timingSetting = entity.objectSettings[5];
+    if (!isValidItemBoxItemSetting(playerSetting)) {
+      results.push({ level: 'warning', message: `Object ${entity.index} has unsupported player item-box setting ${formatPresenceFlagsHex(playerSetting)}.` });
+    }
+    if (!isValidItemBoxItemSetting(cpuSetting)) {
+      results.push({ level: 'warning', message: `Object ${entity.index} has unsupported CPU item-box setting ${formatPresenceFlagsHex(cpuSetting)}.` });
+    }
+    if (!isValidItemBoxTimingSetting(timingSetting)) {
+      results.push({ level: 'warning', message: `Object ${entity.index} has unsupported item-box timing setting ${formatPresenceFlagsHex(timingSetting)}.` });
+    }
+  }
+  return results;
+}
+
+function validateKnownObjectPitfalls(track: TrackDocument): Array<{ level: 'error' | 'warning'; message: string }> {
+  if (!track.kmp) return [];
+  const results: Array<{ level: 'error' | 'warning'; message: string }> = [];
+  const objects = track.kmp.entities.filter((entity) => entity.section === 'GOBJ' && entity.objectId !== undefined);
+  const slotRestrictedObjects = new Map<number, string>([
+    [0x72, 'sunDS'],
+    [0x144, 'pylon01'],
+    [0x1a3, 'begoman_spike'],
+    [0x1a4, 'FireSnake'],
+    [0x1a8, 'FireSnake_v'],
+  ]);
+  const hasChoropu = objects.some((entity) => entity.objectId === 0x192);
+  const hasChoropu2 = objects.some((entity) => entity.objectId === 0x19a);
+  if (hasChoropu && hasChoropu2) {
+    results.push({
+      level: 'warning',
+      message: 'Monty Mole variants choropu and choropu2 are both present; vanilla Mario Kart Wii uses the same BRRES file for them and this combination is known to break.',
+    });
+  }
+
+  for (const entity of objects) {
+    if ((entity.objectId === 0x214 || entity.objectId === 0x215) && entity.objectSettings && entity.objectSettings[2] === 0) {
+      results.push({
+        level: 'warning',
+        message: `Object ${entity.index} (${entity.objectId === 0x214 ? 'InsekiA' : 'InsekiB'}) has Setting 3 left at 0, which is known to crash vanilla Mario Kart Wii.`,
+      });
+    }
+    if (entity.objectId === 0x206) {
+      const centered = Math.abs(entity.position.x) < 0.001 && Math.abs(entity.position.y) < 0.001 && Math.abs(entity.position.z) < 0.001;
+      const unrotated = Math.abs(entity.rotation.x) < 0.001 && Math.abs(entity.rotation.y) < 0.001 && Math.abs(entity.rotation.z) < 0.001;
+      const unitScale =
+        entity.scale !== undefined &&
+        Math.abs(entity.scale.x - 1) < 0.001 &&
+        Math.abs(entity.scale.y - 1) < 0.001 &&
+        Math.abs(entity.scale.z - 1) < 0.001;
+      if (!centered || !unrotated || !unitScale) {
+        results.push({
+          level: 'warning',
+          message: `Object ${entity.index} (casino_roulette) should stay at world position 0,0,0 with zero rotation and scale 1,1,1 or the rotating-road gimmick can break.`,
+        });
+      }
+    }
+  }
+
+  const slotRestrictedNames = Array.from(new Set(objects.map((entity) => slotRestrictedObjects.get(entity.objectId!)).filter((name): name is string => name !== undefined)));
+  if (slotRestrictedNames.length > 0) {
+    results.push({
+      level: 'warning',
+      message: `This track uses slot-restricted objects (${slotRestrictedNames.join(', ')}). In vanilla Mario Kart Wii these only work on Daisy Circuit, Moonview Highway, GBA Shy Guy Beach, DS Desert Hills, or Galaxy Colosseum.`,
+    });
+  }
+
+  const firstBegomanSpike = objects.find((entity) => entity.objectId === 0x1a3);
+  if (firstBegomanSpike && objects[0] !== firstBegomanSpike) {
+    results.push({
+      level: 'warning',
+      message: 'begoman_spike must be the first placed game object in the object list or it will not spawn correctly in vanilla Mario Kart Wii.',
+    });
+  }
+
+  for (const objectId of [0x2e8, 0x2e9, 0x2ea]) {
+    const count = objects.filter((entity) => entity.objectId === objectId).length;
+    if (count > 1) {
+      const name = objectId === 0x2e8 ? 'MiiObjD01' : objectId === 0x2e9 ? 'MiiObjD02' : 'MiiObjD03';
+      results.push({
+        level: 'warning',
+        message: `${name} is placed ${count} times. Vanilla Mario Kart Wii allows at most one instance of this Daisy Circuit Mii audience object before it crashes.`,
+      });
+    }
+  }
+  return results;
+}
+
 function connectedPointCount(pointCount: number, edges: Array<{ from: number; to: number }>): number {
   if (pointCount === 0) return 0;
   const adjacency = Array.from({ length: pointCount }, () => new Set<number>());
@@ -312,4 +450,28 @@ function connectedPointCount(pointCount: number, edges: Array<{ from: number; to
     }
   }
   return seen.size;
+}
+
+function objectHasGameplayImpact(entry: CommonResourceArchive['objFlow']['entries'][number]): boolean {
+  const text = `${entry.name} ${entry.resources}`.toLowerCase();
+  return /(itembox|item box|f_itembox|s_itembox|w_itembox|sin_itembox|w_itemboxline|kuribo|goomba|choropu|choropu2|choropu_ground|pakkun_f|puchi_pakkun|pakkun_dokan|crab|tree_cannon|donkycannon|cannon|k_sticklift00|kinoko_lift1|escalator|belt|pendulum)/.test(text);
+}
+
+function isItemBoxObject(entity: KmpEntity, common: CommonResourceArchive): boolean {
+  if (entity.section !== 'GOBJ' || entity.objectId === undefined) return false;
+  const entry = common.objFlow.byId.get(entity.objectId);
+  const text = `${entry?.name ?? ''} ${entry?.resources ?? ''}`.toLowerCase();
+  return /(^|\s)(itembox|f_itembox|s_itembox|w_itembox|sin_itembox|w_itemboxline)(\s|$)/.test(text);
+}
+
+function isValidItemBoxItemSetting(value: number): boolean {
+  return (value >= 0x0000 && value <= 0x0010) || value === 0x0255;
+}
+
+function isValidItemBoxTimingSetting(value: number): boolean {
+  return value === 0x0000 || value === 0x0002 || value === 0x0003 || value === 0x0004 || value === 0x0005 || value === 0x0006;
+}
+
+function formatPresenceFlagsHex(value: number): string {
+  return `0x${value.toString(16).toUpperCase().padStart(4, '0')}`;
 }

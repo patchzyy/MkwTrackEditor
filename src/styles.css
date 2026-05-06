@@ -105,6 +105,12 @@ input {
   border-radius: 0 6px 6px 0;
 }
 
+.viewModeSegmented button {
+  width: auto;
+  min-width: 0;
+  padding: 0 10px;
+}
+
 .status {
   min-width: 0;
   overflow: hidden;
@@ -115,12 +121,20 @@ input {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: 220px minmax(0, 1fr) 320px;
   min-height: 0;
 }
 
 .workspace.inspectorCollapsed {
-  grid-template-columns: minmax(0, 1fr) 0;
+  grid-template-columns: 220px minmax(0, 1fr) 0;
+}
+
+.workspace.placeAssetsCollapsed {
+  grid-template-columns: 52px minmax(0, 1fr) 320px;
+}
+
+.workspace.placeAssetsCollapsed.inspectorCollapsed {
+  grid-template-columns: 52px minmax(0, 1fr) 0;
 }
 
 .workspace.inspectorCollapsed .inspector {
@@ -128,6 +142,75 @@ input {
   padding: 0;
   border-left: 0;
   visibility: hidden;
+}
+
+.placeAssetsPanel {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border-right: 1px solid #272d37;
+  background: #141920;
+}
+
+.placeAssetsHeader {
+  min-height: 48px;
+  align-items: flex-start;
+}
+
+.panelSubtle {
+  margin: 4px 0 0;
+  color: #9faaba;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.placeAssetsBody {
+  min-height: 0;
+  overflow: auto;
+  padding: 0 10px 10px;
+}
+
+.placeAssetsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.placeAssetTile {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #33404d;
+  border-radius: 6px;
+  color: #dbe5f2;
+  background: #1c2430;
+  cursor: grab;
+}
+
+.placeAssetTile .objectPreview {
+  width: 100%;
+  min-width: 0;
+  height: 68px;
+}
+
+.placeAssetTile strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.placeAssetsCollapsed .placeAssetsPanel {
+  overflow: hidden;
+}
+
+.placeAssetsCollapsed .placeAssetsBody,
+.placeAssetsCollapsed .panelSubtle {
+  display: none;
 }
 
 .viewport {
@@ -263,6 +346,15 @@ input {
   font-size: 12px;
 }
 
+.marqueeSelection {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  border: 1px solid rgba(95, 214, 255, 0.95);
+  background: rgba(95, 214, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
 .dropHint {
   top: 50%;
   left: 50%;
@@ -347,10 +439,54 @@ input {
   font-size: 13px;
 }
 
+.advancedDetails {
+  border: 1px solid #29313d;
+  border-radius: 6px;
+  background: #1b212a;
+}
+
+.advancedDetails summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 10px 12px;
+  color: #c8d2df;
+  font-size: 12px;
+}
+
+.advancedDetails summary::-webkit-details-marker {
+  display: none;
+}
+
+.advancedDetailsBody {
+  display: grid;
+  gap: 8px;
+  padding: 0 8px 8px;
+}
+
 .actionRow {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.actionStack {
+  display: grid;
+  gap: 6px;
+}
+
+.toggleGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.objectPicker {
+  display: grid;
+  gap: 6px;
+}
+
+.objectPickerSearch {
+  width: 100%;
 }
 
 .actionRow span {
@@ -399,6 +535,15 @@ input {
   border-color: #5fd6ff;
 }
 
+.toggleButton {
+  text-align: left;
+}
+
+.toggleButton.isActive {
+  border-color: #5fd6ff;
+  background: rgba(95, 214, 255, 0.14);
+}
+
 .routeInput {
   width: 100%;
 }
@@ -408,7 +553,34 @@ input {
   gap: 8px;
 }
 
-.validationList div {
+.validationSummary {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.validationBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1;
+  background: #232a34;
+  color: #c7d0dd;
+}
+
+.validationBadge.error {
+  background: #49232a;
+  color: #ffd7d7;
+}
+
+.validationBadge.warning {
+  background: #47361d;
+  color: #ffe8bd;
+}
+
+.validationIssue {
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -416,6 +588,20 @@ input {
   border-radius: 6px;
   line-height: 1.35;
   font-size: 12px;
+}
+
+.validationCopy {
+  display: grid;
+  gap: 3px;
+}
+
+.validationCopy strong {
+  font-size: 12px;
+}
+
+.validationCopy span {
+  color: inherit;
+  opacity: 0.88;
 }
 
 .validationList .error {
@@ -470,6 +656,69 @@ input {
   white-space: nowrap;
 }
 
+.browserSearchRow {
+  padding: 0 14px 8px;
+}
+
+.browserSearchInput {
+  width: 100%;
+  height: 32px;
+  border: 1px solid #343d4a;
+  border-radius: 6px;
+  padding: 0 10px;
+  color: #eef3fb;
+  background: #11161d;
+}
+
+.browserSearchInput:focus {
+  border-color: #5fd6ff;
+  outline: none;
+}
+
+.quickObjectsRow {
+  display: flex;
+  gap: 8px;
+  overflow: auto hidden;
+  padding: 0 14px 10px;
+}
+
+.quickObjectChip {
+  display: grid;
+  gap: 6px;
+  min-width: 104px;
+  width: 104px;
+  padding: 8px;
+  border: 1px solid #33404d;
+  border-radius: 6px;
+  color: #dbe5f2;
+  background: #1c2430;
+  cursor: grab;
+}
+
+.quickObjectChip .objectPreview {
+  width: 100%;
+  min-width: 0;
+  height: 68px;
+}
+
+.quickObjectChip strong,
+.quickObjectChip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quickObjectChip strong {
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.quickObjectChip span {
+  color: #9faaba;
+  font-size: 11px;
+}
+
 .browserFolders {
   display: flex;
   gap: 8px;
@@ -477,6 +726,8 @@ input {
   padding: 10px 14px 8px;
 }
 
+.collapsed .browserSearchRow,
+.collapsed .quickObjectsRow,
 .collapsed .browserFolders {
   display: none;
 }
@@ -541,6 +792,11 @@ input {
   cursor: grab;
 }
 
+.assetTile.disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
 .assetTile strong,
 .assetTile span {
   min-width: 0;
@@ -556,6 +812,12 @@ input {
 .assetTile span {
   color: #9faaba;
   font-size: 11px;
+}
+
+.browserEmpty {
+  margin: 0;
+  color: #9faaba;
+  font-size: 12px;
 }
 
 .thumbnail {

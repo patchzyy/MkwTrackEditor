@@ -15,6 +15,11 @@ export interface KclMesh {
   warnings: string[];
 }
 
+export interface KclFeatureSnapResult {
+  position: Vec3;
+  kind: 'vertex' | 'edge';
+}
+
 export const collisionTypes = [
   'Road',
   'Slippery Road (sand/dirt)',
@@ -133,6 +138,36 @@ export function raycastMesh(mesh: KclMesh, origin: Vec3, direction: Vec3): { pos
   return best;
 }
 
+export function snapPointToTriangleFeature(position: Vec3, triangle: KclTriangle): KclFeatureSnapResult {
+  const vertices = [triangle.a, triangle.b, triangle.c];
+  let bestVertex = vertices[0];
+  let bestVertexDistanceSq = distanceSq(position, bestVertex);
+  for (let i = 1; i < vertices.length; i++) {
+    const candidateDistanceSq = distanceSq(position, vertices[i]);
+    if (candidateDistanceSq < bestVertexDistanceSq) {
+      bestVertex = vertices[i];
+      bestVertexDistanceSq = candidateDistanceSq;
+    }
+  }
+
+  const edgeCandidates = [
+    closestPointOnSegment(position, triangle.a, triangle.b),
+    closestPointOnSegment(position, triangle.b, triangle.c),
+    closestPointOnSegment(position, triangle.c, triangle.a),
+  ];
+  let bestEdge = edgeCandidates[0];
+  let bestEdgeDistanceSq = distanceSq(position, bestEdge);
+  for (let i = 1; i < edgeCandidates.length; i++) {
+    const candidateDistanceSq = distanceSq(position, edgeCandidates[i]);
+    if (candidateDistanceSq < bestEdgeDistanceSq) {
+      bestEdge = edgeCandidates[i];
+      bestEdgeDistanceSq = candidateDistanceSq;
+    }
+  }
+
+  return bestVertexDistanceSq <= bestEdgeDistanceSq ? { position: bestVertex, kind: 'vertex' } : { position: bestEdge, kind: 'edge' };
+}
+
 function raycastTriangle(origin: Vec3, direction: Vec3, triangle: KclTriangle): { position: Vec3; distance: number } | null {
   const edge1 = sub(triangle.b, triangle.a);
   const edge2 = sub(triangle.c, triangle.a);
@@ -177,6 +212,25 @@ function cross(a: Vec3, b: Vec3): Vec3 {
 
 function dot(a: Vec3, b: Vec3): number {
   return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+function distanceSq(a: Vec3, b: Vec3): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  const dz = a.z - b.z;
+  return dx * dx + dy * dy + dz * dz;
+}
+
+function closestPointOnSegment(point: Vec3, a: Vec3, b: Vec3): Vec3 {
+  const ab = sub(b, a);
+  const abLengthSq = dot(ab, ab);
+  if (abLengthSq <= 0.0000001) return a;
+  const t = clamp01(dot(sub(point, a), ab) / abLengthSq);
+  return add(a, scale(ab, t));
+}
+
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value));
 }
 
 function normalize(a: Vec3): Vec3 {

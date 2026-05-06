@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Box, ChevronDown, ChevronUp, Database, Download, Eye, FolderOpen, Move3D, PanelRightClose, PanelRightOpen, RotateCcw, Scale3D, TriangleAlert } from 'lucide-react';
+import { Box, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ClipboardPaste, Copy, Database, Download, Eye, FolderOpen, Move3D, PanelRightClose, PanelRightOpen, Redo2, RotateCcw, Scale3D, TriangleAlert, Undo2 } from 'lucide-react';
 import {
   appendKmpArea,
   appendKmpCamera,
@@ -28,6 +28,7 @@ import {
   patchKmpGobjPresenceFlags,
   patchKmpGobjSetting,
   patchKmpPathGroupLinks,
+  patchKmpPointDeviation,
   patchKmpPointSetting,
   patchKmpPotiPointSetting,
   patchKmpPotiRouteSetting,
@@ -54,16 +55,197 @@ import { raycastDown } from '../lib/kcl';
 import { getObjFlowResourceNames, mergeCommonResourceEntries, parseCommonResourceArchive, type CommonResourceArchive, type ObjFlowEntry } from '../lib/objflow';
 import { parseNoclipBrresSummary, type NoclipBrresSummary } from '../lib/noclipBrres';
 import { describeEntity, exportTrack, loadTrackBytes, loadTrackFile, replaceCourseKmp, validateExportBytes, validateTrack, type TrackDocument } from '../lib/track';
-import { Noclip3DViewport, type TransformTool } from './Noclip3DViewport';
+import { parseU8 } from '../lib/u8';
+import { Noclip3DViewport, type TransformTool, type ViewMode } from './Noclip3DViewport';
+import objectNamesById from '../generated/mkwObjectNames.json';
 
 const objectCatalog = [
-  { id: 0x65, label: 'Item Box', category: 'Items' },
-  { id: 0xc9, label: 'Goomba', category: 'Enemies' },
-  { id: 0xd2, label: 'Route Object', category: 'Route' },
-  { id: 0x17d, label: 'Cannon Target', category: 'Gameplay' },
+  { id: 0x65, label: 'Item Box', category: 'Gameplay' },
+  { id: 0x191, label: 'Goomba', category: 'Enemies' },
+  { id: 0x192, label: 'Monty Mole', category: 'Enemies' },
+  { id: 0x194, label: 'Piranha Plant', category: 'Enemies' },
+  { id: 0x148, label: 'Moving Platform', category: 'Gameplay' },
+  { id: 0xe5, label: 'Crab', category: 'Enemies' },
+  { id: 0xce, label: 'Shy Guy Obstacle', category: 'Gameplay' },
+  { id: 0x197, label: 'Cataquack', category: 'Enemies' },
+  { id: 0x1a5, label: 'Fire Bar', category: 'Gameplay' },
+  { id: 0x162, label: 'Thwomp', category: 'Gameplay' },
+  { id: 0x261, label: 'Cannon Object', category: 'Gameplay' },
 ];
 
+const featuredObjectIds = [0x65, 0x191, 0x192, 0x194, 0x148, 0xe5, 0xce, 0x197, 0x1a5, 0x162, 0x261] as const;
+
 const bundledCourseObjectResourceNames = new Set(['castle_tree1.brres', 'castle_tree2.brres', 'choropu.brres', 'kinoko_lift1.brres', 'kuribo.brres', 'npc_mii_a.brres', 'pakkun_f.brres', 'pendulum.brres']);
+const guidanceOnlyObjectProfileNotes: Record<string, string> = {
+  Boo: 'This object does not use extra object settings here. Its main setup comes from placement, scale, and any linked area behavior.',
+  'Crowd Sound': 'This object does not use extra object settings here. Its main setup comes from placement plus the Sound Range path below.',
+  'Half-Pipe Trigger': 'This object does not use extra object settings here. Its setup comes from exact placement against the course wall and the surrounding geometry.',
+  'Jump Pad': 'This object does not use extra object settings here. Its setup comes from placement, rotation, and the takeoff and landing space you build around it.',
+  'Pipe Hazard': 'This object does not use extra object settings here. Its setup comes from placement, scale, and the space you leave around it for readable avoidance.',
+  'Pylon Obstacle': 'This object does not use extra object settings here. Its setup comes from placement, spacing, and the line choice it creates.',
+  'Rolling Ball': 'This object does not use extra object settings here. Its behavior is driven by mission logic and the related CPU setup, not per-object fields in this inspector.',
+};
+const enemyRouteSetting1Options = [
+  { value: 0, label: 'None' },
+  { value: 1, label: 'Requires Mushroom' },
+  { value: 2, label: 'Use Mushroom' },
+  { value: 3, label: 'Allow Wheelie' },
+  { value: 4, label: 'End Wheelie' },
+];
+const enemyRouteSetting2Options = [
+  { value: 0, label: 'None' },
+  { value: 1, label: 'End Drift' },
+  { value: 2, label: 'Forbid Drift(?)' },
+  { value: 3, label: 'Force Drift' },
+];
+const itemRouteSetting1Options = [
+  { value: 0, label: 'None' },
+  { value: 1, label: 'Bullet Bill uses gravity' },
+  { value: 2, label: 'Bullet Bill ignores gravity' },
+];
+const itemRouteSetting2Options = [
+  { value: 0, label: 'None' },
+  { value: 1, label: "Bullet Bill can't stop" },
+  { value: 0x0a, label: 'Low-priority route' },
+  { value: 0x0b, label: "Bullet Bill can't stop + low priority" },
+];
+const potiRouteShapeOptions = [
+  { value: 0, label: 'Straight Edges' },
+  { value: 1, label: 'Curved Edges' },
+];
+const potiRouteMotionOptions = [
+  { value: 0, label: 'Cyclic Motion' },
+  { value: 1, label: 'Back-and-Forth Motion' },
+];
+const areaTypeOptions = [
+  { value: 0, label: 'Camera' },
+  { value: 1, label: 'Environment Effect' },
+  { value: 2, label: 'Fog Effect' },
+  { value: 3, label: 'Moving Water' },
+  { value: 4, label: 'Force Recalc' },
+  { value: 5, label: 'Minimap Control' },
+  { value: 6, label: 'Bloom Effect' },
+  { value: 7, label: 'Enable Boos' },
+  { value: 8, label: 'Object Group' },
+  { value: 9, label: 'Object Unload' },
+  { value: 10, label: 'Fall Boundary' },
+];
+const areaShapeOptions = [
+  { value: 0, label: 'Box' },
+  { value: 1, label: 'Cylinder' },
+];
+const cannonEffectOptions = [
+  { value: 0, label: 'Fast, Straight Line' },
+  { value: 1, label: 'Curved' },
+  { value: 2, label: 'Curved (Slow)' },
+];
+const itemBoxSettingOptions = [
+  { value: 0x0000, label: 'Default Item Set' },
+  { value: 0x0001, label: 'Banana' },
+  { value: 0x0002, label: 'Mushroom' },
+  { value: 0x0003, label: 'Triple Mushrooms' },
+  { value: 0x0004, label: 'Star' },
+  { value: 0x0005, label: 'Triple Green Shells' },
+  { value: 0x0006, label: 'Banana / Mushroom (50/50)' },
+  { value: 0x0007, label: 'Green Shell' },
+  { value: 0x0008, label: 'Bob-omb' },
+  { value: 0x0009, label: 'Red Shell' },
+  { value: 0x000a, label: 'Mega Mushroom' },
+  { value: 0x000b, label: 'Thunder Cloud' },
+  { value: 0x000c, label: 'Star (95%) / Mushroom (5%)' },
+  { value: 0x000d, label: 'Empty -> Mushroom' },
+  { value: 0x000e, label: 'Empty -> Mushroom' },
+  { value: 0x000f, label: 'Empty -> Mushroom' },
+  { value: 0x0010, label: 'Empty -> Mushroom' },
+  { value: 0x0255, label: 'Default Item Set (0x0255)' },
+];
+const itemBoxTimingOptions = [
+  { value: 0x0000, label: 'Normal Roulette, Fast Respawn' },
+  { value: 0x0002, label: 'Short Roulette, Fast Respawn' },
+  { value: 0x0003, label: 'Short Roulette, Fast Respawn' },
+  { value: 0x0004, label: 'Short Roulette, Medium Respawn' },
+  { value: 0x0005, label: 'Normal Roulette, Medium Respawn' },
+  { value: 0x0006, label: 'Normal Roulette, Slow Respawn' },
+];
+const driveableRingIdOptions = [
+  { value: 1, label: 'Outer Ring' },
+  { value: 2, label: 'Middle Ring' },
+  { value: 3, label: 'Inner Ring' },
+];
+const epropellerDirectionOptions = [
+  { value: 0, label: 'Clockwise' },
+  { value: 1, label: 'Counterclockwise' },
+];
+const crabDirectionOptions = [
+  { value: 0, label: 'Face Left' },
+  { value: 1, label: 'Face Right' },
+];
+const spinDirectionOptions = [
+  { value: 0, label: 'Clockwise' },
+  { value: 1, label: 'Counterclockwise' },
+];
+const thwompBehaviorOptions = [
+  { value: 0, label: 'No Route Behavior' },
+  { value: 1, label: 'Stomp On Every Route Point' },
+  { value: 2, label: 'Paired Side-Swing Thwomps' },
+  { value: 3, label: 'Grounded Side-Swing Thwomp' },
+];
+const twanwanStartModeOptions = [
+  { value: 0, label: 'Wait On First Route Point' },
+  { value: 1, label: 'Start At Object Position + Release' },
+];
+const kartTruckTextureOptions = [
+  { value: 0, label: 'Moo Moo' },
+  { value: 1, label: 'Fruit' },
+  { value: 2, label: 'Factory' },
+];
+const carBodyColorOptions = [
+  { value: 0, label: 'Blue' },
+  { value: 1, label: 'Red' },
+  { value: 2, label: 'Yellow' },
+];
+const truckWagonCollisionOptions = [
+  { value: 0, label: 'Collision Enabled' },
+  { value: 1, label: 'No Collision / LOD Model' },
+];
+const shyGuyColorOptions = [
+  { value: 0, label: 'Red' },
+  { value: 1, label: 'Yellow' },
+  { value: 2, label: 'Green' },
+];
+const chairliftModelOptions = [
+  { value: 0, label: 'K_chairlift00' },
+  { value: 1, label: 'K_chairlift01' },
+];
+const cataquackColorOptions = [
+  { value: 0, label: 'Blue' },
+  { value: 1, label: 'Red' },
+  { value: 2, label: 'Violet' },
+  { value: 3, label: 'Green' },
+];
+const pylonColorOptions = [
+  { value: 0, label: 'Red' },
+  { value: 1, label: 'Blue' },
+  { value: 2, label: 'Yellow' },
+];
+const miiSpectatorInteractionOptions = [
+  { value: 0, label: 'Static Crowd' },
+  { value: 1, label: 'Face Player And Clap' },
+];
+const topmanBehaviorOptions = [
+  { value: 0, label: 'Default / Unknown' },
+  { value: 1, label: 'Coward' },
+  { value: 2, label: 'Aggressive' },
+];
+const beltCurveStartSideOptions = [
+  { value: 0, label: 'Fast Side Starts On Right' },
+  { value: 1, label: 'Fast Side Starts On Left' },
+];
+const gobjPresenceModeOptions = [
+  { mask: 0x01, label: '1P / Time Trial' },
+  { mask: 0x02, label: '2P Split-Screen' },
+  { mask: 0x04, label: '3P / 4P Split-Screen' },
+];
 
 interface ReferenceCounts {
   routes: number;
@@ -73,12 +255,45 @@ interface ReferenceCounts {
   respawns: number;
 }
 
+interface ObjectInspectorProfile {
+  title: string;
+  summary: string;
+  tips: string[];
+  cautions?: string[];
+  routeLabel?: string;
+  variantLabel?: string;
+}
+
+interface ObjectOption {
+  id: number;
+  label: string;
+  detail: string;
+}
+
+interface EditorSnapshot {
+  track: TrackDocument | null;
+  selectedId: string | null;
+  selectedIds: string[];
+}
+
+interface ClipboardEntity {
+  anchor: Vec3;
+  primaryId: string | null;
+  entries: Array<{
+    entity: KmpEntity;
+    relativeOffset: Vec3;
+    order: number;
+  }>;
+}
+
+const HISTORY_LIMIT = 128;
+
 const kmpPointCatalog: Array<{ section: AppendableKmpSection; label: string; category: string }> = [
-  { section: 'KTPT', label: 'Start Point', category: 'KMP' },
+  { section: 'KTPT', label: 'Start Point', category: 'Track Data' },
   { section: 'ENPT', label: 'Enemy Route Node', category: 'Routes' },
   { section: 'ITPT', label: 'Item Route Node', category: 'Routes' },
   { section: 'CKPT', label: 'Checkpoint Pair', category: 'Routes' },
-  { section: 'POTI', label: 'Object/Camera Route', category: 'Routes' },
+  { section: 'POTI', label: 'Movement Route', category: 'Routes' },
   { section: 'CAME', label: 'Camera', category: 'Camera' },
   { section: 'AREA', label: 'Area Trigger', category: 'Gameplay' },
   { section: 'JGPT', label: 'Respawn Point', category: 'Gameplay' },
@@ -87,37 +302,129 @@ const kmpPointCatalog: Array<{ section: AppendableKmpSection; label: string; cat
 ];
 
 type BrowserObject = (typeof objectCatalog)[number] | ObjFlowEntry;
-type BrowserFolderId = 'featured' | 'kmp' | 'enemies' | 'nature' | 'gameplay' | 'props' | 'common' | 'track';
+type BrowserFolderId = 'featured' | 'kmp' | 'enemies' | 'nature' | 'gameplay' | 'props' | 'common' | 'courseAssets' | 'track';
+interface CourseAssetRecord {
+  id: string;
+  source: 'courseArchive' | 'sharedObjectDir';
+  trackFile: string | null;
+  trackLabel: string;
+  path: string;
+  baseName: string;
+  kind: 'course' | 'skybox' | 'object' | 'sharedObject' | 'other';
+}
+
+interface PlaceableCourseAssetRecord extends CourseAssetRecord {
+  objectId: number | null;
+  objectLabel: string | null;
+}
+
+interface CourseAssetDatabase {
+  generatedFrom: string;
+  generatedAt: string;
+  trackCount: number;
+  assetCount: number;
+  uniqueBaseNames: number;
+  assets: CourseAssetRecord[];
+}
+
 type BrowserFolder =
   | { id: BrowserFolderId; label: string; detail: string; kind: 'kmp'; items: typeof kmpPointCatalog }
   | { id: BrowserFolderId; label: string; detail: string; kind: 'object'; items: BrowserObject[] }
-  | { id: BrowserFolderId; label: string; detail: string; kind: 'brres'; items: string[] };
+  | { id: BrowserFolderId; label: string; detail: string; kind: 'brres'; items: string[] }
+  | { id: BrowserFolderId; label: string; detail: string; kind: 'courseAsset'; items: PlaceableCourseAssetRecord[] };
 
 export function App() {
   const smokeTrackUrl = useMemo(() => (typeof window === 'undefined' ? null : new URL(window.location.href).searchParams.get('smokeTrack')), []);
   const smokeCallbackUrl = useMemo(() => (typeof window === 'undefined' ? null : new URL(window.location.href).searchParams.get('smokeCallback')), []);
+  const smokeCommonUrl = useMemo(() => (typeof window === 'undefined' ? null : new URL(window.location.href).searchParams.get('smokeCommon')), []);
   const smokeMode = smokeTrackUrl !== null;
   const smokeReportRef = useRef<string | null>(null);
+  const smokeUndoRedoStartedRef = useRef(false);
   const [track, setTrack] = useState<TrackDocument | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [tool, setTool] = useState<TransformTool>('translate');
+  const [viewMode, setViewMode] = useState<ViewMode>('normal');
   const [browserOpen, setBrowserOpen] = useState(true);
+  const [placeAssetsOpen, setPlaceAssetsOpen] = useState(true);
   const [browserFolder, setBrowserFolder] = useState<BrowserFolderId>('featured');
+  const [browserQuery, setBrowserQuery] = useState('');
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [collisionVisible, setCollisionVisible] = useState(false);
   const [status, setStatus] = useState('No track loaded');
   const [commonArchive, setCommonArchive] = useState<CommonResourceArchive | null>(null);
+  const [courseAssetDb, setCourseAssetDb] = useState<CourseAssetDatabase | null>(null);
   const [commonBrresSummaries, setCommonBrresSummaries] = useState<Record<string, NoclipBrresSummary>>({});
+  const [commonLoadStatus, setCommonLoadStatus] = useState('idle');
+  const [historyState, setHistoryState] = useState({ undo: 0, redo: 0 });
+  const [hasClipboardEntity, setHasClipboardEntity] = useState(false);
+  const [smokeUndoRedoWorked, setSmokeUndoRedoWorked] = useState<'pending' | 'yes' | 'no'>('pending');
+  const [batchOffset, setBatchOffset] = useState<Vec3>({ x: 0, y: 0, z: 0 });
+  const [batchObjectId, setBatchObjectId] = useState<number | null>(null);
+  const trackStateRef = useRef<TrackDocument | null>(track);
+  const selectedIdStateRef = useRef<string | null>(selectedId);
+  const selectedIdsStateRef = useRef<string[]>(selectedIds);
+  const undoStackRef = useRef<EditorSnapshot[]>([]);
+  const redoStackRef = useRef<EditorSnapshot[]>([]);
+  const editSessionRef = useRef<EditorSnapshot | null>(null);
+  const clipboardEntityRef = useRef<ClipboardEntity | null>(null);
   const objFlow = commonArchive?.objFlow ?? null;
   const selected = useMemo(() => track?.kmp?.entities.find((entity) => entity.id === selectedId) ?? null, [track, selectedId]);
+  const selectedEntities = useMemo(() => {
+    if (!track?.kmp || selectedIds.length === 0) return [];
+    const selectedSet = new Set(selectedIds);
+    return track.kmp.entities.filter((entity) => selectedSet.has(entity.id));
+  }, [track, selectedIds]);
   const selectedPathInfo = useMemo(() => (selected && track?.kmp ? getPathInfo(track.kmp, selected) : null), [track, selected]);
+  const canBatchReplaceObjects = useMemo(
+    () => selectedEntities.length > 1 && selectedEntities.every((entity) => entity.section === 'GOBJ' && entity.objectId !== undefined),
+    [selectedEntities],
+  );
   const cameraHeader = useMemo(() => (track?.kmp ? getKmpCameraHeader(track.kmp) : null), [track]);
   const referenceCounts = useMemo(() => getReferenceCounts(track?.kmp ?? null), [track?.kmp]);
   const validation = useMemo(() => (track ? validateTrack(track, { common: commonArchive }) : []), [track, commonArchive]);
+  const selectedObjectProfile = useMemo(() => (selected?.section === 'GOBJ' ? getObjectInspectorProfile(selected, objFlow) : null), [objFlow, selected]);
+  const validationCounts = useMemo(() => {
+    const errorCount = validation.filter((item) => item.level === 'error').length;
+    const warningCount = validation.filter((item) => item.level === 'warning').length + (track?.warnings.length ?? 0);
+    return { errorCount, warningCount };
+  }, [track?.warnings.length, validation]);
+  const objectOptions = useMemo<ObjectOption[]>(() => {
+    const selectedObjectId = selected?.section === 'GOBJ' ? selected.objectId ?? null : null;
+    const ids = new Set<number>();
+    for (const key of Object.keys(objectNamesById as Record<string, string>)) {
+      const parsed = Number(key);
+      if (Number.isFinite(parsed)) ids.add(parsed);
+    }
+    for (const entry of objFlow?.entries ?? []) ids.add(entry.objectId);
+    return [...ids]
+      .map((id) => {
+        const flow = objFlow?.byId.get(id);
+        return {
+          id,
+          label: browserObjectTitle({ objectId: id, name: flow?.name ?? '', resources: flow?.resources ?? '' }),
+          detail: flow?.resources || flow?.name || 'Unknown object',
+        };
+      })
+      .filter((option) => option.id === selectedObjectId || isBrowsableObjectChoice(option.id, option.label, option.detail))
+      .sort((a, b) => a.label.localeCompare(b.label) || a.id - b.id);
+  }, [objFlow, selected]);
+  const selectedObjectVariantOptions = useMemo(
+    () => (selected?.section === 'GOBJ' && selectedObjectProfile ? getObjectVariantOptions(selectedObjectProfile, objectOptions) : []),
+    [objectOptions, selected, selectedObjectProfile],
+  );
+  const quickObjectOptions = useMemo(
+    () =>
+      [...featuredObjectIds]
+        .map((id) => objectOptions.find((option) => option.id === id))
+        .filter((option): option is ObjectOption => option !== undefined),
+    [objectOptions],
+  );
   const realObjectCatalog = useMemo(() => {
     if (!objFlow) return [];
     return objFlow.entries
       .filter((entry) => entry.name || entry.resources)
+      .filter((entry) => isBrowsableObjectEntry(entry))
       .sort((a, b) => countAvailableResources(b, commonArchive) - countAvailableResources(a, commonArchive))
       .slice(0, 180);
   }, [objFlow, commonArchive]);
@@ -129,40 +436,298 @@ export function App() {
     const gameplay = objects.filter((object) => classifyObjectFolder(object) === 'gameplay').slice(0, 36);
     const props = objects.filter((object) => classifyObjectFolder(object) === 'props').slice(0, 36);
     const common = objects.slice(0, 120);
+    const courseAssets =
+      courseAssetDb?.assets
+        .filter((asset) => asset.kind === 'object' || asset.kind === 'sharedObject')
+        .map((asset) => mapCourseAssetToPlaceable(asset, objFlow))
+        .sort((a, b) => {
+          const placeableScore = Number(b.objectId !== null) - Number(a.objectId !== null);
+          const sharedScore = Number(b.source === 'sharedObjectDir') - Number(a.source === 'sharedObjectDir');
+          return placeableScore || sharedScore || a.baseName.localeCompare(b.baseName) || a.trackLabel.localeCompare(b.trackLabel);
+        })
+        .slice(0, 240) ?? [];
     const trackAssets = track?.brresFiles.slice(0, 48) ?? [];
     return [
       { id: 'featured', label: 'Common', detail: `${featured.length} highlighted objects`, kind: 'object', items: featured },
-      { id: 'kmp', label: 'KMP', detail: `${kmpPointCatalog.length} editor records`, kind: 'kmp', items: kmpPointCatalog },
+      { id: 'kmp', label: 'Track Data', detail: `${kmpPointCatalog.length} editable track records`, kind: 'kmp', items: kmpPointCatalog },
       { id: 'enemies', label: 'Enemies', detail: `${enemies.length} common enemies`, kind: 'object', items: enemies },
       { id: 'nature', label: 'Nature', detail: `${nature.length} trees and foliage`, kind: 'object', items: nature },
       { id: 'gameplay', label: 'Gameplay', detail: `${gameplay.length} interactive objects`, kind: 'object', items: gameplay },
       { id: 'props', label: 'Props', detail: `${props.length} scenery and structures`, kind: 'object', items: props },
-      { id: 'common', label: 'All Common', detail: `${common.length} ObjFlow objects`, kind: 'object', items: common },
-      { id: 'track', label: 'Track Meshes', detail: track ? `${trackAssets.length} BRRES files` : 'Load a track to list BRRES', kind: 'brres', items: trackAssets },
+      { id: 'common', label: 'All Objects', detail: `${common.length} placeable game objects`, kind: 'object', items: common },
+      { id: 'courseAssets', label: 'Course Assets', detail: courseAssetDb ? `${courseAssetDb.assetCount} indexed assets from ${courseAssetDb.trackCount} tracks` : 'Scanning course asset database', kind: 'courseAsset', items: courseAssets },
+      { id: 'track', label: 'Track Meshes', detail: track ? `${trackAssets.length} track asset files` : 'Load a track to list track assets', kind: 'brres', items: trackAssets },
     ].filter((folder) => folder.items.length > 0 || folder.id === 'track');
-  }, [commonArchive, objFlow, realObjectCatalog, track]);
+  }, [commonArchive, courseAssetDb, objFlow, realObjectCatalog, track]);
   const activeBrowserFolder = browserFolders.find((folder) => folder.id === browserFolder) ?? browserFolders[0] ?? null;
+  const filteredBrowserFolder = useMemo(() => filterBrowserFolder(activeBrowserFolder, browserQuery), [activeBrowserFolder, browserQuery]);
+  trackStateRef.current = track;
+  selectedIdStateRef.current = selectedId;
+  selectedIdsStateRef.current = selectedIds;
 
   useEffect(() => {
     if (!browserFolders.some((folder) => folder.id === browserFolder) && browserFolders[0]) setBrowserFolder(browserFolders[0].id);
   }, [browserFolder, browserFolders]);
 
   useEffect(() => {
+    if (canBatchReplaceObjects) {
+      setBatchObjectId(selectedEntities[0]?.objectId ?? null);
+    } else {
+      setBatchObjectId(null);
+    }
+  }, [canBatchReplaceObjects, selectedEntities]);
+
+  function syncHistoryState() {
+    setHistoryState({
+      undo: undoStackRef.current.length,
+      redo: redoStackRef.current.length,
+    });
+  }
+
+  function captureSnapshot(trackValue = trackStateRef.current, selectedValue = selectedIdStateRef.current, selectedValues = selectedIdsStateRef.current): EditorSnapshot {
+    return {
+      track: trackValue,
+      selectedId: selectedValue,
+      selectedIds: [...selectedValues],
+    };
+  }
+
+  function resetHistory() {
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    editSessionRef.current = null;
+    syncHistoryState();
+  }
+
+  function pushUndoSnapshot(snapshot: EditorSnapshot) {
+    undoStackRef.current = [...undoStackRef.current.slice(-(HISTORY_LIMIT - 1)), snapshot];
+    redoStackRef.current = [];
+    syncHistoryState();
+  }
+
+  function applySelection(nextSelectedIds: string[], nextSelectedId = nextSelectedIds.at(-1) ?? null) {
+    selectedIdStateRef.current = nextSelectedId;
+    selectedIdsStateRef.current = nextSelectedIds;
+    setSelectedId(nextSelectedId);
+    setSelectedIds(nextSelectedIds);
+  }
+
+  function applyEditorSnapshot(snapshot: EditorSnapshot) {
+    trackStateRef.current = snapshot.track;
+    setTrack(snapshot.track);
+    applySelection(snapshot.selectedIds, snapshot.selectedId ?? snapshot.selectedIds.at(-1) ?? null);
+  }
+
+  function applyEditorChange(
+    nextTrack: TrackDocument | null,
+    nextSelectedId: string | null = selectedIdStateRef.current,
+    recordHistory = true,
+    nextSelectedIds: string[] = selectedIdsStateRef.current,
+  ) {
+    const current = captureSnapshot();
+    if (editSessionRef.current) {
+      applyEditorSnapshot({ track: nextTrack, selectedId: nextSelectedId, selectedIds: nextSelectedIds });
+      return;
+    }
+    const selectionChanged =
+      nextSelectedId !== current.selectedId ||
+      nextSelectedIds.length !== current.selectedIds.length ||
+      nextSelectedIds.some((value, index) => value !== current.selectedIds[index]);
+    if (recordHistory && (nextTrack !== current.track || selectionChanged)) pushUndoSnapshot(current);
+    applyEditorSnapshot({ track: nextTrack, selectedId: nextSelectedId, selectedIds: nextSelectedIds });
+  }
+
+  function beginEditSession() {
+    if (editSessionRef.current) return;
+    editSessionRef.current = captureSnapshot();
+  }
+
+  function endEditSession() {
+    const before = editSessionRef.current;
+    if (!before) return;
+    editSessionRef.current = null;
+    const after = captureSnapshot();
+    if (after.track !== before.track || after.selectedId !== before.selectedId) pushUndoSnapshot(before);
+  }
+
+  function undoEdit() {
+    endEditSession();
+    const snapshot = undoStackRef.current.at(-1);
+    if (!snapshot) return;
+    undoStackRef.current = undoStackRef.current.slice(0, -1);
+    redoStackRef.current = [...redoStackRef.current.slice(-(HISTORY_LIMIT - 1)), captureSnapshot()];
+    applyEditorSnapshot(snapshot);
+    syncHistoryState();
+    setStatus('Undid last edit.');
+  }
+
+  function redoEdit() {
+    endEditSession();
+    const snapshot = redoStackRef.current.at(-1);
+    if (!snapshot) return;
+    redoStackRef.current = redoStackRef.current.slice(0, -1);
+    undoStackRef.current = [...undoStackRef.current.slice(-(HISTORY_LIMIT - 1)), captureSnapshot()];
+    applyEditorSnapshot(snapshot);
+    syncHistoryState();
+    setStatus('Redid last edit.');
+  }
+
+  function selectEntity(id: string | null, additive = false) {
+    if (!id) {
+      if (!additive) applySelection([]);
+      return;
+    }
+    if (!additive) {
+      applySelection([id], id);
+      return;
+    }
+    const current = selectedIdsStateRef.current;
+    const next = current.includes(id) ? current.filter((value) => value !== id) : [...current, id];
+    applySelection(next, next.includes(id) ? id : next.at(-1) ?? null);
+  }
+
+  function selectEntities(ids: string[], additive = false) {
+    const uniqueIds = ids.filter((id, index) => ids.indexOf(id) === index);
+    if (!additive) {
+      applySelection(uniqueIds, uniqueIds.at(-1) ?? null);
+      return;
+    }
+    const current = selectedIdsStateRef.current;
+    const next = [...current];
+    for (const id of uniqueIds) {
+      if (!next.includes(id)) next.push(id);
+    }
+    applySelection(next, uniqueIds.at(-1) ?? next.at(-1) ?? null);
+  }
+
+  function findMatchingEntity(document: KmpDocument, template: KmpEntity): KmpEntity | null {
+    if (template.routePoint) {
+      return (
+        document.entities.find(
+          (entity) =>
+            entity.routePoint?.routeIndex === template.routePoint?.routeIndex && entity.routePoint?.pointIndex === template.routePoint?.pointIndex,
+        ) ?? null
+      );
+    }
+    return document.entities.find((entity) => entity.section === template.section && entity.index === template.index) ?? null;
+  }
+
+  function getDeletionOrder(a: KmpEntity, b: KmpEntity): number {
+    if (a.routePoint && b.routePoint) {
+      if (a.routePoint.routeIndex !== b.routePoint.routeIndex) return b.routePoint.routeIndex - a.routePoint.routeIndex;
+      return b.routePoint.pointIndex - a.routePoint.pointIndex;
+    }
+    if (a.section !== b.section) return String(b.section).localeCompare(String(a.section));
+    return b.index - a.index;
+  }
+
+  function canCopyEntity(entity: KmpEntity | null): boolean {
+    if (!entity) return false;
+    return entity.section !== 'STGI';
+  }
+
+  function canCopySelection(): boolean {
+    if (selectedEntities.length > 1) return selectedEntities.every((entity) => canCopyEntity(entity));
+    return canCopyEntity(selected);
+  }
+
+  function copySelectedEntity() {
+    const entities = getClipboardSourceEntities(selectedEntities, selected);
+    if (entities.length === 0 || !canCopySelection()) return;
+    clipboardEntityRef.current = createClipboardEntity(entities, selectedIdStateRef.current);
+    setHasClipboardEntity(true);
+    setStatus(entities.length === 1 ? `Copied ${entityLabel(entities[0])}.` : `Copied ${entities.length} selected elements.`);
+  }
+
+  function duplicateSelectedEntity() {
+    const entities = getClipboardSourceEntities(selectedEntities, selected);
+    if (entities.length === 0 || !canCopySelection()) return;
+    const clipboard = createClipboardEntity(entities, selectedIdStateRef.current);
+    clipboardEntityRef.current = clipboard;
+    setHasClipboardEntity(true);
+    pasteClipboardEntity(clipboard, { x: 300, y: 0, z: 300 }, true);
+  }
+
+  function pasteClipboardEntity(clipboard = clipboardEntityRef.current, offset = { x: 300, y: 0, z: 300 }, reportDuplicate = false) {
+    if (!track?.kmp || !clipboard) return;
+    try {
+      let current = track.kmp;
+      const nextSelectedIds: string[] = [];
+      let nextSelectedId: string | null = null;
+      for (const entry of sortClipboardEntriesForPaste(clipboard.entries)) {
+        const pastedPosition = {
+          x: clipboard.anchor.x + offset.x + entry.relativeOffset.x,
+          y: clipboard.anchor.y + offset.y + entry.relativeOffset.y,
+          z: clipboard.anchor.z + offset.z + entry.relativeOffset.z,
+        };
+        const result = appendCopiedEntity(current, entry.entity, pastedPosition);
+        current = parseKmp(result.bytes);
+        nextSelectedIds.push(result.selectedId);
+        if (entry.entity.id === clipboard.primaryId) nextSelectedId = result.selectedId;
+      }
+      const nextTrack = replaceCourseKmp(track, current.original);
+      applyEditorChange(nextTrack, nextSelectedId ?? nextSelectedIds.at(-1) ?? null, true, nextSelectedIds);
+      const count = clipboard.entries.length;
+      if (count === 1) {
+        setStatus(reportDuplicate ? `Duplicated ${entityLabel(clipboard.entries[0].entity)}.` : `Pasted ${entityLabel(clipboard.entries[0].entity)}.`);
+      } else {
+        setStatus(reportDuplicate ? `Duplicated ${count} selected elements.` : `Pasted ${count} selected elements.`);
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  useEffect(() => {
     let cancelled = false;
     async function loadBundledCommon() {
       try {
-        const response = await fetch('/data/MarioKartWii/Race/Common.szs');
-        if (!response.ok) return;
-        const common = await withBundledCourseObjectResources(parseCommonResourceArchive(new Uint8Array(await response.arrayBuffer())));
+        if (!cancelled) setCommonLoadStatus('fetching bundled common assets');
+        const response = await fetch(smokeCommonUrl ?? '/data/MarioKartWii/Race/Common.szs');
+        if (!response.ok) {
+          if (!cancelled) {
+            setCommonLoadStatus(`fetch failed: HTTP ${response.status}`);
+            if (smokeMode) setStatus(`Bundled common asset archive fetch failed: HTTP ${response.status}`);
+          }
+          return;
+        }
+        const baseCommon = parseCommonResourceArchive(new Uint8Array(await response.arrayBuffer()));
+        if (!cancelled) setCommonLoadStatus('loaded base common assets');
+        const common = smokeMode
+          ? await withBundledCourseObjectResources(baseCommon, getSmokePreviewResourceNames(baseCommon.objFlow))
+          : await withExtractedCourseAssetResources(await withBundledCourseObjectResources(baseCommon));
         if (!cancelled) {
           setCommonArchive((current) => current ?? common);
-          setStatus((current) => (current === 'No track loaded' ? `Loaded bundled Common.szs: ${common.objFlow.entries.length} ObjFlow objects` : current));
+          setCommonLoadStatus(`ready: ${common.objFlow.entries.length} objects, ${common.resourceEntries.length} resources`);
+          setStatus((current) => (current === 'No track loaded' ? `Loaded bundled common assets: ${common.objFlow.entries.length} game objects` : current));
         }
-      } catch {
+      } catch (error) {
+        if (!cancelled) {
+          setCommonLoadStatus(error instanceof Error ? `load failed: ${error.message}` : `load failed: ${String(error)}`);
+          if (smokeMode) setStatus(error instanceof Error ? `Bundled common asset load failed: ${error.message}` : `Bundled common asset load failed: ${String(error)}`);
+        }
         // Manual Common.szs loading remains available if the bundled file is absent.
       }
     }
     void loadBundledCommon();
+    return () => {
+      cancelled = true;
+    };
+  }, [smokeMode, smokeCommonUrl]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadCourseAssetDb() {
+      try {
+        const response = await fetch('/data/MarioKartWii/Race/Course/course-asset-db.json');
+        if (!response.ok) return;
+        const next = (await response.json()) as CourseAssetDatabase;
+        if (!cancelled) setCourseAssetDb(next);
+      } catch {
+        // Keep the browser usable if the optional course asset database is absent.
+      }
+    }
+    void loadCourseAssetDb();
     return () => {
       cancelled = true;
     };
@@ -180,9 +745,9 @@ export function App() {
         const fileName = decodeURIComponent(pathName.split('/').pop() || 'smoke.szs');
         const loaded = await loadTrackBytes(new Uint8Array(await response.arrayBuffer()), fileName, { brresSummaryLimit: 4 });
         if (cancelled) return;
-        setTrack(loaded);
-        setSelectedId(null);
-        setStatus(`Loaded ${fileName}: ${loaded.archiveEntries.length} archive entries, ${loaded.kmp?.entities.length ?? 0} editable KMP records`);
+        applyEditorSnapshot({ track: loaded, selectedId: null, selectedIds: [] });
+        resetHistory();
+        setStatus(`Loaded ${fileName}: ${loaded.archiveEntries.length} files, ${loaded.kmp?.entities.length ?? 0} editable track records`);
       } catch (error) {
         if (!cancelled) setStatus(error instanceof Error ? error.message : String(error));
       }
@@ -204,7 +769,7 @@ export function App() {
       const brresEntries = commonArchive.resourceEntries
         .filter((entry) => entry.type === 'file' && entry.data && entry.path.toLowerCase().endsWith('.brres'))
         .sort((a, b) => scoreCommonPreviewResource(b, referencedResources) - scoreCommonPreviewResource(a, referencedResources))
-        .slice(0, smokeMode ? 12 : 96);
+        .slice(0, smokeMode ? 12 : 180);
       const summaries: Record<string, NoclipBrresSummary> = {};
       for (const entry of brresEntries) {
         if (cancelled || !entry.data) return;
@@ -231,14 +796,21 @@ export function App() {
       const rendererStatus = document.querySelector('.rendererStatus')?.textContent?.trim() ?? '';
       const report = {
         status,
+        commonLoadStatus,
         rendererStatus,
         loaded: track !== null,
         rendered: rendererStatus.includes('rendered with noclip Mario Kart Wii renderer'),
+        hasCommonArchiveLoaded: commonArchive !== null,
+        commonObjectCount: commonArchive?.objFlow.entries.length ?? 0,
+        commonSummaryCount: Object.keys(commonBrresSummaries).length,
+        hasCourseAssetDb: courseAssetDb !== null,
         hasViewportCanvas: document.querySelector('canvas.noclipCanvas') !== null,
         hasLegacyPointHandles: document.querySelector('.kmp3dHandle') !== null,
         hasNonblankViewportProbe: document.querySelector('[data-viewport-sample="nonblank"]') !== null,
         hasSmokeSelectedGobjRendered: document.querySelector('[data-smoke-selected-gobj-rendered="yes"]') !== null,
         hasSmokeSelectedGobjSnapped: document.querySelector('[data-smoke-selected-gobj-snapped="yes"]') !== null,
+        hasSmokeMouseLook: document.querySelector('[data-smoke-mouselook="yes"]') !== null,
+        hasSmokeUndoRedo: smokeUndoRedoWorked === 'yes',
         hasAvailableObjectResource: document.querySelector('.thumbnail.objectPreview[data-state="available"]') !== null,
         hasObjectThumbnailImage:
           document.querySelector('.thumbnail.objectPreview[data-state="available"][data-preview="image"] img[src^="data:image/png;base64,"]') !== null,
@@ -253,6 +825,8 @@ export function App() {
         report.hasNonblankViewportProbe &&
         report.hasSmokeSelectedGobjRendered &&
         report.hasSmokeSelectedGobjSnapped &&
+        report.hasSmokeMouseLook &&
+        report.hasSmokeUndoRedo &&
         report.hasAvailableObjectResource &&
         report.hasObjectThumbnailImage &&
         report.hasInspectorToggle &&
@@ -274,7 +848,89 @@ export function App() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [smokeCallbackUrl, status, track, commonBrresSummaries]);
+  }, [smokeCallbackUrl, status, commonLoadStatus, track, commonArchive, commonBrresSummaries, courseAssetDb, smokeUndoRedoWorked]);
+
+  useEffect(() => {
+    if (!smokeMode || smokeUndoRedoStartedRef.current || !track?.kmp || !selected || selected.section !== 'GOBJ') return;
+    const beforeCount = countSectionEntities(track.kmp.entities, 'GOBJ');
+    if (beforeCount === 0) return;
+    smokeUndoRedoStartedRef.current = true;
+    setSmokeUndoRedoWorked('pending');
+    copySelectedEntity();
+    duplicateSelectedEntity();
+
+    const frame1 = window.requestAnimationFrame(() => {
+      const afterDuplicateCount = countSectionEntities(trackStateRef.current?.kmp?.entities ?? [], 'GOBJ');
+      if (afterDuplicateCount !== beforeCount + 1) {
+        setSmokeUndoRedoWorked('no');
+        return;
+      }
+      undoEdit();
+      const frame2 = window.requestAnimationFrame(() => {
+        const afterUndoCount = countSectionEntities(trackStateRef.current?.kmp?.entities ?? [], 'GOBJ');
+        if (afterUndoCount !== beforeCount) {
+          setSmokeUndoRedoWorked('no');
+          return;
+        }
+        redoEdit();
+        const frame3 = window.requestAnimationFrame(() => {
+          const afterRedoCount = countSectionEntities(trackStateRef.current?.kmp?.entities ?? [], 'GOBJ');
+          setSmokeUndoRedoWorked(afterRedoCount === beforeCount + 1 ? 'yes' : 'no');
+        });
+        return () => window.cancelAnimationFrame(frame3);
+      });
+      return () => window.cancelAnimationFrame(frame2);
+    });
+
+    return () => window.cancelAnimationFrame(frame1);
+  }, [smokeMode, selected, track]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
+      const meta = event.ctrlKey || event.metaKey;
+      if (meta) {
+        if (event.key.toLowerCase() === 'z') {
+          event.preventDefault();
+          if (event.shiftKey) redoEdit();
+          else undoEdit();
+          return;
+        }
+        if (event.key.toLowerCase() === 'y') {
+          event.preventDefault();
+          redoEdit();
+          return;
+        }
+        if (event.key.toLowerCase() === 'c') {
+          event.preventDefault();
+          copySelectedEntity();
+          return;
+        }
+        if (event.key.toLowerCase() === 'v') {
+          event.preventDefault();
+          pasteClipboardEntity();
+          return;
+        }
+        if (event.key.toLowerCase() === 'd') {
+          event.preventDefault();
+          duplicateSelectedEntity();
+          return;
+        }
+        if (event.key.toLowerCase() === 's') {
+          event.preventDefault();
+          downloadExport();
+        }
+        return;
+      }
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selectedIdsStateRef.current.length > 0) {
+        event.preventDefault();
+        deleteSelectedEntity();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selected, track]);
 
   async function openFiles(files: FileList | null) {
     const file = files?.[0];
@@ -282,9 +938,9 @@ export function App() {
     try {
       setStatus(`Loading ${file.name}...`);
       const loaded = await loadTrackFile(file);
-      setTrack(loaded);
-      setSelectedId(null);
-      setStatus(`Loaded ${file.name}: ${loaded.archiveEntries.length} archive entries, ${loaded.kmp?.entities.length ?? 0} editable KMP records`);
+      applyEditorSnapshot({ track: loaded, selectedId: null, selectedIds: [] });
+      resetHistory();
+      setStatus(`Loaded ${file.name}: ${loaded.archiveEntries.length} files, ${loaded.kmp?.entities.length ?? 0} editable track records`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     }
@@ -293,28 +949,28 @@ export function App() {
   function moveEntity(entity: KmpEntity, position: Vec3) {
     if (!track?.kmp) return;
     const nextKmp = patchKmpEntityPosition(track.kmp, entity, position);
-    setTrack(replaceCourseKmp(track, nextKmp));
+    applyEditorChange(replaceCourseKmp(track, nextKmp));
   }
 
   function moveCheckpointEndpoint(entity: KmpEntity, side: 'left' | 'right', position: Vec3) {
     if (!track?.kmp) return;
     const nextKmp = patchKmpCheckpointEndpoint(track.kmp, entity, side, position);
-    setTrack(replaceCourseKmp(track, nextKmp));
+    applyEditorChange(replaceCourseKmp(track, nextKmp));
   }
 
   function rotateEntity(entity: KmpEntity, rotation: Vec3) {
     if (!track?.kmp || !entity.rotation) return;
-    setTrack(replaceCourseKmp(track, patchKmpEntityRotation(track.kmp, entity, rotation)));
+    applyEditorChange(replaceCourseKmp(track, patchKmpEntityRotation(track.kmp, entity, rotation)));
   }
 
   function scaleEntity(entity: KmpEntity, scale: Vec3) {
     if (!track?.kmp || !entity.scale) return;
-    setTrack(replaceCourseKmp(track, patchKmpEntityScale(track.kmp, entity, scale)));
+    applyEditorChange(replaceCourseKmp(track, patchKmpEntityScale(track.kmp, entity, scale)));
   }
 
   function patchSelectedEntity(patch: (kmp: KmpDocument, entity: KmpEntity) => Uint8Array) {
     if (!track?.kmp || !selected) return;
-    setTrack(replaceCourseKmp(track, patch(track.kmp, selected)));
+    applyEditorChange(replaceCourseKmp(track, patch(track.kmp, selected)));
   }
 
   function addObject(objectId: number, position: Vec3) {
@@ -322,9 +978,9 @@ export function App() {
     try {
       const nextKmp = appendKmpGobj(track.kmp, objectId, position);
       const nextTrack = replaceCourseKmp(track, nextKmp);
-      setTrack(nextTrack);
-      setSelectedId(`GOBJ-${(nextTrack.kmp?.sections.find((section) => section.name === 'GOBJ')?.count ?? 1) - 1}`);
-      setStatus(`Added object ${objectId.toString(16).toUpperCase()} at ${position.x.toFixed(1)}, ${position.y.toFixed(1)}, ${position.z.toFixed(1)}`);
+      const newSelectedId = `GOBJ-${(nextTrack.kmp?.sections.find((section) => section.name === 'GOBJ')?.count ?? 1) - 1}`;
+      applyEditorChange(nextTrack, newSelectedId, true, [newSelectedId]);
+      setStatus(`Added ${browserObjectTitle({ objectId, name: objFlow?.byId.get(objectId)?.name ?? '', resources: objFlow?.byId.get(objectId)?.resources ?? '' })} at ${position.x.toFixed(1)}, ${position.y.toFixed(1)}, ${position.z.toFixed(1)}.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     }
@@ -344,11 +1000,11 @@ export function App() {
                 ? appendKmpCamera(track.kmp, position)
             : appendKmpPoint(track.kmp, section as AppendableKmpPointSection, position);
       const nextTrack = replaceCourseKmp(track, nextKmp);
-      setTrack(nextTrack);
       const nextCount = section === 'POTI' ? (nextTrack.kmp?.routes.length ?? 1) : (nextTrack.kmp?.sections.find((candidate) => candidate.name === section)?.count ?? 1);
       const newIndex = nextCount - 1;
-      setSelectedId(section === 'POTI' ? `POTI-${newIndex}-0` : `${section}-${newIndex}`);
-      setStatus(`Added ${section} at ${position.x.toFixed(1)}, ${position.y.toFixed(1)}, ${position.z.toFixed(1)}`);
+      const newSelectedId = section === 'POTI' ? `POTI-${newIndex}-0` : `${section}-${newIndex}`;
+      applyEditorChange(nextTrack, newSelectedId, true, [newSelectedId]);
+      setStatus(`Added ${friendlySectionSingularLabel(section)} at ${position.x.toFixed(1)}, ${position.y.toFixed(1)}, ${position.z.toFixed(1)}.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     }
@@ -360,22 +1016,140 @@ export function App() {
       const position = { x: entity.position.x + 300, y: entity.position.y, z: entity.position.z };
       const nextKmp = appendKmpPotiPoint(track.kmp, entity.routePoint.routeIndex, entity.routePoint.pointIndex, position);
       const nextTrack = replaceCourseKmp(track, nextKmp);
-      setTrack(nextTrack);
-      setSelectedId(`POTI-${entity.routePoint.routeIndex}-${entity.routePoint.pointIndex + 1}`);
-      setStatus(`Added node to POTI route ${entity.routePoint.routeIndex}`);
+      const newSelectedId = `POTI-${entity.routePoint.routeIndex}-${entity.routePoint.pointIndex + 1}`;
+      applyEditorChange(nextTrack, newSelectedId, true, [newSelectedId]);
+      setStatus(`Added node to object route ${entity.routePoint.routeIndex}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function createObjectRoute(entity: KmpEntity) {
+    if (!track?.kmp || entity.section !== 'GOBJ' || entity.routeIndex === undefined || entity.routeIndex !== 0xffff) return;
+    try {
+      const routedBytes = appendKmpPotiRoute(track.kmp, entity.position);
+      const routedDoc = parseKmp(routedBytes);
+      const liveEntity = routedDoc.entities.find((candidate) => candidate.id === entity.id);
+      if (!liveEntity) throw new Error('Could not find the selected object after creating a route.');
+      const routeIndex = Math.max(0, routedDoc.routes.length - 1);
+      const nextTrack = replaceCourseKmp(track, patchKmpEntityRouteIndex(routedDoc, liveEntity, routeIndex));
+      applyEditorChange(nextTrack, entity.id, true, [entity.id]);
+      setStatus(`Created movement path ${routeIndex} for ${entityLabel(entity)}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function resetObjectBehavior(entity: KmpEntity) {
+    if (!track?.kmp || entity.section !== 'GOBJ') return;
+    try {
+      let nextDoc = track.kmp;
+      let liveEntity = nextDoc.entities.find((candidate) => candidate.id === entity.id);
+      if (!liveEntity) return;
+      nextDoc = parseKmp(patchKmpEntityRouteIndex(nextDoc, liveEntity, 0xffff));
+      liveEntity = nextDoc.entities.find((candidate) => candidate.id === entity.id);
+      if (!liveEntity) return;
+      for (let i = 0; i < 8; i++) {
+        nextDoc = parseKmp(patchKmpGobjSetting(nextDoc, liveEntity, i, 0));
+        liveEntity = nextDoc.entities.find((candidate) => candidate.id === entity.id);
+        if (!liveEntity) return;
+      }
+      nextDoc = parseKmp(patchKmpGobjPresenceFlags(nextDoc, liveEntity, 0x003f));
+      applyEditorChange(replaceCourseKmp(track, nextDoc.original), entity.id, true, [entity.id]);
+      setStatus(`Reset ${entityLabel(entity)} to default object behavior.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function clearObjectRoute(entity: KmpEntity) {
+    if (!track?.kmp || entity.section !== 'GOBJ' || entity.routeIndex === undefined || entity.routeIndex === 0xffff) return;
+    try {
+      const nextTrack = replaceCourseKmp(track, patchKmpEntityRouteIndex(track.kmp, entity, 0xffff));
+      applyEditorChange(nextTrack, entity.id, true, [entity.id]);
+      setStatus(`Cleared movement path from ${entityLabel(entity)}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function selectObjectRoute(entity: KmpEntity) {
+    if (!track?.kmp || entity.section !== 'GOBJ' || entity.routeIndex === undefined || entity.routeIndex === 0xffff) return;
+    const routeId = `POTI-${entity.routeIndex}-0`;
+    const routeEntity = track.kmp.entities.find((candidate) => candidate.id === routeId);
+    if (!routeEntity) {
+      setStatus(`Could not find movement path ${entity.routeIndex} for ${entityLabel(entity)}.`);
+      return;
+    }
+    setSelectedId(routeId);
+    setSelectedIds([routeId]);
+    setStatus(`Selected movement path ${entity.routeIndex} for ${entityLabel(entity)}.`);
+  }
+
+  function applySafeFallingRockDefaults(entity: KmpEntity) {
+    if (!track?.kmp || entity.section !== 'GOBJ' || !entity.objectSettings) return;
+    try {
+      const safeTriggerSetting = entity.objectSettings[2] === 0 ? 1 : entity.objectSettings[2];
+      const nextTrack = replaceCourseKmp(track, patchKmpGobjSetting(track.kmp, entity, 2, safeTriggerSetting));
+      applyEditorChange(nextTrack, entity.id, true, [entity.id]);
+      setStatus(`Applied safe vanilla falling-rock defaults to ${entityLabel(entity)}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function createCannonPointFromObject(entity: KmpEntity) {
+    if (!track?.kmp || entity.section !== 'GOBJ') return;
+    try {
+      const appended = parseKmp(appendKmpPoint(track.kmp, 'CNPT', entity.position));
+      const cannonIndex = (appended.sections.find((section) => section.name === 'CNPT')?.count ?? 1) - 1;
+      const newCannonId = `CNPT-${cannonIndex}`;
+      const newCannon = appended.entities.find((candidate) => candidate.id === newCannonId);
+      if (!newCannon) throw new Error('Could not find the new cannon point after creating it.');
+      const rotated = parseKmp(patchKmpEntityRotation(appended, newCannon, entity.rotation));
+      const nextTrack = replaceCourseKmp(track, rotated.original);
+      applyEditorChange(nextTrack, newCannonId, true, [newCannonId]);
+      setStatus(`Created cannon point ${cannonIndex} from ${entityLabel(entity)}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function applyRoulettePlatformDefaults(entity: KmpEntity) {
+    if (!track?.kmp || entity.section !== 'GOBJ') return;
+    try {
+      let nextDoc = parseKmp(patchKmpEntityPosition(track.kmp, entity, { x: 0, y: 0, z: 0 }));
+      let liveEntity = nextDoc.entities.find((candidate) => candidate.id === entity.id);
+      if (!liveEntity) throw new Error('Could not find the selected roulette platform after moving it.');
+      nextDoc = parseKmp(patchKmpEntityRotation(nextDoc, liveEntity, { x: 0, y: 0, z: 0 }));
+      liveEntity = nextDoc.entities.find((candidate) => candidate.id === entity.id);
+      if (!liveEntity) throw new Error('Could not find the selected roulette platform after rotating it.');
+      nextDoc = parseKmp(patchKmpEntityScale(nextDoc, liveEntity, { x: 1, y: 1, z: 1 }));
+      applyEditorChange(replaceCourseKmp(track, nextDoc.original), entity.id, true, [entity.id]);
+      setStatus(`Applied required world-center defaults to ${entityLabel(entity)}.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     }
   }
 
   function deleteSelectedEntity() {
-    if (!track?.kmp || !selected) return;
-    if (!window.confirm(`Delete ${describeEntity(selected)}?`)) return;
+    if (!track?.kmp || selectedEntities.length === 0) return;
+    const deletable = selectedEntities.filter((entity) => entity.section !== 'STGI').sort(getDeletionOrder);
+    if (deletable.length === 0) return;
+    const label = deletable.length === 1 ? entityLabel(deletable[0]) : `${deletable.length} selected elements`;
+    if (!window.confirm(`Delete ${label}?`)) return;
     try {
-      const label = describeEntity(selected);
-      setTrack(replaceCourseKmp(track, deleteKmpEntity(track.kmp, selected)));
-      setSelectedId(null);
-      setStatus(`Deleted ${label}.`);
+      let current = track.kmp;
+      let deletedCount = 0;
+      for (const entity of deletable) {
+        const live = findMatchingEntity(current, entity);
+        if (!live) continue;
+        current = parseKmp(deleteKmpEntity(current, live));
+        deletedCount++;
+      }
+      if (deletedCount === 0) return;
+      applyEditorChange(replaceCourseKmp(track, current.original), null, true, []);
+      setStatus(deletedCount === 1 ? `Deleted ${label}.` : `Deleted ${deletedCount} selected elements.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     }
@@ -387,9 +1161,9 @@ export function App() {
       const nextTrack = replaceCourseKmp(track, moveKmpEntity(track.kmp, selected, direction));
       const nextIndex = selected.routePoint ? selected.routePoint.pointIndex + direction : selected.index + direction;
       const nextId = selected.routePoint ? `POTI-${selected.routePoint.routeIndex}-${nextIndex}` : `${selected.section}-${nextIndex}`;
-      setTrack(nextTrack);
-      setSelectedId(nextTrack.kmp?.entities.some((entity) => entity.id === nextId) ? nextId : selected.id);
-      setStatus(`Moved ${describeEntity(selected)} ${direction < 0 ? 'earlier' : 'later'}.`);
+      const newSelectedId = nextTrack.kmp?.entities.some((entity) => entity.id === nextId) ? nextId : selected.id;
+      applyEditorChange(nextTrack, newSelectedId, true, [newSelectedId]);
+      setStatus(`Moved ${entityLabel(selected)} ${direction < 0 ? 'earlier' : 'later'}.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     }
@@ -398,9 +1172,13 @@ export function App() {
   function splitSelectedPathGroup() {
     if (!track?.kmp || !selected || !selectedPathInfo) return;
     try {
-      setTrack(replaceCourseKmp(track, splitKmpPathGroup(track.kmp, selected.section as 'ENPT' | 'ITPT' | 'CKPT', selectedPathInfo.groupIndex, selectedPathInfo.localIndex)));
-      setSelectedId(selected.id);
-      setStatus(`Split ${selectedPathInfo.groupSection} group ${selectedPathInfo.groupIndex}.`);
+      applyEditorChange(
+        replaceCourseKmp(track, splitKmpPathGroup(track.kmp, selected.section as 'ENPT' | 'ITPT' | 'CKPT', selectedPathInfo.groupIndex, selectedPathInfo.localIndex)),
+        selected.id,
+        true,
+        [selected.id],
+      );
+      setStatus(`Split ${friendlyGroupSectionLabel(selectedPathInfo.groupSection)} group ${selectedPathInfo.groupIndex}.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     }
@@ -409,9 +1187,13 @@ export function App() {
   function mergeSelectedPathGroup() {
     if (!track?.kmp || !selected || !selectedPathInfo) return;
     try {
-      setTrack(replaceCourseKmp(track, mergeKmpPathGroupWithNext(track.kmp, selected.section as 'ENPT' | 'ITPT' | 'CKPT', selectedPathInfo.groupIndex)));
-      setSelectedId(selected.id);
-      setStatus(`Merged ${selectedPathInfo.groupSection} group ${selectedPathInfo.groupIndex}.`);
+      applyEditorChange(
+        replaceCourseKmp(track, mergeKmpPathGroupWithNext(track.kmp, selected.section as 'ENPT' | 'ITPT' | 'CKPT', selectedPathInfo.groupIndex)),
+        selected.id,
+        true,
+        [selected.id],
+      );
+      setStatus(`Merged ${friendlyGroupSectionLabel(selectedPathInfo.groupSection)} group ${selectedPathInfo.groupIndex}.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     }
@@ -433,27 +1215,118 @@ export function App() {
         const nextEntity = nextDoc.entities.find((entity) => entity.id === selected.id) ?? selected;
         nextBytes = patchKmpCheckpointEndpoint(nextDoc, nextEntity, 'right', right);
       }
-      setTrack(replaceCourseKmp(track, nextBytes));
-      setStatus('Snapped checkpoint endpoints to KCL collision.');
+      applyEditorChange(replaceCourseKmp(track, nextBytes));
+      setStatus('Snapped checkpoint endpoints to the collision surface.');
       return;
     }
 
     const hit = raycastDown(track.kcl, selected.position.x, selected.position.z);
     if (!hit) {
-      setStatus(`No collision surface found below ${describeEntity(selected)}.`);
+      setStatus(`No collision surface found below ${entityLabel(selected)}.`);
       return;
     }
-    setTrack(replaceCourseKmp(track, patchKmpEntityPosition(track.kmp, selected, hit)));
-    setStatus(`Snapped ${describeEntity(selected)} to KCL collision.`);
+    applyEditorChange(replaceCourseKmp(track, patchKmpEntityPosition(track.kmp, selected, hit)));
+    setStatus(`Snapped ${entityLabel(selected)} to the collision surface.`);
+  }
+
+  function offsetSelectedEntities() {
+    if (!track?.kmp || selectedEntities.length < 2) return;
+    if (batchOffset.x === 0 && batchOffset.y === 0 && batchOffset.z === 0) return;
+    try {
+      let current = track.kmp;
+      let movedCount = 0;
+      for (const entity of selectedEntities) {
+        if (entity.section === 'STGI') continue;
+        const live = findMatchingEntity(current, entity);
+        if (!live) continue;
+        current = parseKmp(
+          patchKmpEntityPosition(current, live, {
+            x: live.position.x + batchOffset.x,
+            y: live.position.y + batchOffset.y,
+            z: live.position.z + batchOffset.z,
+          }),
+        );
+        movedCount++;
+      }
+      if (movedCount === 0) return;
+      applyEditorChange(replaceCourseKmp(track, current.original), selectedIdStateRef.current, true, selectedIdsStateRef.current);
+      setStatus(`Offset ${movedCount} selected elements.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function snapMultipleSelectedToCollision() {
+    if (!track?.kmp || !track.kcl || selectedEntities.length < 2) return;
+    try {
+      let current = track.kmp;
+      let snappedCount = 0;
+      for (const entity of selectedEntities) {
+        if (entity.section === 'STGI') continue;
+        const live = findMatchingEntity(current, entity);
+        if (!live) continue;
+        if (live.checkpoint) {
+          const left = raycastDown(track.kcl, live.checkpoint.left.x, live.checkpoint.left.z);
+          const right = raycastDown(track.kcl, live.checkpoint.right.x, live.checkpoint.right.z);
+          let nextBytes = current.original;
+          let changed = false;
+          if (left) {
+            nextBytes = patchKmpCheckpointEndpoint(current, live, 'left', left);
+            changed = true;
+          }
+          if (right) {
+            const nextDoc = parseKmp(nextBytes);
+            const nextEntity = findMatchingEntity(nextDoc, live) ?? live;
+            nextBytes = patchKmpCheckpointEndpoint(nextDoc, nextEntity, 'right', right);
+            changed = true;
+          }
+          if (!changed) continue;
+          current = parseKmp(nextBytes);
+          snappedCount++;
+          continue;
+        }
+        const hit = raycastDown(track.kcl, live.position.x, live.position.z);
+        if (!hit) continue;
+        current = parseKmp(patchKmpEntityPosition(current, live, hit));
+        snappedCount++;
+      }
+      if (snappedCount === 0) {
+        setStatus('No collision surface found below the selected elements.');
+        return;
+      }
+      applyEditorChange(replaceCourseKmp(track, current.original), selectedIdStateRef.current, true, selectedIdsStateRef.current);
+      setStatus(`Snapped ${snappedCount} selected elements to the collision surface.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function replaceSelectedObjectTypes(objectId: number) {
+    if (!track?.kmp || !canBatchReplaceObjects) return;
+    try {
+      let current = track.kmp;
+      let updatedCount = 0;
+      for (const entity of selectedEntities) {
+        const live = findMatchingEntity(current, entity);
+        if (!live || live.section !== 'GOBJ') continue;
+        current = parseKmp(patchKmpGobjObjectId(current, live, objectId));
+        updatedCount++;
+      }
+      if (updatedCount === 0) return;
+      applyEditorChange(replaceCourseKmp(track, current.original), selectedIdStateRef.current, true, selectedIdsStateRef.current);
+      setStatus(`Changed ${updatedCount} selected objects to ${browserObjectTitle({ objectId, name: '', resources: '' })}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function openCommon(files: FileList | null) {
     const file = files?.[0];
     if (!file) return;
     try {
-      const common = await withBundledCourseObjectResources(parseCommonResourceArchive(new Uint8Array(await file.arrayBuffer())));
+      const common = await withExtractedCourseAssetResources(await withBundledCourseObjectResources(parseCommonResourceArchive(new Uint8Array(await file.arrayBuffer()))));
       setCommonArchive(common);
-      setStatus(`Loaded ${file.name}: ${common.objFlow.entries.length} ObjFlow object definitions, ${common.resourceEntries.length} resource files`);
+      setStatus(`Loaded ${file.name}: ${common.objFlow.entries.length} game object definitions, ${common.resourceEntries.length} shared asset files`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     }
@@ -461,8 +1334,8 @@ export function App() {
 
   function entityLabel(entity: KmpEntity): string {
     if (entity.section !== 'GOBJ' || entity.objectId === undefined) return describeEntity(entity);
-    const flow = objFlow?.byId.get(entity.objectId);
-    return flow ? `${flow.name || flow.resources} #${entity.index} (${entity.objectId.toString(16).toUpperCase()})` : describeEntity(entity);
+    const title = browserObjectTitle({ objectId: entity.objectId, name: objFlow?.byId.get(entity.objectId)?.name ?? '', resources: objFlow?.byId.get(entity.objectId)?.resources ?? '' });
+    return `${title} #${entity.index}`;
   }
 
   function downloadExport() {
@@ -471,7 +1344,13 @@ export function App() {
     if (issues.length > 0) {
       const errors = issues.filter((issue) => issue.level === 'error').length;
       const warnings = issues.length - errors;
-      const summary = issues.slice(0, 8).map((issue) => `${issue.level.toUpperCase()}: ${issue.message}`).join('\n');
+      const summary = issues
+        .slice(0, 8)
+        .map((issue) => {
+          const presented = presentValidationIssue(issue.message);
+          return `${issue.level.toUpperCase()}: ${presented.summary}${presented.detail ? ` (${presented.detail})` : ''}`;
+        })
+        .join('\n');
       const suffix = issues.length > 8 ? `\n...and ${issues.length - 8} more.` : '';
       const proceed = window.confirm(`Export with ${errors} errors and ${warnings} warnings?\n\n${summary}${suffix}`);
       if (!proceed) {
@@ -485,7 +1364,13 @@ export function App() {
     if (exportIssues.length > 0) {
       const errors = exportIssues.filter((issue) => issue.level === 'error').length;
       const warnings = exportIssues.length - errors;
-      const summary = exportIssues.slice(0, 8).map((issue) => `${issue.level.toUpperCase()}: ${issue.message}`).join('\n');
+      const summary = exportIssues
+        .slice(0, 8)
+        .map((issue) => {
+          const presented = presentValidationIssue(issue.message);
+          return `${issue.level.toUpperCase()}: ${presented.summary}${presented.detail ? ` (${presented.detail})` : ''}`;
+        })
+        .join('\n');
       const suffix = exportIssues.length > 8 ? `\n...and ${exportIssues.length - 8} more.` : '';
       const proceed = errors === 0 && window.confirm(`Export self-check found ${warnings} warnings.\n\n${summary}${suffix}`);
       if (!proceed) {
@@ -537,9 +1422,43 @@ export function App() {
             <Scale3D size={16} />
           </button>
         </div>
+        <div className="segmented viewModeSegmented" aria-label="Viewport view mode">
+          <button className={viewMode === 'normal' ? 'active' : ''} onClick={() => setViewMode('normal')} title="Normal view">
+            Normal
+          </button>
+          <button className={viewMode === 'dev' ? 'active' : ''} onClick={() => setViewMode('dev')} title="Collision dev view">
+            Dev
+          </button>
+          <button className={viewMode === 'topdown' ? 'active' : ''} onClick={() => setViewMode('topdown')} title="Top-down view">
+            Top
+          </button>
+          <button className={viewMode === 'ortho' ? 'active' : ''} onClick={() => setViewMode('ortho')} title="Orthographic view">
+            Ortho
+          </button>
+        </div>
         <button className={collisionVisible ? 'button active' : 'button'} onClick={() => setCollisionVisible((value) => !value)}>
           <Eye size={16} />
-          KCL
+          Collision
+        </button>
+        <button className="button" disabled={!canCopySelection()} onClick={copySelectedEntity} title="Copy selection (Ctrl/Cmd+C)">
+          <Copy size={16} />
+          Copy
+        </button>
+        <button className="button" disabled={!canCopySelection()} onClick={duplicateSelectedEntity} title="Duplicate selection (Ctrl/Cmd+D)">
+          <Copy size={16} />
+          Duplicate
+        </button>
+        <button className="button" disabled={!hasClipboardEntity || !track?.kmp} onClick={() => pasteClipboardEntity()} title="Paste copied entity (Ctrl/Cmd+V)">
+          <ClipboardPaste size={16} />
+          Paste
+        </button>
+        <button className="button" disabled={historyState.undo === 0} onClick={undoEdit} title="Undo (Ctrl/Cmd+Z)">
+          <Undo2 size={16} />
+          Undo
+        </button>
+        <button className="button" disabled={historyState.redo === 0} onClick={redoEdit} title="Redo (Ctrl/Cmd+Shift+Z / Ctrl/Cmd+Y)">
+          <Redo2 size={16} />
+          Redo
         </button>
         <button
           className={inspectorOpen ? 'button active' : 'button'}
@@ -550,27 +1469,74 @@ export function App() {
           {inspectorOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
           Inspector
         </button>
-        <button className="button primary" disabled={!track} onClick={downloadExport}>
+        <button className="button primary" disabled={!track} onClick={downloadExport} title="Export track (Ctrl/Cmd+S)">
           <Download size={16} />
           Export
         </button>
         <span className="status">{status}</span>
       </header>
 
-      <div className={inspectorOpen ? 'workspace' : 'workspace inspectorCollapsed'}>
+      <div className={`${inspectorOpen ? 'workspace' : 'workspace inspectorCollapsed'}${placeAssetsOpen ? '' : ' placeAssetsCollapsed'}`}>
+        <aside className="placeAssetsPanel">
+          <div className="panelHeader placeAssetsHeader">
+            <div>
+              <h2>Place Assets</h2>
+              {placeAssetsOpen && <p className="panelSubtle">Common draggable game objects</p>}
+            </div>
+            <button
+              className="iconButton"
+              type="button"
+              onClick={() => setPlaceAssetsOpen((value) => !value)}
+              title={placeAssetsOpen ? 'Hide place assets' : 'Show place assets'}
+              aria-label={placeAssetsOpen ? 'Hide place assets' : 'Show place assets'}
+            >
+              {placeAssetsOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
+            </button>
+          </div>
+          {placeAssetsOpen && (
+            <div className="placeAssetsBody">
+              {quickObjectOptions.length > 0 ? (
+                <div className="placeAssetsGrid">
+                  {quickObjectOptions.map((option) => {
+                    const quickObject = objFlow?.byId.get(option.id) ?? objectCatalog.find((entry) => entry.id === option.id);
+                    return (
+                      <div
+                        key={option.id}
+                        className="placeAssetTile"
+                        draggable
+                        onDragStart={(event) => event.dataTransfer.setData('application/mkw-object-id', String(option.id))}
+                      >
+                        {quickObject && <ObjectThumbnail object={quickObject} common={commonArchive} summaries={commonBrresSummaries} />}
+                        <strong>{option.label}</strong>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="muted">Load shared object data to place common objects from this rail.</p>
+              )}
+            </div>
+          )}
+        </aside>
         <Noclip3DViewport
           track={track}
           selectedId={selectedId}
+          selectedIds={selectedIds}
+          smokeCommonUrl={smokeCommonUrl}
           tool={tool}
+          viewMode={viewMode}
           collisionVisible={collisionVisible}
           getEntityLabel={entityLabel}
-          onSelect={setSelectedId}
+          onSelect={(id, options) => selectEntity(id, options?.additive)}
+          onSelectMany={(ids, options) => selectEntities(ids, options?.additive)}
           onMoveEntity={moveEntity}
           onRotateEntity={rotateEntity}
           onScaleEntity={scaleEntity}
           onMoveCheckpointEndpoint={moveCheckpointEndpoint}
           onAddObject={addObject}
           onAddKmpPoint={addKmpPoint}
+          onInteractionStart={beginEditSession}
+          onInteractionEnd={endEditSession}
         />
         <aside className="inspector">
           <div className="panelHeader">
@@ -579,6 +1545,20 @@ export function App() {
               <PanelRightClose size={16} />
             </button>
           </div>
+          {selectedEntities.length > 1 && (
+            <BatchSelectionPanel
+              count={selectedEntities.length}
+              offset={batchOffset}
+              onChangeOffset={setBatchOffset}
+              onApplyOffset={offsetSelectedEntities}
+              objectOptions={canBatchReplaceObjects ? objectOptions : []}
+              objectId={batchObjectId}
+              onChangeObjectId={setBatchObjectId}
+              onApplyObjectId={batchObjectId !== null ? () => replaceSelectedObjectTypes(batchObjectId) : undefined}
+              onDelete={deleteSelectedEntity}
+              onSnapToCollision={track.kcl ? snapMultipleSelectedToCollision : undefined}
+            />
+          )}
           {selected ? (
             <Inspector
               entity={selected}
@@ -586,6 +1566,9 @@ export function App() {
               pathInfo={selectedPathInfo}
               cameraHeader={cameraHeader}
               referenceCounts={referenceCounts}
+              objectProfile={selectedObjectProfile}
+              objectOptions={objectOptions}
+              objectVariantOptions={selectedObjectVariantOptions}
               onChangePosition={(position) => patchSelectedEntity((kmp, entity) => patchKmpEntityPosition(kmp, entity, position))}
               onDelete={selected.section === 'STGI' ? undefined : deleteSelectedEntity}
               onMoveEarlier={selected.section === 'STGI' ? undefined : () => moveSelectedEntity(-1)}
@@ -593,9 +1576,10 @@ export function App() {
               onSnapToCollision={track.kcl ? snapSelectedToCollision : undefined}
               onChangeCheckpointEndpoint={(side, position) => patchSelectedEntity((kmp, entity) => patchKmpCheckpointEndpoint(kmp, entity, side, position))}
               onChangeCheckpointField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpCheckpointField(kmp, entity, field, value))}
+              onChangePointDeviation={(value) => patchSelectedEntity((kmp, entity) => patchKmpPointDeviation(kmp, entity, value))}
               onChangePathGroupLinks={(side, links) => {
                 if (!track.kmp || !selectedPathInfo) return;
-                setTrack(replaceCourseKmp(track, patchKmpPathGroupLinks(track.kmp, selectedPathInfo.groupSection, selectedPathInfo.groupIndex, side, links)));
+                applyEditorChange(replaceCourseKmp(track, patchKmpPathGroupLinks(track.kmp, selectedPathInfo.groupSection, selectedPathInfo.groupIndex, side, links)));
               }}
               onSplitPathGroup={selectedPathInfo && selectedPathInfo.localIndex < selectedPathInfo.groupSize - 1 ? splitSelectedPathGroup : undefined}
               onMergePathGroup={selectedPathInfo && selectedPathInfo.nextGroups.length === 1 ? mergeSelectedPathGroup : undefined}
@@ -603,11 +1587,18 @@ export function App() {
               onChangePotiRouteSetting={(settingIndex, value) => patchSelectedEntity((kmp, entity) => patchKmpPotiRouteSetting(kmp, entity, settingIndex, value))}
               onChangePotiPointSetting={(settingIndex, value) => patchSelectedEntity((kmp, entity) => patchKmpPotiPointSetting(kmp, entity, settingIndex, value))}
               onAddPotiNode={() => addPotiNode(selected)}
+              onCreateObjectRoute={() => createObjectRoute(selected)}
+              onResetObjectBehavior={() => resetObjectBehavior(selected)}
+              onClearObjectRoute={() => clearObjectRoute(selected)}
+              onSelectObjectRoute={() => selectObjectRoute(selected)}
+              onApplySafeFallingRockDefaults={() => applySafeFallingRockDefaults(selected)}
+              onCreateCannonPointFromObject={() => createCannonPointFromObject(selected)}
+              onApplyRoulettePlatformDefaults={() => applyRoulettePlatformDefaults(selected)}
               onChangeAreaField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpAreaField(kmp, entity, field, value))}
               onChangeCameraField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpCameraField(kmp, entity, field, value))}
               onChangeCameraHeaderField={(field, value) => {
                 if (!track.kmp) return;
-                setTrack(replaceCourseKmp(track, patchKmpCameraHeaderField(track.kmp, field, value)));
+                applyEditorChange(replaceCourseKmp(track, patchKmpCameraHeaderField(track.kmp, field, value)));
               }}
               onChangeCameraViewPosition={(side, position) => patchSelectedEntity((kmp, entity) => patchKmpCameraViewPosition(kmp, entity, side, position))}
               onChangeRespawnField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpRespawnField(kmp, entity, field, value))}
@@ -625,20 +1616,33 @@ export function App() {
           ) : (
             <p className="muted">Select an object, route node, checkpoint, start point, camera, cannon point, or respawn point in the viewport.</p>
           )}
-          {track?.kmp && <KmpOverview kmp={track.kmp} onSelect={setSelectedId} />}
+          {selectedEntities.length > 1 && <p className="muted">{selectedEntities.length} selected. Inspector is showing the primary selection, with batch tools above.</p>}
+          {track?.kmp && <KmpOverview kmp={track.kmp} onSelect={(id, options) => selectEntity(id, options?.additive)} />}
           <h2>Validation</h2>
+          <div className="validationSummary">
+            <span className={`validationBadge${validationCounts.errorCount > 0 ? ' error' : ''}`}>{validationCounts.errorCount} errors</span>
+            <span className={`validationBadge${validationCounts.warningCount > 0 ? ' warning' : ''}`}>{validationCounts.warningCount} warnings</span>
+          </div>
           <div className="validationList">
             {validation.length === 0 && <p className="muted">No validation issues for the loaded data.</p>}
-            {validation.map((item, index) => (
-              <div className={item.level} key={`${item.message}-${index}`}>
+            {validation.map((item, index) => {
+              const presented = presentValidationIssue(item.message);
+              return (
+              <div className={`validationIssue ${item.level}`} key={`${item.message}-${index}`}>
                 <TriangleAlert size={14} />
-                {item.message}
+                <div className="validationCopy">
+                  <strong>{presented.summary}</strong>
+                  {presented.detail && <span>{presented.detail}</span>}
+                </div>
               </div>
-            ))}
+            )})}
             {track?.warnings.map((warning, index) => (
-              <div className="warning" key={`${warning}-${index}`}>
+              <div className="validationIssue warning" key={`${warning}-${index}`}>
                 <TriangleAlert size={14} />
-                {warning}
+                <div className="validationCopy">
+                  <strong>Track load warning</strong>
+                  <span>{warning}</span>
+                </div>
               </div>
             ))}
           </div>
@@ -652,12 +1656,22 @@ export function App() {
         <div className="browserHeader">
           <strong>Content Browser</strong>
           <span>
-            {activeBrowserFolder
-              ? `${activeBrowserFolder.label} · ${activeBrowserFolder.detail}`
+            {filteredBrowserFolder
+              ? `${filteredBrowserFolder.label} · ${filteredBrowserFolder.detail}`
               : track
-                ? `${track.brresFiles.length} BRRES resources${objFlow ? ` · ${objFlow.entries.length} ObjFlow objects` : ''}`
+                ? `${track.brresFiles.length} track asset files${objFlow ? ` · ${objFlow.entries.length} game objects` : ''}`
                 : 'Load a track to list archive assets'}
           </span>
+        </div>
+        <div className="browserSearchRow">
+          <input
+            className="browserSearchInput"
+            type="search"
+            placeholder="Search this folder"
+            value={browserQuery}
+            onChange={(event) => setBrowserQuery(event.currentTarget.value)}
+            aria-label="Search content browser"
+          />
         </div>
         <div className="browserFolders" role="tablist" aria-label="Content browser folders">
           {browserFolders.map((folder) => (
@@ -673,44 +1687,271 @@ export function App() {
           ))}
         </div>
         <div className="assetStrip">
-          {activeBrowserFolder?.kind === 'kmp' &&
-            activeBrowserFolder.items.map((item) => (
+          {filteredBrowserFolder?.kind === 'kmp' &&
+            filteredBrowserFolder.items.map((item) => (
               <div className="assetTile" key={item.section} draggable onDragStart={(event) => event.dataTransfer.setData('application/mkw-point-section', item.section)}>
-                <div className="thumbnail kmp">{item.section}</div>
+                <div className="thumbnail kmp">{friendlySectionLabel(item.section)}</div>
                 <strong>{item.label}</strong>
                 <span>{item.category}</span>
               </div>
             ))}
-          {activeBrowserFolder?.kind === 'object' &&
-            activeBrowserFolder.items.map((object) => (
+          {filteredBrowserFolder?.kind === 'object' &&
+            filteredBrowserFolder.items.map((object) => (
               <div className="assetTile" key={catalogId(object)} draggable onDragStart={(event) => event.dataTransfer.setData('application/mkw-object-id', String(catalogId(object)))}>
                 <ObjectThumbnail object={object} common={commonArchive} summaries={commonBrresSummaries} />
-                <strong>{'label' in object ? object.label : object.name || object.resources}</strong>
+                <strong>{browserObjectTitle(object)}</strong>
                 <span>{objectAssetLabel(object, commonArchive, commonBrresSummaries)}</span>
               </div>
             ))}
-          {activeBrowserFolder?.kind === 'brres' &&
-            activeBrowserFolder.items.map((path) => (
+          {filteredBrowserFolder?.kind === 'brres' &&
+            filteredBrowserFolder.items.map((path) => (
               <div className="assetTile" key={path}>
-                <div className="thumbnail brres">BRRES</div>
-                <strong>{path.split('/').pop()}</strong>
+                <div className="thumbnail brres">Asset</div>
+                <strong>{friendlyTrackAssetName(path)}</strong>
                 <span>{describeBrres(track?.brresSummaries[path]) || path}</span>
               </div>
             ))}
+          {filteredBrowserFolder?.kind === 'courseAsset' &&
+            filteredBrowserFolder.items.map((asset) => (
+              <div
+                className={asset.objectId !== null ? 'assetTile' : 'assetTile disabled'}
+                key={asset.id}
+                draggable={asset.objectId !== null}
+                onDragStart={(event) => {
+                  if (asset.objectId !== null) event.dataTransfer.setData('application/mkw-object-id', String(asset.objectId));
+                }}
+              >
+                <CourseAssetThumbnail asset={asset} summaries={commonBrresSummaries} />
+                <strong>{asset.objectLabel ?? asset.baseName.replace(/\.brres$/i, '')}</strong>
+                <span>{describeCourseAsset(asset)}</span>
+              </div>
+            ))}
+          {filteredBrowserFolder && filteredBrowserFolder.items.length === 0 && <p className="browserEmpty">No assets match this search.</p>}
         </div>
       </section>
     </main>
   );
 }
 
-async function withBundledCourseObjectResources(common: CommonResourceArchive): Promise<CommonResourceArchive> {
+function appendCopiedEntity(document: KmpDocument, entity: KmpEntity, position: Vec3): { bytes: Uint8Array; selectedId: string } {
+  if (entity.routePoint) return appendCopiedPotiPoint(document, entity, position);
+
+  let bytes: Uint8Array;
+  let selectedId: string;
+  switch (entity.section) {
+    case 'GOBJ':
+      if (entity.objectId === undefined) throw new Error('Cannot duplicate object without an object ID.');
+      bytes = appendKmpGobj(document, entity.objectId, position);
+      selectedId = `GOBJ-${(parseKmp(bytes).sections.find((section) => section.name === 'GOBJ')?.count ?? 1) - 1}`;
+      break;
+    case 'AREA':
+      bytes = appendKmpArea(document, position);
+      selectedId = `AREA-${(parseKmp(bytes).sections.find((section) => section.name === 'AREA')?.count ?? 1) - 1}`;
+      break;
+    case 'CAME':
+      bytes = appendKmpCamera(document, position);
+      selectedId = `CAME-${(parseKmp(bytes).sections.find((section) => section.name === 'CAME')?.count ?? 1) - 1}`;
+      break;
+    case 'CKPT':
+      bytes = appendKmpCheckpoint(document, position);
+      selectedId = `CKPT-${(parseKmp(bytes).sections.find((section) => section.name === 'CKPT')?.count ?? 1) - 1}`;
+      break;
+    case 'KTPT':
+    case 'ENPT':
+    case 'ITPT':
+    case 'JGPT':
+    case 'CNPT':
+    case 'MSPT':
+      bytes = appendKmpPoint(document, entity.section, position);
+      selectedId = `${entity.section}-${(parseKmp(bytes).sections.find((section) => section.name === entity.section)?.count ?? 1) - 1}`;
+      break;
+    default:
+      throw new Error(`Duplicating ${entity.section} is not supported yet.`);
+  }
+
+  return { bytes: patchCopiedEntity(bytes, selectedId, entity, position), selectedId };
+}
+
+function getClipboardSourceEntities(selectedEntities: KmpEntity[], selected: KmpEntity | null): KmpEntity[] {
+  if (selectedEntities.length > 1) return selectedEntities;
+  return selected ? [selected] : [];
+}
+
+function createClipboardEntity(entities: KmpEntity[], primaryId: string | null): ClipboardEntity {
+  const primary = entities.find((entity) => entity.id === primaryId) ?? entities.at(-1) ?? entities[0];
+  const anchor = cloneVec3(primary.position);
+  return {
+    anchor,
+    primaryId: primary.id,
+    entries: entities.map((entity, order) => ({
+      entity: JSON.parse(JSON.stringify(entity)) as KmpEntity,
+      relativeOffset: {
+        x: entity.position.x - anchor.x,
+        y: entity.position.y - anchor.y,
+        z: entity.position.z - anchor.z,
+      },
+      order,
+    })),
+  };
+}
+
+function sortClipboardEntriesForPaste(entries: ClipboardEntity['entries']): ClipboardEntity['entries'] {
+  return [...entries].sort((a, b) => {
+    if (a.entity.routePoint && b.entity.routePoint) {
+      if (a.entity.routePoint.routeIndex !== b.entity.routePoint.routeIndex) return b.entity.routePoint.routeIndex - a.entity.routePoint.routeIndex;
+      return b.entity.routePoint.pointIndex - a.entity.routePoint.pointIndex;
+    }
+    if (a.entity.routePoint) return -1;
+    if (b.entity.routePoint) return 1;
+    return a.order - b.order;
+  });
+}
+
+function appendCopiedPotiPoint(document: KmpDocument, entity: KmpEntity, position: Vec3): { bytes: Uint8Array; selectedId: string } {
+  if (!entity.routePoint) throw new Error('Cannot duplicate route node without route metadata.');
+  const route = document.routes[entity.routePoint.routeIndex];
+  if (!route) throw new Error(`Cannot duplicate route node: route ${entity.routePoint.routeIndex} is missing.`);
+  const bytes = appendKmpPotiPoint(document, entity.routePoint.routeIndex, entity.routePoint.pointIndex, position);
+  const selectedId = `POTI-${entity.routePoint.routeIndex}-${entity.routePoint.pointIndex + 1}`;
+  return { bytes: patchCopiedEntity(bytes, selectedId, entity, position), selectedId };
+}
+
+function patchCopiedEntity(bytes: Uint8Array, selectedId: string, source: KmpEntity, position: Vec3): Uint8Array {
+  let out = bytes;
+  const getTarget = () => {
+    const targetDoc = parseKmp(out);
+    const targetEntity = targetDoc.entities.find((candidate) => candidate.id === selectedId);
+    if (!targetEntity) throw new Error(`Duplicated entity ${selectedId} could not be found.`);
+    return { targetDoc, targetEntity };
+  };
+
+  if (source.rotation) {
+    const { targetDoc, targetEntity } = getTarget();
+    out = patchKmpEntityRotation(targetDoc, targetEntity, cloneVec3(source.rotation));
+  }
+  if (source.scale) {
+    const { targetDoc, targetEntity } = getTarget();
+    out = patchKmpEntityScale(targetDoc, targetEntity, cloneVec3(source.scale));
+  }
+  if (source.checkpoint) {
+    let target = getTarget();
+    out = patchKmpCheckpointEndpoint(target.targetDoc, target.targetEntity, 'left', offsetCheckpointPoint(source.checkpoint.left, source.position, position));
+    target = getTarget();
+    out = patchKmpCheckpointEndpoint(target.targetDoc, target.targetEntity, 'right', offsetCheckpointPoint(source.checkpoint.right, source.position, position));
+    for (const field of ['respawnIndex', 'type', 'prev', 'next'] as const) {
+      target = getTarget();
+      out = patchKmpCheckpointField(target.targetDoc, target.targetEntity, field, source.checkpoint[field]);
+    }
+  }
+  if (source.pointSettings) {
+    if (source.pointDeviation !== undefined) {
+      const { targetDoc, targetEntity } = getTarget();
+      out = patchKmpPointDeviation(targetDoc, targetEntity, source.pointDeviation);
+    }
+    for (let i = 0; i < source.pointSettings.length; i++) {
+      const { targetDoc, targetEntity } = getTarget();
+      out = patchKmpPointSetting(targetDoc, targetEntity, i, source.pointSettings[i]);
+    }
+  }
+  if (source.objectId !== undefined) {
+    let target = getTarget();
+    out = patchKmpGobjObjectId(target.targetDoc, target.targetEntity, source.objectId);
+    if (source.routeIndex !== undefined) {
+      target = getTarget();
+      out = patchKmpEntityRouteIndex(target.targetDoc, target.targetEntity, source.routeIndex);
+    }
+    if (source.objectSettings) {
+      for (let i = 0; i < source.objectSettings.length; i++) {
+        target = getTarget();
+        out = patchKmpGobjSetting(target.targetDoc, target.targetEntity, i, source.objectSettings[i]);
+      }
+    }
+    if (source.presenceFlags !== undefined) {
+      target = getTarget();
+      out = patchKmpGobjPresenceFlags(target.targetDoc, target.targetEntity, source.presenceFlags);
+    }
+  }
+  if (source.area) {
+    for (const field of Object.keys(source.area) as Array<keyof NonNullable<KmpEntity['area']>>) {
+      const { targetDoc, targetEntity } = getTarget();
+      out = patchKmpAreaField(targetDoc, targetEntity, field, source.area[field]);
+    }
+  }
+  if (source.camera) {
+    for (const field of Object.keys(source.camera) as Array<keyof NonNullable<KmpEntity['camera']>>) {
+      const { targetDoc, targetEntity } = getTarget();
+      out = patchKmpCameraField(targetDoc, targetEntity, field, source.camera[field]);
+    }
+  }
+  if (source.cameraView) {
+    let target = getTarget();
+    out = patchKmpCameraViewPosition(target.targetDoc, target.targetEntity, 'start', offsetCheckpointPoint(source.cameraView.start, source.position, position));
+    target = getTarget();
+    out = patchKmpCameraViewPosition(target.targetDoc, target.targetEntity, 'end', offsetCheckpointPoint(source.cameraView.end, source.position, position));
+  }
+  if (source.respawn) {
+    for (const field of Object.keys(source.respawn) as Array<keyof NonNullable<KmpEntity['respawn']>>) {
+      const { targetDoc, targetEntity } = getTarget();
+      out = patchKmpRespawnField(targetDoc, targetEntity, field, source.respawn[field]);
+    }
+  }
+  if (source.cannon) {
+    for (const field of Object.keys(source.cannon) as Array<keyof NonNullable<KmpEntity['cannon']>>) {
+      const { targetDoc, targetEntity } = getTarget();
+      out = patchKmpCannonField(targetDoc, targetEntity, field, source.cannon[field]);
+    }
+  }
+  if (source.battleFinish) {
+    for (const field of Object.keys(source.battleFinish) as Array<keyof NonNullable<KmpEntity['battleFinish']>>) {
+      const { targetDoc, targetEntity } = getTarget();
+      out = patchKmpBattleFinishField(targetDoc, targetEntity, field, source.battleFinish[field]);
+    }
+  }
+  if (source.stage) {
+    for (const field of Object.keys(source.stage) as Array<keyof NonNullable<KmpEntity['stage']>>) {
+      if (field === 'flareColor') continue;
+      const { targetDoc, targetEntity } = getTarget();
+      out = patchKmpStageField(targetDoc, targetEntity, field, source.stage[field] as number);
+    }
+    for (let i = 0; i < source.stage.flareColor.length; i++) {
+      const { targetDoc, targetEntity } = getTarget();
+      out = patchKmpStageFlareColor(targetDoc, targetEntity, i, source.stage.flareColor[i]);
+    }
+  }
+  if (source.poti) {
+    let target = getTarget();
+    out = patchKmpPotiRouteSetting(target.targetDoc, target.targetEntity, 0, source.poti.routeSetting1);
+    target = getTarget();
+    out = patchKmpPotiRouteSetting(target.targetDoc, target.targetEntity, 1, source.poti.routeSetting2);
+    target = getTarget();
+    out = patchKmpPotiPointSetting(target.targetDoc, target.targetEntity, 0, source.poti.pointSetting1);
+    target = getTarget();
+    out = patchKmpPotiPointSetting(target.targetDoc, target.targetEntity, 1, source.poti.pointSetting2);
+  }
+  return out;
+}
+
+function cloneVec3(value: Vec3): Vec3 {
+  return { x: value.x, y: value.y, z: value.z };
+}
+
+function offsetCheckpointPoint(point: Vec3, sourceCenter: Vec3, targetCenter: Vec3): Vec3 {
+  return {
+    x: targetCenter.x + (point.x - sourceCenter.x),
+    y: targetCenter.y + (point.y - sourceCenter.y),
+    z: targetCenter.z + (point.z - sourceCenter.z),
+  };
+}
+
+async function withBundledCourseObjectResources(common: CommonResourceArchive, allowedBaseNames?: Set<string>): Promise<CommonResourceArchive> {
   try {
     const basePath = '/data/MarioKartWii/Race/Course/Object/';
     const manifestResponse = await fetch(`${basePath}manifest.json`);
     if (!manifestResponse.ok) return common;
     const names = (await manifestResponse.json()) as string[];
+    const filteredNames = allowedBaseNames?.size ? names.filter((name) => allowedBaseNames.has(toResourceBaseName(name))) : names;
     const entries = await Promise.all(
-      names.map(async (name) => {
+      filteredNames.map(async (name) => {
         const response = await fetch(`${basePath}${name}`);
         if (!response.ok) return null;
         return { path: `Object/${name}`, type: 'file' as const, data: new Uint8Array(await response.arrayBuffer()) };
@@ -722,9 +1963,109 @@ async function withBundledCourseObjectResources(common: CommonResourceArchive): 
   }
 }
 
+async function withExtractedCourseAssetResources(common: CommonResourceArchive): Promise<CommonResourceArchive> {
+  try {
+    const response = await fetch('/data/MarioKartWii/Race/Course/ExtractedAssets.u8');
+    if (!response.ok) return common;
+    const entries = parseU8(new Uint8Array(await response.arrayBuffer())).filter((entry) => entry.type === 'file' && entry.data);
+    return mergeCommonResourceEntries(common, entries);
+  } catch {
+    return common;
+  }
+}
+
+function getSmokePreviewResourceNames(objFlow: CommonResourceArchive['objFlow']): Set<string> {
+  const out = new Set<string>();
+  for (const objectId of featuredObjectIds) {
+    const entry = objFlow.byId.get(objectId);
+    if (!entry) continue;
+    for (const resourceName of getObjFlowResourceNames(entry)) out.add(toResourceBaseName(resourceName));
+  }
+  return out;
+}
+
+function toResourceBaseName(name: string): string {
+  return name.trim().replace(/\.brres$/i, '').toLowerCase();
+}
+
 function scoreCommonPreviewResource(entry: { path: string }, referencedResources: Set<string>): number {
   const baseName = entry.path.split('/').pop()?.toLowerCase() ?? '';
   return (bundledCourseObjectResourceNames.has(baseName) ? 4 : 0) + (entry.path.toLowerCase().includes('/course/object/') || entry.path.toLowerCase().startsWith('object/') ? 2 : 0) + (referencedResources.has(baseName) ? 1 : 0);
+}
+
+function countSectionEntities(entities: KmpEntity[], section: KmpEntity['section']): number {
+  return entities.filter((entity) => entity.section === section).length;
+}
+
+function BatchSelectionPanel({
+  count,
+  offset,
+  onChangeOffset,
+  onApplyOffset,
+  objectOptions,
+  objectId,
+  onChangeObjectId,
+  onApplyObjectId,
+  onDelete,
+  onSnapToCollision,
+}: {
+  count: number;
+  offset: Vec3;
+  onChangeOffset: (value: Vec3) => void;
+  onApplyOffset: () => void;
+  objectOptions: ObjectOption[];
+  objectId: number | null;
+  onChangeObjectId: (value: number | null) => void;
+  onApplyObjectId?: () => void;
+  onDelete: () => void;
+  onSnapToCollision?: () => void;
+}) {
+  return (
+    <>
+      <h2>Batch Edit</h2>
+      <div className="propertyGrid">
+        <label>
+          Selection
+          <span>{count} elements selected</span>
+        </label>
+        <label>
+          Actions
+          <div className="actionRow">
+            <button className="inlineAction" type="button" onClick={onDelete}>
+              Delete
+            </button>
+            <button className="inlineAction" type="button" onClick={onSnapToCollision} disabled={!onSnapToCollision}>
+              Snap to Surface
+            </button>
+          </div>
+        </label>
+        <label>
+          Offset Position
+          <VectorInputs value={offset} onChange={onChangeOffset} />
+        </label>
+        <label>
+          Apply Offset
+          <button className="inlineAction" type="button" onClick={onApplyOffset}>
+            Move selected
+          </button>
+        </label>
+        {objectId !== null && objectOptions.length > 0 && (
+          <>
+            <label>
+              Replace Objects
+              <ObjectIdSelect value={objectId} options={objectOptions} onChange={(value) => onChangeObjectId(value)} />
+            </label>
+            <label>
+              Apply Object Type
+              <button className="inlineAction" type="button" onClick={onApplyObjectId} disabled={!onApplyObjectId}>
+                Replace selected objects
+              </button>
+            </label>
+          </>
+        )}
+      </div>
+    </>
+  );
 }
 
 function Inspector({
@@ -733,6 +2074,9 @@ function Inspector({
   pathInfo,
   cameraHeader,
   referenceCounts,
+  objectProfile,
+  objectOptions,
+  objectVariantOptions,
   onChangePosition,
   onDelete,
   onMoveEarlier,
@@ -740,6 +2084,7 @@ function Inspector({
   onSnapToCollision,
   onChangeCheckpointEndpoint,
   onChangeCheckpointField,
+  onChangePointDeviation,
   onChangePathGroupLinks,
   onSplitPathGroup,
   onMergePathGroup,
@@ -747,6 +2092,13 @@ function Inspector({
   onChangePotiRouteSetting,
   onChangePotiPointSetting,
   onAddPotiNode,
+  onCreateObjectRoute,
+  onResetObjectBehavior,
+  onClearObjectRoute,
+  onSelectObjectRoute,
+  onApplySafeFallingRockDefaults,
+  onCreateCannonPointFromObject,
+  onApplyRoulettePlatformDefaults,
   onChangeAreaField,
   onChangeCameraField,
   onChangeCameraHeaderField,
@@ -768,6 +2120,9 @@ function Inspector({
   pathInfo: PathInfo | null;
   cameraHeader: ReturnType<typeof getKmpCameraHeader> | null;
   referenceCounts: ReferenceCounts;
+  objectProfile: ObjectInspectorProfile | null;
+  objectOptions: ObjectOption[];
+  objectVariantOptions: ObjectOption[];
   onChangePosition: (position: Vec3) => void;
   onDelete?: () => void;
   onMoveEarlier?: () => void;
@@ -775,6 +2130,7 @@ function Inspector({
   onSnapToCollision?: () => void;
   onChangeCheckpointEndpoint: (side: 'left' | 'right', position: Vec3) => void;
   onChangeCheckpointField: (field: KmpCheckpointField, value: number) => void;
+  onChangePointDeviation: (value: number) => void;
   onChangePathGroupLinks: (side: 'prev' | 'next', links: number[]) => void;
   onSplitPathGroup?: () => void;
   onMergePathGroup?: () => void;
@@ -782,6 +2138,13 @@ function Inspector({
   onChangePotiRouteSetting: (settingIndex: number, value: number) => void;
   onChangePotiPointSetting: (settingIndex: number, value: number) => void;
   onAddPotiNode: () => void;
+  onCreateObjectRoute?: () => void;
+  onResetObjectBehavior?: () => void;
+  onClearObjectRoute?: () => void;
+  onSelectObjectRoute?: () => void;
+  onApplySafeFallingRockDefaults?: () => void;
+  onCreateCannonPointFromObject?: () => void;
+  onApplyRoulettePlatformDefaults?: () => void;
   onChangeAreaField: (field: KmpAreaField, value: number) => void;
   onChangeCameraField: (field: KmpCameraField, value: number) => void;
   onChangeCameraHeaderField: (field: KmpCameraHeaderField, value: number) => void;
@@ -798,6 +2161,10 @@ function Inspector({
   onChangeObjectSetting: (settingIndex: number, value: number) => void;
   onChangePresenceFlags: (value: number) => void;
 }) {
+  const areaInspectorLabels = entity.area ? getAreaInspectorLabels(entity.area.type) : null;
+  const objectPresenceBaseFlags = entity.presenceFlags !== undefined ? entity.presenceFlags & ~0x0007 : 0;
+  const objectPresencePlayerFlags = entity.presenceFlags !== undefined ? entity.presenceFlags & 0x0007 : 0;
+  const objectHasExtraPresenceBits = entity.presenceFlags !== undefined && objectPresenceBaseFlags !== 0;
   return (
     <div className="propertyGrid">
       <label>
@@ -837,7 +2204,7 @@ function Inspector({
       )}
       {entity.section !== 'STGI' && onSnapToCollision && (
         <label>
-          KCL Snap
+          Surface Snap
           <button className="inlineAction" type="button" onClick={onSnapToCollision}>
             Snap selected to collision
           </button>
@@ -876,108 +2243,267 @@ function Inspector({
         </>
       )}
       {entity.pointSettings && (
-        <label>
-          Point Settings
-          <div className="settingInputs">
-            {entity.pointSettings.map((setting, index) => (
+        <>
+          {entity.pointDeviation !== undefined && (
+            <label>
+              Deviation
               <input
-                key={index}
-                aria-label={`Point setting ${index + 1}`}
                 type="number"
-                min="0"
-                max={entity.section === 'ENPT' && index > 0 ? 255 : 65535}
-                value={setting}
+                step="0.1"
+                value={Number.isFinite(entity.pointDeviation) ? Number(entity.pointDeviation.toFixed(3)) : 0}
                 onChange={(event) => {
                   const value = Number(event.currentTarget.value);
-                  const max = entity.section === 'ENPT' && index > 0 ? 0xff : 0xffff;
-                  if (Number.isFinite(value)) onChangePointSetting(index, Math.max(0, Math.min(max, Math.trunc(value))));
+                  if (Number.isFinite(value)) onChangePointDeviation(value);
                 }}
               />
-            ))}
-          </div>
-        </label>
+            </label>
+          )}
+          {entity.section === 'ENPT' ? (
+            <>
+              <label>
+                Mushroom / Wheelie
+                <select value={entity.pointSettings[0]} onChange={(event) => onChangePointSetting(0, Number(event.currentTarget.value))}>
+                  {enemyRouteSetting1Options.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Drift Behavior
+                <select value={entity.pointSettings[1]} onChange={(event) => onChangePointSetting(1, Number(event.currentTarget.value))}>
+                  {enemyRouteSetting2Options.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Route Setting 3
+                <input
+                  type="number"
+                  min="0"
+                  max="255"
+                  value={entity.pointSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangePointSetting(2, Math.max(0, Math.min(0xff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          ) : entity.section === 'ITPT' ? (
+            <>
+              <label>
+                Bullet Bill Gravity
+                <select value={entity.pointSettings[0]} onChange={(event) => onChangePointSetting(0, Number(event.currentTarget.value))}>
+                  {itemRouteSetting1Options.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Route Priority / Stop
+                <select value={entity.pointSettings[1]} onChange={(event) => onChangePointSetting(1, Number(event.currentTarget.value))}>
+                  {itemRouteSetting2Options.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          ) : (
+            <label>
+              Point Settings
+              <div className="settingInputs">
+                {entity.pointSettings.map((setting, index) => (
+                  <input
+                    key={index}
+                    aria-label={`Point setting ${index + 1}`}
+                    type="number"
+                    min="0"
+                    max={entity.section === 'ENPT' && index > 0 ? 255 : 65535}
+                    value={setting}
+                    onChange={(event) => {
+                      const value = Number(event.currentTarget.value);
+                      const max = entity.section === 'ENPT' && index > 0 ? 0xff : 0xffff;
+                      if (Number.isFinite(value)) onChangePointSetting(index, Math.max(0, Math.min(max, Math.trunc(value))));
+                    }}
+                  />
+                ))}
+              </div>
+            </label>
+          )}
+        </>
       )}
       {entity.poti && (
         <>
           <label>
-            Route Settings
-            <div className="settingInputs">
-              {[entity.poti.routeSetting1, entity.poti.routeSetting2].map((setting, index) => (
-                <input
-                  key={index}
-                  aria-label={`Route setting ${index + 1}`}
-                  type="number"
-                  min="0"
-                  max="255"
-                  value={setting}
-                  onChange={(event) => {
-                    const value = Number(event.currentTarget.value);
-                    if (Number.isFinite(value)) onChangePotiRouteSetting(index, Math.max(0, Math.min(0xff, Math.trunc(value))));
-                  }}
-                />
+            Route Edge Mode
+            <select value={entity.poti.routeSetting1} onChange={(event) => onChangePotiRouteSetting(0, Number(event.currentTarget.value))}>
+              {potiRouteShapeOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
               ))}
-            </div>
+            </select>
           </label>
           <label>
-            Route Node Settings
-            <div className="settingInputs">
-              {[entity.poti.pointSetting1, entity.poti.pointSetting2].map((setting, index) => (
-                <input
-                  key={index}
-                  aria-label={`Route node setting ${index + 1}`}
-                  type="number"
-                  min="0"
-                  max="65535"
-                  value={setting}
-                  onChange={(event) => {
-                    const value = Number(event.currentTarget.value);
-                    if (Number.isFinite(value)) onChangePotiPointSetting(index, Math.max(0, Math.min(0xffff, Math.trunc(value))));
-                  }}
-                />
+            Motion Mode
+            <select value={entity.poti.routeSetting2} onChange={(event) => onChangePotiRouteSetting(1, Number(event.currentTarget.value))}>
+              {potiRouteMotionOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
               ))}
-            </div>
+            </select>
+          </label>
+          <label>
+            Route Node Setting 1
+            <input
+              aria-label="Route node setting 1"
+              type="number"
+              min="0"
+              max="65535"
+              value={entity.poti.pointSetting1}
+              onChange={(event) => {
+                const value = Number(event.currentTarget.value);
+                if (Number.isFinite(value)) onChangePotiPointSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+              }}
+            />
+          </label>
+          <label>
+            Route Node Setting 2
+            <input
+              aria-label="Route node setting 2"
+              type="number"
+              min="0"
+              max="65535"
+              value={entity.poti.pointSetting2}
+              onChange={(event) => {
+                const value = Number(event.currentTarget.value);
+                if (Number.isFinite(value)) onChangePotiPointSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+              }}
+            />
           </label>
         </>
       )}
       {entity.area && (
-        <label>
-          Area Settings
-          <div className="settingInputs">
-            {(Object.entries(entity.area) as Array<[KmpAreaField, number]>).map(([field, value]) => {
-              const byteField = field === 'shape' || field === 'type' || field === 'cameraIndex' || field === 'priority' || field === 'routeIndex' || field === 'enemyIndex';
-              if (field === 'cameraIndex') {
-                return <ReferenceSelect key={field} label={field} value={value} noneValue={0xff} count={referenceCounts.cameras} optionLabel="Camera" onChange={(next) => onChangeAreaField(field, next)} />;
-              }
-              if (field === 'routeIndex') {
-                return <ReferenceSelect key={field} label={field} value={value} noneValue={0xff} count={referenceCounts.routes} optionLabel="Route" onChange={(next) => onChangeAreaField(field, next)} />;
-              }
-              if (field === 'enemyIndex') {
-                return <ReferenceSelect key={field} label={field} value={value} noneValue={0xff} count={referenceCounts.enemyPoints} optionLabel="Enemy" onChange={(next) => onChangeAreaField(field, next)} />;
-              }
-              return (
-                <input
-                  key={field}
-                  aria-label={field}
-                  title={field}
-                  type="number"
-                  min="0"
-                  max={byteField ? 255 : 65535}
-                  value={value}
-                  onChange={(event) => {
-                    const next = Number(event.currentTarget.value);
-                    if (Number.isFinite(next)) onChangeAreaField(field, Math.max(0, Math.min(byteField ? 0xff : 0xffff, Math.trunc(next))));
-                  }}
-                />
-              );
-            })}
-          </div>
-        </label>
+        <>
+          <label>
+            Area Type
+            <select value={entity.area.type} onChange={(event) => onChangeAreaField('type', Number(event.currentTarget.value))}>
+              {areaTypeOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Area Shape
+            <select value={entity.area.shape} onChange={(event) => onChangeAreaField('shape', Number(event.currentTarget.value))}>
+              {areaShapeOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Priority
+            <input
+              type="number"
+              min="0"
+              max="255"
+              value={entity.area.priority}
+              onChange={(event) => {
+                const next = Number(event.currentTarget.value);
+                if (Number.isFinite(next)) onChangeAreaField('priority', Math.max(0, Math.min(0xff, Math.trunc(next))));
+              }}
+            />
+          </label>
+          {(areaInspectorLabels?.cameraLabel || entity.area.cameraIndex !== 0xff) && (
+            <label>
+              {areaInspectorLabels?.cameraLabel ?? 'Camera'}
+              <ReferenceSelect
+                label={areaInspectorLabels?.cameraLabel ?? 'Camera'}
+                value={entity.area.cameraIndex}
+                noneValue={0xff}
+                count={referenceCounts.cameras}
+                optionLabel="Camera"
+                onChange={(next) => onChangeAreaField('cameraIndex', next)}
+              />
+            </label>
+          )}
+          {(areaInspectorLabels?.routeLabel || entity.area.routeIndex !== 0xff) && (
+            <label>
+              {areaInspectorLabels?.routeLabel ?? 'Route'}
+              <ReferenceSelect
+                label={areaInspectorLabels?.routeLabel ?? 'Route'}
+                value={entity.area.routeIndex}
+                noneValue={0xff}
+                count={referenceCounts.routes}
+                optionLabel="Route"
+                onChange={(next) => onChangeAreaField('routeIndex', next)}
+              />
+            </label>
+          )}
+          {(areaInspectorLabels?.enemyLabel || entity.area.enemyIndex !== 0xff) && (
+            <label>
+              {areaInspectorLabels?.enemyLabel ?? 'Enemy Point'}
+              <ReferenceSelect
+                label={areaInspectorLabels?.enemyLabel ?? 'Enemy Point'}
+                value={entity.area.enemyIndex}
+                noneValue={0xff}
+                count={referenceCounts.enemyPoints}
+                optionLabel="Enemy"
+                onChange={(next) => onChangeAreaField('enemyIndex', next)}
+              />
+            </label>
+          )}
+          {(areaInspectorLabels?.setting1Label || entity.area.setting1 !== 0) && (
+            <label>
+              {areaInspectorLabels?.setting1Label ?? 'Setting 1'}
+              <input
+                type="number"
+                min="0"
+                max="65535"
+                value={entity.area.setting1}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeAreaField('setting1', Math.max(0, Math.min(0xffff, Math.trunc(next))));
+                }}
+              />
+            </label>
+          )}
+          {(areaInspectorLabels?.setting2Label || entity.area.setting2 !== 0) && (
+            <label>
+              {areaInspectorLabels?.setting2Label ?? 'Setting 2'}
+              <input
+                type="number"
+                min="0"
+                max="65535"
+                value={entity.area.setting2}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeAreaField('setting2', Math.max(0, Math.min(0xffff, Math.trunc(next))));
+                }}
+              />
+            </label>
+          )}
+        </>
       )}
       {entity.camera && (
         <>
           {cameraHeader && (
             <label>
-              CAME Starts
+              Camera Starts
               <div className="vectorInputs">
                 <ReferenceSelect
                   label="Intro start camera"
@@ -995,7 +2521,7 @@ function Inspector({
                   optionLabel="Camera"
                   onChange={(next) => onChangeCameraHeaderField('firstSelectionCam', next)}
                 />
-                <span>CAME</span>
+                <span>Camera Chain</span>
               </div>
             </label>
           )}
@@ -1053,10 +2579,36 @@ function Inspector({
         </label>
       )}
       {entity.cannon && (
-        <label>
-          Cannon Settings
-          <ShortNumberInputs values={entity.cannon} onChange={onChangeCannonField} />
-        </label>
+        <>
+          <label>
+            Cannon Destination ID
+            <input
+              type="number"
+              min="0"
+              max="65535"
+              value={entity.cannon.id}
+              onChange={(event) => {
+                const next = Number(event.currentTarget.value);
+                if (Number.isFinite(next)) onChangeCannonField('id', Math.max(0, Math.min(0xffff, Math.trunc(next))));
+              }}
+            />
+          </label>
+          <label>
+            Launch Shape
+            <select value={String(entity.cannon.effect)} onChange={(event) => onChangeCannonField('effect', Number(event.currentTarget.value))}>
+              {entity.cannon.effect > 2 && (
+                <option value={entity.cannon.effect}>
+                  Custom #{entity.cannon.effect}
+                </option>
+              )}
+              {cannonEffectOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </>
       )}
       {entity.battleFinish && (
         <label>
@@ -1126,64 +2678,2459 @@ function Inspector({
           <VectorInputs value={entity.scale} onChange={onChangeScale} step={0.1} />
         </label>
       )}
-      {entity.objectId !== undefined && (
-        <label>
-          Object ID
-          <input
-            className="routeInput"
-            type="number"
-            min="0"
-            max="65535"
-            value={entity.objectId}
-            onChange={(event) => {
-              const value = Number(event.currentTarget.value);
-              if (Number.isFinite(value)) onChangeObjectId(Math.max(0, Math.min(0xffff, Math.trunc(value))));
-            }}
-          />
-        </label>
-      )}
-      {entity.routeIndex !== undefined && (
-        <label>
-          Route
-          <ReferenceSelect label="Object route" value={entity.routeIndex} noneValue={0xffff} count={referenceCounts.routes} optionLabel="Route" onChange={onChangeRouteIndex} />
-        </label>
-      )}
-      {entity.objectSettings && (
-        <label>
-          Object Settings
-          <div className="settingInputs">
-            {entity.objectSettings.map((setting, index) => (
+      {entity.objectId !== undefined && objectProfile && (
+        <>
+          <label>
+            Object Setup
+            <span>{objectProfile.title}</span>
+          </label>
+          <label>
+            Quick Setup
+            <span>{objectProfile.summary}</span>
+          </label>
+          {objectProfile.tips.map((tip, index) => (
+            <label key={`${objectProfile.title}-tip-${index}`}>
+              Tip {index + 1}
+              <span>{tip}</span>
+            </label>
+          ))}
+          {objectProfile.cautions?.map((caution, index) => (
+            <label key={`${objectProfile.title}-caution-${index}`}>
+              Watch out
+              <span>{caution}</span>
+            </label>
+          ))}
+          {guidanceOnlyObjectProfileNotes[objectProfile.title] && (
+            <label>
+              Setup Surface
+              <span>{guidanceOnlyObjectProfileNotes[objectProfile.title]}</span>
+            </label>
+          )}
+          {objectVariantOptions.length > 1 && (
+            <label>
+              {objectProfile.variantLabel ?? 'Variant'}
+              <select value={String(entity.objectId)} onChange={(event) => onChangeObjectId(Number(event.currentTarget.value))}>
+                {objectVariantOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {entity.presenceFlags !== undefined && (
+            <label>
+              Visibility
+              <div className="actionStack">
+                <div className="toggleGrid">
+                  {gobjPresenceModeOptions.map((option) => {
+                    const active = (objectPresencePlayerFlags & option.mask) !== 0;
+                    return (
+                      <button
+                        key={option.mask}
+                        className={`inlineAction toggleButton${active ? ' isActive' : ''}`}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => onChangePresenceFlags(setMaskedBits(entity.presenceFlags ?? 0, option.mask, !active))}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="actionRow">
+                  <button className="inlineAction" type="button" onClick={() => onChangePresenceFlags(objectPresenceBaseFlags | 0x0007)}>
+                    Show Everywhere
+                  </button>
+                  <button className="inlineAction" type="button" onClick={() => onChangePresenceFlags(objectPresenceBaseFlags | 0x0001)}>
+                    1P Only
+                  </button>
+                  <button className="inlineAction" type="button" onClick={() => onChangePresenceFlags(objectPresenceBaseFlags)}>
+                    Hide
+                  </button>
+                </div>
+                <span>{describePresenceFlags(entity.presenceFlags)}</span>
+                {objectHasExtraPresenceBits && <span>Keeps extra presence bits above 0x0007 for compatibility.</span>}
+              </div>
+            </label>
+          )}
+          {objectProfile.title === 'Item Box' && entity.objectSettings && (
+            <>
+              <label>
+                Player Item
+                <select value={String(entity.objectSettings[1])} onChange={(event) => onChangeObjectSetting(1, Number(event.currentTarget.value))}>
+                  {!itemBoxSettingOptions.some((option) => option.value === entity.objectSettings[1]) && (
+                    <option value={entity.objectSettings[1]}>
+                      Custom #{entity.objectSettings[1]}
+                    </option>
+                  )}
+                  {itemBoxSettingOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                CPU Item
+                <select value={String(entity.objectSettings[2])} onChange={(event) => onChangeObjectSetting(2, Number(event.currentTarget.value))}>
+                  {!itemBoxSettingOptions.some((option) => option.value === entity.objectSettings[2]) && (
+                    <option value={entity.objectSettings[2]}>
+                      Custom #{entity.objectSettings[2]}
+                    </option>
+                  )}
+                  {itemBoxSettingOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Roulette / Respawn
+                <select value={String(entity.objectSettings[5])} onChange={(event) => onChangeObjectSetting(5, Number(event.currentTarget.value))}>
+                  {!itemBoxTimingOptions.some((option) => option.value === entity.objectSettings[5]) && (
+                    <option value={entity.objectSettings[5]}>
+                      Custom #{entity.objectSettings[5]}
+                    </option>
+                  )}
+                  {itemBoxTimingOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {entity.objectId === 0xc9 && (
+                <>
+                  <label>
+                    Start Speed
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[0]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Route Start Point
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[4]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(4, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Shadow
+                    <select value={String(entity.objectSettings[3])} onChange={(event) => onChangeObjectSetting(3, Number(event.currentTarget.value))}>
+                      {entity.objectSettings[3] !== 0 && entity.objectSettings[3] !== 1 && (
+                        <option value={entity.objectSettings[3]}>
+                          Custom #{entity.objectSettings[3]}
+                        </option>
+                      )}
+                      <option value="0">Render Shadow</option>
+                      <option value="1">Hide Shadow</option>
+                    </select>
+                  </label>
+                </>
+              )}
+              {entity.objectId === 0xd4 && (
+                <>
+                  <label>
+                    Speed
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[0]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Start Delay
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[4]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(4, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Time Between Boxes
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[5]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(5, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Box Count
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[6]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(6, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Shadow
+                    <select value={String(entity.objectSettings[3])} onChange={(event) => onChangeObjectSetting(3, Number(event.currentTarget.value))}>
+                      {entity.objectSettings[3] !== 0 && entity.objectSettings[3] !== 1 && (
+                        <option value={entity.objectSettings[3]}>
+                          Custom #{entity.objectSettings[3]}
+                        </option>
+                      )}
+                      <option value="0">Render Shadow</option>
+                      <option value="1">Hide Shadow</option>
+                    </select>
+                  </label>
+                </>
+              )}
+              {entity.objectId === 0xd5 && (
+                <>
+                  <label>
+                    Speed
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[0]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Start Delay
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[4]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(4, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Shadow
+                    <select value={String(entity.objectSettings[3])} onChange={(event) => onChangeObjectSetting(3, Number(event.currentTarget.value))}>
+                      {entity.objectSettings[3] !== 0 && entity.objectSettings[3] !== 1 && (
+                        <option value={entity.objectSettings[3]}>
+                          Custom #{entity.objectSettings[3]}
+                        </option>
+                      )}
+                      <option value="0">Render Shadow</option>
+                      <option value="1">Hide Shadow</option>
+                    </select>
+                  </label>
+                </>
+              )}
+              {entity.objectId === 0xee && (
+                <>
+                  <label>
+                    Cycle Time
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[0]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Start Delay
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[4]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(4, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Shadow
+                    <select value={String(entity.objectSettings[3])} onChange={(event) => onChangeObjectSetting(3, Number(event.currentTarget.value))}>
+                      {entity.objectSettings[3] !== 0 && entity.objectSettings[3] !== 1 && (
+                        <option value={entity.objectSettings[3]}>
+                          Custom #{entity.objectSettings[3]}
+                        </option>
+                      )}
+                      <option value="0">Render Shadow</option>
+                      <option value="1">Hide Shadow</option>
+                    </select>
+                  </label>
+                </>
+              )}
+            </>
+          )}
+          {objectProfile.title === 'Podoboo' && entity.objectSettings && (
+            <>
+              <label>
+                Start Delay (frames after GO)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Respawn Interval (frames)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Landing Distance
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Volcano Rock' && entity.objectSettings && (
+            <>
+              <label>
+                Fireball Speed
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Delay Before Starting
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Time Between Fireballs
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Time Until Fire Goes Out
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[3]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(3, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Goomba' && entity.objectSettings && (
+            <>
+              <label>
+                Respawn Time
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Speed
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Animation Speed
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Penguin' && entity.objectSettings && (
+            <label>
+              Speed
               <input
-                key={index}
-                aria-label={`Setting ${index + 1}`}
+                className="routeInput"
                 type="number"
                 min="0"
                 max="65535"
-                value={setting}
+                value={entity.objectSettings[0]}
                 onChange={(event) => {
                   const value = Number(event.currentTarget.value);
-                  if (Number.isFinite(value)) onChangeObjectSetting(index, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
                 }}
               />
-            ))}
+            </label>
+          )}
+          {objectProfile.title === 'Monty Mole' && entity.objectSettings && (
+            <>
+              <label>
+                Speed
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Start Delay (frames)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Shy Guy' && entity.objectSettings && (
+            <>
+              <label>
+                Speed
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Color
+                <select value={String(entity.objectSettings[1])} onChange={(event) => onChangeObjectSetting(1, Number(event.currentTarget.value))}>
+                  {!shyGuyColorOptions.some((option) => option.value === entity.objectSettings[1]) && (
+                    <option value={entity.objectSettings[1]}>
+                      Custom #{entity.objectSettings[1]}
+                    </option>
+                  )}
+                  {shyGuyColorOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Ski Lift' && entity.objectSettings && (
+            <label>
+              Chairlift Model
+              <select value={String(entity.objectSettings[0])} onChange={(event) => onChangeObjectSetting(0, Number(event.currentTarget.value))}>
+                {!chairliftModelOptions.some((option) => option.value === entity.objectSettings[0]) && (
+                  <option value={entity.objectSettings[0]}>
+                    Custom #{entity.objectSettings[0]}
+                  </option>
+                )}
+                {chairliftModelOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {objectProfile.title === 'Shy Guy Obstacle' && entity.objectSettings && entity.objectId === 0x0ce && (
+            <>
+              <label>
+                Speed
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Vertical Bob Strength
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Shy Guy Obstacle' && entity.objectSettings && entity.objectId === 0x0ea && (
+            <>
+              <label>
+                Source Ship Route
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Flight Time (frames)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Balloon Hazard' && entity.objectSettings && (
+            <>
+              <label>
+                Speed
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Max Vertical Drift
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Cataquack' && entity.objectSettings && (
+            <>
+              <label>
+                Color
+                <select value={String(entity.objectSettings[0])} onChange={(event) => onChangeObjectSetting(0, Number(event.currentTarget.value))}>
+                  {!cataquackColorOptions.some((option) => option.value === entity.objectSettings[0]) && (
+                    <option value={entity.objectSettings[0]}>
+                      Custom #{entity.objectSettings[0]}
+                    </option>
+                  )}
+                  {cataquackColorOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Detection Distance
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Flame Jet' && entity.objectSettings && entity.objectId === 0x1fd && (
+            <>
+              <label>
+                Cycle Length (frames + 9 seconds)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Start Delay (frames)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Size Factor
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Flame Jet' && entity.objectSettings && entity.objectId === 0x212 && (
+            <>
+              <label>
+                Total Cycle Length
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Start Delay (frames)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Drop Height / 384
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Idle Time Offset
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[3]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(3, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Flame Jet' && entity.objectSettings && entity.objectId === 0x216 && (
+            <>
+              <label>
+                Time Outside Lava
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Start Delay (frames)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Time Outside-Lava Mode
+                <select value={String(entity.objectSettings[2])} onChange={(event) => onChangeObjectSetting(2, Number(event.currentTarget.value))}>
+                  {entity.objectSettings[2] !== 0 && entity.objectSettings[2] !== 1 && (
+                    <option value={entity.objectSettings[2]}>
+                      Custom #{entity.objectSettings[2]}
+                    </option>
+                  )}
+                  <option value="0">Use Default 5 Seconds</option>
+                  <option value="1">Use Setting 1</option>
+                </select>
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Angry Sun' && entity.objectSettings && (
+            <>
+              <label>
+                Speed
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Start Delay (frames)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Quicksand' && entity.objectSettings && (
+            <>
+              <label>
+                Center Thwomp
+                <select value={String(entity.objectSettings[0])} onChange={(event) => onChangeObjectSetting(0, Number(event.currentTarget.value))}>
+                  {entity.objectSettings[0] !== 0 && entity.objectSettings[0] !== 1 && (
+                    <option value={entity.objectSettings[0]}>
+                      Custom #{entity.objectSettings[0]}
+                    </option>
+                  )}
+                  <option value="0">Use Thwomp</option>
+                  <option value="1">No Thwomp</option>
+                </select>
+              </label>
+              <label>
+                Sand Wave Length
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Wave Travel Time
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Crusher' && entity.objectSettings && (
+            <>
+              <label>
+                Start Delay (frames)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Sleep Time (frames)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Breakable Box' && entity.objectSettings && entity.objectId === 0xd3 && (
+            <>
+              <label>
+                Speed
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Item Reward
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Reward Chance
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Start Delay
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[4]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(4, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Time Between Boxes
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[5]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(5, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Maximum Boxes
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[6]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(6, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Pokey' && entity.objectSettings && (
+            <label>
+              Speed
+              <input
+                className="routeInput"
+                type="number"
+                min="0"
+                max="65535"
+                value={entity.objectSettings[0]}
+                onChange={(event) => {
+                  const value = Number(event.currentTarget.value);
+                  if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                }}
+              />
+            </label>
+          )}
+          {objectProfile.title === 'Swooper' && entity.objectSettings && (
+            <>
+              <label>
+                Speed
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Next Group Delay (frames)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Swoops Per Group
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Route Drift
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[3]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(3, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Maximum Height
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[4]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(4, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Spacing Within Group
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[5]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(5, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Start Delay (frames)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[6]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(6, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Bowser Fireball' && entity.objectSettings && (
+            <>
+              <label>
+                Source Ship Route
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Flight Time (frames)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Chain Chomp' && entity.objectSettings && (
+            entity.objectId === 0x0eb ? (
+              <>
+                <label>
+                  Route Speed
+                  <input
+                    className="routeInput"
+                    type="number"
+                    min="0"
+                    max="65535"
+                    value={entity.objectSettings[0]}
+                    onChange={(event) => {
+                      const value = Number(event.currentTarget.value);
+                      if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                    }}
+                  />
+                </label>
+                <label>
+                  Start Mode
+                  <select value={String(entity.objectSettings[1])} onChange={(event) => onChangeObjectSetting(1, Number(event.currentTarget.value))}>
+                    {!twanwanStartModeOptions.some((option) => option.value === entity.objectSettings[1]) && (
+                      <option value={entity.objectSettings[1]}>
+                        Custom #{entity.objectSettings[1]}
+                      </option>
+                    )}
+                    {twanwanStartModeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Sine Amplitude
+                  <input
+                    className="routeInput"
+                    type="number"
+                    min="0"
+                    max="65535"
+                    value={entity.objectSettings[2]}
+                    onChange={(event) => {
+                      const value = Number(event.currentTarget.value);
+                      if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                    }}
+                  />
+                </label>
+                <label>
+                  Sine Period (frames)
+                  <input
+                    className="routeInput"
+                    type="number"
+                    min="0"
+                    max="65535"
+                    value={entity.objectSettings[3]}
+                    onChange={(event) => {
+                      const value = Number(event.currentTarget.value);
+                      if (Number.isFinite(value)) onChangeObjectSetting(3, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                    }}
+                  />
+                </label>
+                <label>
+                  Start Delay (frames)
+                  <input
+                    className="routeInput"
+                    type="number"
+                    min="0"
+                    max="65535"
+                    value={entity.objectSettings[4]}
+                    onChange={(event) => {
+                      const value = Number(event.currentTarget.value);
+                      if (Number.isFinite(value)) onChangeObjectSetting(4, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                    }}
+                  />
+                </label>
+                <label>
+                  Target Route Start Delay (frames)
+                  <input
+                    className="routeInput"
+                    type="number"
+                    min="0"
+                    max="65535"
+                    value={entity.objectSettings[5]}
+                    onChange={(event) => {
+                      const value = Number(event.currentTarget.value);
+                      if (Number.isFinite(value)) onChangeObjectSetting(5, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                    }}
+                  />
+                </label>
+              </>
+            ) : (
+              <>
+                <label>
+                  Chain Length
+                  <input
+                    className="routeInput"
+                    type="number"
+                    min="0"
+                    max="65535"
+                    value={entity.objectSettings[0]}
+                    onChange={(event) => {
+                      const value = Number(event.currentTarget.value);
+                      if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                    }}
+                  />
+                </label>
+                <label>
+                  Start Delay (frames)
+                  <input
+                    className="routeInput"
+                    type="number"
+                    min="0"
+                    max="65535"
+                    value={entity.objectSettings[5]}
+                    onChange={(event) => {
+                      const value = Number(event.currentTarget.value);
+                      if (Number.isFinite(value)) onChangeObjectSetting(5, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                    }}
+                  />
+                </label>
+                <label>
+                  Sleep Time (frames)
+                  <input
+                    className="routeInput"
+                    type="number"
+                    min="0"
+                    max="65535"
+                    value={entity.objectSettings[6]}
+                    onChange={(event) => {
+                      const value = Number(event.currentTarget.value);
+                      if (Number.isFinite(value)) onChangeObjectSetting(6, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                    }}
+                  />
+                </label>
+              </>
+            )
+          )}
+          {objectProfile.title === 'Thwomp' && entity.objectSettings && (
+            <>
+              <label>
+                Route Speed
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Route Behavior
+                <select value={String(entity.objectSettings[1])} onChange={(event) => onChangeObjectSetting(1, Number(event.currentTarget.value))}>
+                  {!thwompBehaviorOptions.some((option) => option.value === entity.objectSettings[1]) && (
+                    <option value={entity.objectSettings[1]}>
+                      Custom #{entity.objectSettings[1]}
+                    </option>
+                  )}
+                  {thwompBehaviorOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Start Delay (frames after GO)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Sleep Time (frames)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[3]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(3, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              {entity.routeIndex === 0xffff && <label><span>Without a route, Route Speed and Route Behavior should stay at 0.</span></label>}
+            </>
+          )}
+          {objectProfile.title === 'Traffic Vehicle' && entity.objectSettings && (
+            <>
+              {(entity.objectId === 0xde || entity.objectId === 0xf3 || entity.objectId === 0xd0) && (
+                <>
+                  <label>
+                    Route Start Point
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[0]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Speed 0
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[1]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Speed 1
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[2]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                </>
+              )}
+              {(entity.objectId === 0xcc || entity.objectId === 0xe7 || entity.objectId === 0xe8 || entity.objectId === 0x181) && (
+                <>
+                  <label>
+                    Speed
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[0]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Acceleration
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[1]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Pause Time
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[2]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                </>
+              )}
+              {entity.objectId === 0xd0 && (
+                <label>
+                  Truck Texture
+                  <select value={String(entity.objectSettings[3])} onChange={(event) => onChangeObjectSetting(3, Number(event.currentTarget.value))}>
+                    {!kartTruckTextureOptions.some((option) => option.value === entity.objectSettings[3]) && (
+                      <option value={entity.objectSettings[3]}>
+                        Custom #{entity.objectSettings[3]}
+                      </option>
+                    )}
+                    {kartTruckTextureOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {entity.objectId === 0xd1 && (
+                <label>
+                  Car Color
+                  <select value={String(entity.objectSettings[3])} onChange={(event) => onChangeObjectSetting(3, Number(event.currentTarget.value))}>
+                    {!carBodyColorOptions.some((option) => option.value === entity.objectSettings[3]) && (
+                      <option value={entity.objectSettings[3]}>
+                        Custom #{entity.objectSettings[3]}
+                      </option>
+                    )}
+                    {carBodyColorOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {entity.objectId === 0x19b && (
+                <>
+                  <label>
+                    Speed
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[0]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Delay Before Group Truck Spawns (frames)
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[1]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Delay Before First Group Spawns (frames)
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[2]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Collision Mode
+                    <select value={String(entity.objectSettings[3])} onChange={(event) => onChangeObjectSetting(3, Number(event.currentTarget.value))}>
+                      {!truckWagonCollisionOptions.some((option) => option.value === entity.objectSettings[3]) && (
+                        <option value={entity.objectSettings[3]}>
+                          Custom #{entity.objectSettings[3]}
+                        </option>
+                      )}
+                      {truckWagonCollisionOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              )}
+            </>
+          )}
+          {objectProfile.title === 'Moving Platform' && entity.objectSettings && (
+            <>
+              {entity.objectId === 0x25c && (
+                <>
+                  <label>
+                    Fast Side Starts
+                    <select value={String(entity.objectSettings[1])} onChange={(event) => onChangeObjectSetting(1, Number(event.currentTarget.value))}>
+                      {!beltCurveStartSideOptions.some((option) => option.value === entity.objectSettings[1]) && (
+                        <option value={entity.objectSettings[1]}>
+                          Custom #{entity.objectSettings[1]}
+                        </option>
+                      )}
+                      {beltCurveStartSideOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Time Until Switch
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[2]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Time Until Switch Back
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[3]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(3, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                </>
+              )}
+              {(entity.objectId === 0x25e || entity.objectId === 0x260) && (
+                <>
+                  <label>
+                    Speed 1 (units per second)
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="-32768"
+                      max="32767"
+                      value={decodeSigned16(entity.objectSettings[1])}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(1, encodeSigned16(value));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Time Until Speed 2
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[2]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Speed 2 (units per second)
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="-32768"
+                      max="32767"
+                      value={decodeSigned16(entity.objectSettings[3])}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(3, encodeSigned16(value));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Total Time Until Speed 3
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[4]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(4, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Speed 3 (units per second)
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="-32768"
+                      max="32767"
+                      value={decodeSigned16(entity.objectSettings[5])}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(5, encodeSigned16(value));
+                      }}
+                    />
+                  </label>
+                </>
+              )}
+            </>
+          )}
+          {objectProfile.title === 'Cow' && entity.objectSettings && (
+            <>
+              <label>
+                Follower Count
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Start Delay (frames)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Tumbleweed' && entity.objectSettings && (
+            <>
+              <label>
+                Item Reward
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Reward Chance
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Traffic Cone' && entity.objectSettings && (
+            <>
+              <label>
+                Cone Color
+                <select value={String(entity.objectSettings[0])} onChange={(event) => onChangeObjectSetting(0, Number(event.currentTarget.value))}>
+                  {!pylonColorOptions.some((option) => option.value === entity.objectSettings[0]) && (
+                    <option value={entity.objectSettings[0]}>
+                      Custom #{entity.objectSettings[0]}
+                    </option>
+                  )}
+                  {pylonColorOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+                </select>
+              </label>
+              <label>
+                Start Delay (frames)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[5]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(5, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Sleep Time (frames)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[6]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(6, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                One-Time Shoot
+                <button
+                  className={entity.objectSettings[6] === 0 ? 'inlineAction toggleButton isActive' : 'inlineAction toggleButton'}
+                  type="button"
+                  onClick={() => onChangeObjectSetting(6, entity.objectSettings[6] === 0 ? 60 : 0)}
+                >
+                  {entity.objectSettings[6] === 0 ? 'Enabled (Sleep Time = 0)' : 'Disabled'}
+                </button>
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Mii Spectator' && entity.objectSettings && (entity.objectId === 0x2eb || entity.objectId === 0x2ec) && (
+            <>
+              <label>
+                Crowd Interaction
+                <select value={String(entity.objectSettings[1])} onChange={(event) => onChangeObjectSetting(1, Number(event.currentTarget.value))}>
+                  {!miiSpectatorInteractionOptions.some((option) => option.value === entity.objectSettings[1]) && (
+                    <option value={entity.objectSettings[1]}>
+                      Custom #{entity.objectSettings[1]}
+                    </option>
+                  )}
+                  {miiSpectatorInteractionOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Face Player Distance
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Clap Animation Distance
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[3]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(3, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Wiggler' && entity.objectSettings && (
+            <>
+              <label>
+                Primary Speed
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              {(entity.objectId === 0xf0 || entity.objectId === 0xf2) && (
+                <>
+                  <label>
+                    Stop Time Before Speed Change (frames)
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[1]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Secondary Speed
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[2]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Player Trigger Point For Speed 2
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[3]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(3, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Angry Speed
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[4]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(4, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Player Trigger Point For Angry Speed
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[5]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(5, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Alternate Stop Time Before Angry Speed (frames)
+                    <input
+                      className="routeInput"
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={entity.objectSettings[6]}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(6, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  </label>
+                </>
+              )}
+            </>
+          )}
+          {objectProfile.title === 'Spinner Hazard' && entity.objectSettings && entity.objectId === 0x016 && (
+            <>
+              <label>
+                Manager ID
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(1, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Controlled Topmen
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                First Topman ID
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Topman Behavior
+                <select value={String(entity.objectSettings[3])} onChange={(event) => onChangeObjectSetting(3, Number(event.currentTarget.value))}>
+                  {!topmanBehaviorOptions.some((option) => option.value === entity.objectSettings[3]) && (
+                    <option value={entity.objectSettings[3]}>
+                      Custom #{entity.objectSettings[3]}
+                    </option>
+                  )}
+                  {topmanBehaviorOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Piranha Plant' && entity.objectSettings && (
+            <label>
+              Idle Time Between Attacks (frames)
+              <input
+                className="routeInput"
+                type="number"
+                min="0"
+                max="65535"
+                value={entity.objectSettings[0]}
+                onChange={(event) => {
+                  const value = Number(event.currentTarget.value);
+                  if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                }}
+              />
+            </label>
+          )}
+          {objectProfile.title === 'Crab' && entity.objectSettings && (
+            <>
+              <label>
+                Speed
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                View Direction
+                <select value={String(entity.objectSettings[1])} onChange={(event) => onChangeObjectSetting(1, Number(event.currentTarget.value))}>
+                  {!crabDirectionOptions.some((option) => option.value === entity.objectSettings[1]) && (
+                    <option value={entity.objectSettings[1]}>
+                      Custom #{entity.objectSettings[1]}
+                    </option>
+                  )}
+                  {crabDirectionOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Fire Bar' && entity.objectSettings && (() => {
+            const spin = decodeWrappedSpin(entity.objectSettings[1]);
+            const isFireRing = entity.objectId === 0x1a1;
+            return (
+              <>
+                <label>
+                  {isFireRing ? 'Fireball Count' : 'Fireballs Per Arm'}
+                  <input
+                    className="routeInput"
+                    type="number"
+                    min="0"
+                    max="65535"
+                    value={entity.objectSettings[0]}
+                    onChange={(event) => {
+                      const value = Number(event.currentTarget.value);
+                      if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                    }}
+                  />
+                </label>
+                <label>
+                  Spin Direction
+                  <select
+                    value={String(spin.direction)}
+                    onChange={(event) => onChangeObjectSetting(1, encodeWrappedSpin(spin.speed, Number(event.currentTarget.value)))}
+                  >
+                    {spinDirectionOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Spin Speed
+                  <input
+                    className="routeInput"
+                    type="number"
+                    min="0"
+                    max="65535"
+                    value={spin.speed}
+                    onChange={(event) => {
+                      const value = Number(event.currentTarget.value);
+                      if (Number.isFinite(value)) onChangeObjectSetting(1, encodeWrappedSpin(value, spin.direction));
+                    }}
+                  />
+                </label>
+                <label>
+                  {isFireRing ? 'Pulsation Factor' : 'Fireball Spacing'}
+                  <input
+                    className="routeInput"
+                    type="number"
+                    min="0"
+                    max="65535"
+                    value={entity.objectSettings[2]}
+                    onChange={(event) => {
+                      const value = Number(event.currentTarget.value);
+                      if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                    }}
+                  />
+                </label>
+                <label>
+                  {isFireRing ? 'Radius' : 'Number Of Arms'}
+                  <input
+                    className="routeInput"
+                    type="number"
+                    min="0"
+                    max="65535"
+                    value={entity.objectSettings[3]}
+                    onChange={(event) => {
+                      const value = Number(event.currentTarget.value);
+                      if (Number.isFinite(value)) onChangeObjectSetting(3, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                    }}
+                  />
+                </label>
+              </>
+            );
+          })()}
+          {objectProfile.title === 'Driveable Ring' && entity.objectSettings && (
+            <>
+              <label>
+                Ring Layout
+                <select value={String(entity.objectSettings[0])} onChange={(event) => onChangeObjectSetting(0, Number(event.currentTarget.value))}>
+                  {!driveableRingIdOptions.some((option) => option.value === entity.objectSettings[0]) && (
+                    <option value={entity.objectSettings[0]}>
+                      Custom #{entity.objectSettings[0]}
+                    </option>
+                  )}
+                  {driveableRingIdOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Start Shake After (seconds)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Shake Duration (seconds)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Fall Delay (frames)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[3]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(3, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Electric Propeller' && entity.objectSettings && (
+            <>
+              <label>
+                Rotations Per 12 Seconds
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(1, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Rotation Direction
+                <select value={String(entity.objectSettings[1])} onChange={(event) => onChangeObjectSetting(1, Number(event.currentTarget.value))}>
+                  {!epropellerDirectionOptions.some((option) => option.value === entity.objectSettings[1]) && (
+                    <option value={entity.objectSettings[1]}>
+                      Custom #{entity.objectSettings[1]}
+                    </option>
+                  )}
+                  {epropellerDirectionOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Slowdown Factor (LE-CODE)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[7]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(7, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Star Gate' && entity.objectSettings && (
+            <>
+              <label>
+                Gate Number
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Trigger
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Airborne Shadow
+                <select value={String(entity.objectSettings[2])} onChange={(event) => onChangeObjectSetting(2, Number(event.currentTarget.value))}>
+                  {entity.objectSettings[2] !== 0 && entity.objectSettings[2] !== 1 && (
+                    <option value={entity.objectSettings[2]}>
+                      Custom #{entity.objectSettings[2]}
+                    </option>
+                  )}
+                  <option value="0">Normal</option>
+                  <option value="1">Increase Shadow Height</option>
+                </select>
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Falling Rock' && entity.objectSettings && (
+            <label>
+              Safety Setup
+              <div className="actionRow">
+                <button className="inlineAction" type="button" onClick={onApplySafeFallingRockDefaults} disabled={!onApplySafeFallingRockDefaults}>
+                  Apply Safe Vanilla Defaults
+                </button>
+              </div>
+              <span>{entity.objectSettings[2] === 0 ? 'Setting 3 is currently unsafe for vanilla Mario Kart Wii.' : `Setting 3 is currently ${entity.objectSettings[2]}.`}</span>
+            </label>
+          )}
+          {objectProfile.title === 'Cannon Object' && (
+            <label>
+              Cannon Setup
+              <div className="actionRow">
+                <button className="inlineAction" type="button" onClick={onCreateCannonPointFromObject} disabled={!onCreateCannonPointFromObject}>
+                  Create Cannon Point
+                </button>
+              </div>
+              <span>Creates a cannon point at this prop so you can tune the actual launch logic next.</span>
+            </label>
+          )}
+          {objectProfile.title === 'Roulette Platform' && (
+            <label>
+              Roulette Setup
+              <div className="actionRow">
+                <button className="inlineAction" type="button" onClick={onApplyRoulettePlatformDefaults} disabled={!onApplyRoulettePlatformDefaults}>
+                  Apply Required Defaults
+                </button>
+              </div>
+              <span>Mario Kart Wii expects this object at the world center with zero rotation and a scale of 1 on all axes.</span>
+            </label>
+          )}
+          {objectProfile.routeLabel && entity.routeIndex !== undefined && entity.routeIndex !== 0xffff && (
+            <label>
+              {objectProfile.routeLabel}
+              <div className="actionRow">
+                <button className="inlineAction" type="button" onClick={onSelectObjectRoute} disabled={!onSelectObjectRoute}>
+                  Select Path
+                </button>
+              </div>
+              <span>Jumps straight to the first node of the bound route so you can edit motion without searching the scene.</span>
+            </label>
+          )}
+          {(onResetObjectBehavior || onClearObjectRoute) && (
+            <label>
+              Object Actions
+              <div className="actionRow">
+                <button className="inlineAction" type="button" onClick={onResetObjectBehavior} disabled={!onResetObjectBehavior}>
+                  Reset Defaults
+                </button>
+                <button className="inlineAction" type="button" onClick={onClearObjectRoute} disabled={!onClearObjectRoute || entity.routeIndex === undefined || entity.routeIndex === 0xffff}>
+                  Clear Path
+                </button>
+              </div>
+            </label>
+          )}
+        </>
+      )}
+      {entity.routeIndex !== undefined && (
+        <label>
+          {objectProfile?.routeLabel ?? 'Path'}
+          <div className="actionStack">
+            <ReferenceSelect label={objectProfile?.routeLabel ?? 'Object route'} value={entity.routeIndex} noneValue={0xffff} count={referenceCounts.routes} optionLabel="Route" onChange={onChangeRouteIndex} />
+            {objectProfile?.routeLabel && entity.routeIndex === 0xffff && onCreateObjectRoute && (
+              <button className="inlineAction" type="button" onClick={onCreateObjectRoute}>
+                Create movement path
+              </button>
+            )}
           </div>
         </label>
       )}
-      {entity.presenceFlags !== undefined && (
-        <label>
-          Presence Flags
-          <input
-            className="routeInput"
-            type="number"
-            min="0"
-            max="65535"
-            value={entity.presenceFlags}
-            onChange={(event) => {
-              const value = Number(event.currentTarget.value);
-              if (Number.isFinite(value)) onChangePresenceFlags(Math.max(0, Math.min(0xffff, Math.trunc(value))));
-            }}
-          />
-        </label>
+      {(entity.objectId !== undefined || entity.objectSettings || entity.presenceFlags !== undefined) && (
+        <details className="advancedDetails">
+          <summary>Advanced object data</summary>
+          <div className="advancedDetailsBody">
+            {entity.objectId !== undefined && (
+              <label>
+                Object
+                <ObjectIdSelect value={entity.objectId} options={objectOptions} onChange={onChangeObjectId} />
+              </label>
+            )}
+            {entity.objectSettings && (
+              <label>
+                Object Slots
+                <div className="settingInputs">
+                  {entity.objectSettings.map((setting, index) => (
+                    <input
+                      key={index}
+                      aria-label={`Setting ${index + 1}`}
+                      title={`Setting ${index + 1}`}
+                      type="number"
+                      min="0"
+                      max="65535"
+                      value={setting}
+                      onChange={(event) => {
+                        const value = Number(event.currentTarget.value);
+                        if (Number.isFinite(value)) onChangeObjectSetting(index, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                      }}
+                    />
+                  ))}
+                </div>
+              </label>
+            )}
+            {entity.presenceFlags !== undefined && (
+              <label>
+                Presence Flags
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.presenceFlags}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangePresenceFlags(Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            )}
+          </div>
+        </details>
       )}
       {entity.routePoint && (
         <label>
@@ -1342,37 +5289,135 @@ function ReferenceSelect({
   );
 }
 
-function KmpOverview({ kmp, onSelect }: { kmp: KmpDocument; onSelect: (id: string) => void }) {
+function ObjectIdSelect({ value, options, onChange }: { value: number; options: ObjectOption[]; onChange: (value: number) => void }) {
+  const [query, setQuery] = useState('');
+  const trimmed = query.trim().toLowerCase();
+  const selected = options.find((option) => option.id === value) ?? null;
+  const filtered = trimmed
+    ? options.filter((option) => `${option.label} ${option.detail} ${option.id.toString(16)} ${option.id}`.toLowerCase().includes(trimmed))
+    : options;
+  const visibleOptions = selected && !filtered.some((option) => option.id === selected.id) ? [selected, ...filtered] : filtered;
+  return (
+    <div className="objectPicker">
+      <input
+        className="objectPickerSearch"
+        type="search"
+        value={query}
+        placeholder="Filter objects by name or ID"
+        aria-label="Filter objects"
+        onChange={(event) => setQuery(event.currentTarget.value)}
+      />
+      <select className="referenceSelect" aria-label="Object" title="Object" value={String(value)} onChange={(event) => onChange(Number(event.currentTarget.value))}>
+        {visibleOptions.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function KmpOverview({ kmp, onSelect }: { kmp: KmpDocument; onSelect: (id: string, options?: { additive?: boolean }) => void }) {
   const stage = kmp.entities.find((entity) => entity.section === 'STGI');
   return (
     <>
-      <h2>KMP Graphs</h2>
+      <h2>Track Graphs</h2>
       <div className="propertyGrid">
         {stage && (
           <label>
-            STGI
-            <button className="inlineAction" type="button" onClick={() => onSelect(stage.id)}>
+            Track Settings
+            <button className="inlineAction" type="button" onClick={(event) => onSelect(stage.id, { additive: event.shiftKey })}>
               Track settings
             </button>
           </label>
         )}
         {kmp.pathGraphs.map((graph) => (
           <label key={graph.groupSection}>
-            {graph.pointSection}
+            {friendlySectionLabel(graph.pointSection)}
             <span>
-              {graph.groups.length} groups · {graph.edges.length} links
+              {graph.groups.length} path groups · {graph.edges.length} connections
             </span>
           </label>
         ))}
         <label>
-          POTI
+          Object Routes
           <span>
-            {kmp.routes.length} routes · {kmp.routes.reduce((sum, route) => sum + route.points.length, 0)} nodes
+            {kmp.routes.length} routes · {kmp.routes.reduce((sum, route) => sum + route.points.length, 0)} points
           </span>
         </label>
       </div>
     </>
   );
+}
+
+function friendlySectionLabel(section: string): string {
+  switch (section) {
+    case 'KTPT':
+      return 'Start Points';
+    case 'ENPT':
+      return 'Enemy Routes';
+    case 'ITPT':
+      return 'Item Routes';
+    case 'CKPT':
+      return 'Checkpoints';
+    case 'POTI':
+      return 'Object Routes';
+    case 'CAME':
+      return 'Cameras';
+    case 'AREA':
+      return 'Areas';
+    case 'JGPT':
+      return 'Respawn Points';
+    case 'CNPT':
+      return 'Cannon Points';
+    case 'MSPT':
+      return 'Battle Finish Points';
+    case 'STGI':
+      return 'Track Settings';
+    default:
+      return section;
+  }
+}
+
+function friendlySectionSingularLabel(section: string): string {
+  switch (section) {
+    case 'KTPT':
+      return 'start point';
+    case 'ENPT':
+      return 'enemy route point';
+    case 'ITPT':
+      return 'item route point';
+    case 'CKPT':
+      return 'checkpoint';
+    case 'POTI':
+      return 'object route';
+    case 'CAME':
+      return 'camera';
+    case 'AREA':
+      return 'area trigger';
+    case 'JGPT':
+      return 'respawn point';
+    case 'CNPT':
+      return 'cannon point';
+    case 'MSPT':
+      return 'battle finish point';
+    default:
+      return section.toLowerCase();
+  }
+}
+
+function friendlyGroupSectionLabel(section: string): string {
+  switch (section) {
+    case 'ENPH':
+      return 'enemy route';
+    case 'ITPH':
+      return 'item route';
+    case 'CKPH':
+      return 'checkpoint';
+    default:
+      return section;
+  }
 }
 
 function fmt(value: number): string {
@@ -1410,8 +5455,24 @@ function ObjectThumbnail({
   return (
     <div className="thumbnail objectPreview" data-state={hasModel ? 'available' : 'missing'} data-preview={summary?.previewDataUrl ? 'image' : 'fallback'}>
       {summary?.previewDataUrl && <img src={summary.previewDataUrl} alt="" />}
-      <span className="previewId">{id.toString(16).toUpperCase()}</span>
-      <span className="previewModel">{summary ? `${summary.models.length} MDL0 · ${summary.textures.length} TEX0` : shortAssetName(primaryResource)}</span>
+      <span className="previewModel">{summary ? `${summary.models.length} models · ${summary.textures.length} textures` : shortAssetName(primaryResource)}</span>
+      {!summary?.previewDataUrl && (
+        <span className="previewStack" aria-hidden="true">
+          <i />
+          <i />
+          <i />
+        </span>
+      )}
+    </div>
+  );
+}
+
+function CourseAssetThumbnail({ asset, summaries }: { asset: PlaceableCourseAssetRecord; summaries: Record<string, NoclipBrresSummary> }) {
+  const summary = summaries[asset.baseName.toLowerCase()];
+  return (
+    <div className="thumbnail objectPreview" data-state={asset.objectId !== null ? 'available' : 'missing'} data-preview={summary?.previewDataUrl ? 'image' : 'fallback'}>
+      {summary?.previewDataUrl && <img src={summary.previewDataUrl} alt="" />}
+      <span className="previewModel">{summary ? `${summary.models.length} models · ${summary.textures.length} textures` : shortAssetName(asset.baseName)}</span>
       {!summary?.previewDataUrl && (
         <span className="previewStack" aria-hidden="true">
           <i />
@@ -1426,11 +5487,19 @@ function ObjectThumbnail({
 function objectAssetLabel(object: (typeof objectCatalog)[number] | ObjFlowEntry, common: CommonResourceArchive | null, summaries: Record<string, NoclipBrresSummary>): string {
   if ('category' in object) return object.category;
   const resources = objectResources(object);
-  if (resources.length === 0) return 'ObjFlow';
+  if (resources.length === 0) return 'Game Object';
   const available = resources.filter((resource) => common?.byBaseName.has(resource.toLowerCase())).length;
   const summary = firstResourceSummary(resources, summaries);
-  const modelName = summary?.models[0]?.name;
-  return `${available}/${resources.length} resources · ${modelName ? `model ${modelName}` : resources.slice(0, 2).map(shortAssetName).join(', ')}`;
+  return summary
+    ? `${available}/${resources.length} resources · ${summary.models.length} models · ${summary.textures.length} textures`
+    : `${available}/${resources.length} resources · ${resources.slice(0, 2).map(shortAssetName).join(', ')}`;
+}
+
+function browserObjectTitle(object: (typeof objectCatalog)[number] | ObjFlowEntry): string {
+  const knownName = getKnownObjectName(catalogId(object));
+  if (knownName) return knownName;
+  if ('label' in object) return object.label;
+  return object.name || object.resources || 'Unknown object';
 }
 
 function countAvailableResources(object: ObjFlowEntry, common: CommonResourceArchive | null): number {
@@ -1441,7 +5510,7 @@ function objectResources(object: (typeof objectCatalog)[number] | ObjFlowEntry):
   return 'resources' in object ? getObjFlowResourceNames(object) : [];
 }
 
-function classifyObjectFolder(object: BrowserObject): Exclude<BrowserFolderId, 'featured' | 'kmp' | 'common' | 'track'> {
+function classifyObjectFolder(object: BrowserObject): Exclude<BrowserFolderId, 'featured' | 'kmp' | 'common' | 'courseAssets' | 'track'> {
   const text = objectSearchText(object);
   if (/(kuribo|goomba|choropu|pakkun|killer|wanwan|heyho|nokonoko|koopa|sanbo|crab|fish|enemy|boss)/.test(text)) return 'enemies';
   if (/(tree|wood|bush|grass|flower|plant|leaf|palm|forest|kinoko|mushroom|cactus)/.test(text)) return 'nature';
@@ -1456,6 +5525,7 @@ function isFeaturedObject(object: BrowserObject): boolean {
 
 function objectSearchText(object: BrowserObject): string {
   return [
+    browserObjectTitle(object),
     'label' in object ? object.label : object.name,
     'category' in object ? object.category : '',
     ...objectResources(object),
@@ -1464,8 +5534,671 @@ function objectSearchText(object: BrowserObject): string {
     .toLowerCase();
 }
 
+function isBrowsableObjectEntry(entry: ObjFlowEntry): boolean {
+  const text = objectSearchText(entry);
+  return !/(^|\s)(dummy|escalator_group|sound_lift|truckchimsmk|truckchimsmkw)(\s|$)/.test(text);
+}
+
+function isBrowsableObjectChoice(id: number, label: string, detail: string): boolean {
+  const text = `${getKnownObjectName(id) ?? ''} ${label} ${detail}`.toLowerCase();
+  return !/(^|\s)(dummy|escalator_group|sound_lift|truckchimsmk|truckchimsmkw)(\s|$)/.test(text);
+}
+
+function filterBrowserFolder(folder: BrowserFolder | null, query: string): BrowserFolder | null {
+  if (!folder) return null;
+  const trimmed = query.trim().toLowerCase();
+  if (!trimmed) return folder;
+  if (folder.kind === 'kmp') {
+    const items = folder.items.filter((item) => `${item.label} ${item.section} ${item.category}`.toLowerCase().includes(trimmed));
+    return { ...folder, detail: `${items.length} matching records`, items };
+  }
+  if (folder.kind === 'object') {
+    const items = folder.items.filter((item) => objectSearchText(item).includes(trimmed));
+    return { ...folder, detail: `${items.length} matching objects`, items };
+  }
+  if (folder.kind === 'courseAsset') {
+    const items = folder.items.filter((asset) => `${asset.baseName} ${asset.trackLabel} ${asset.path} ${asset.kind}`.toLowerCase().includes(trimmed));
+    return { ...folder, detail: `${items.length} matching assets`, items };
+  }
+  const items = folder.items.filter((item) => item.toLowerCase().includes(trimmed));
+  return { ...folder, detail: `${items.length} matching track asset files`, items };
+}
+
+function mapCourseAssetToPlaceable(asset: CourseAssetRecord, objFlow: CommonResourceArchive['objFlow'] | null): PlaceableCourseAssetRecord {
+  const objectId = findObjectIdForAsset(asset, objFlow);
+  return {
+    ...asset,
+    objectId,
+    objectLabel: objectId !== null ? browserObjectTitle({ objectId, name: objFlow?.byId.get(objectId)?.name ?? '', resources: objFlow?.byId.get(objectId)?.resources ?? '' }) : null,
+  };
+}
+
+function findObjectIdForAsset(asset: CourseAssetRecord, objFlow: CommonResourceArchive['objFlow'] | null): number | null {
+  const baseName = asset.baseName.toLowerCase();
+  for (const entry of objFlow?.entries ?? []) {
+    const resources = getObjFlowResourceNames(entry).map((resource) => resource.toLowerCase());
+    if (resources.includes(baseName)) return entry.objectId;
+  }
+  return null;
+}
+
+function getObjectInspectorProfile(entity: KmpEntity, objFlow: CommonResourceArchive['objFlow'] | null): ObjectInspectorProfile | null {
+  if (entity.section !== 'GOBJ' || entity.objectId === undefined) return null;
+  const flow = objFlow?.byId.get(entity.objectId);
+  const sourceText = [flow?.name ?? '', flow?.resources ?? '', fallbackObjectName(entity.objectId)].join(' ').toLowerCase();
+
+  if (/(^|\s)(itembox|f_itembox|s_itembox|w_itembox|sin_itembox|w_itemboxline)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Item Box',
+      summary: 'Standard pickup object. Place it where racers can clearly drive through it, then use surface snap to settle it onto the course surface.',
+      tips: ['Item boxes do not need a movement path.', 'Use duplicate and multi-select tools to lay out repeated box patterns quickly.'],
+      variantLabel: 'Box Type',
+    };
+  }
+  if (/(^|\s)(sound_mii)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Crowd Sound',
+      summary: 'Ambient audience sound source. Place it near spectator spaces so the audio presence matches what the player sees in that part of the course.',
+      tips: ['Keep it off the racing surface and near the crowd or set-piece it is meant to support.', 'Its sound range comes from the assigned route, so set the Sound Range path first and shape that route around the spectator zone instead of the racing line.'],
+      cautions: ['Treat this as support for nearby crowd or Mii-themed scenery, not as a general-purpose hazard or obstacle.', 'Vanilla Mario Kart Wii only uses this object on slots 1.1 and 3.1.'],
+      routeLabel: 'Sound Range',
+    };
+  }
+  if (/(^|\s)(koopaball)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Bowser Fireball',
+      summary: 'Rolling hazard projectile. Place it where the player can recognize the threat path early and still react with a clear line choice.',
+      tips: ['Check the hazard from the racing line so it reads before the player is committed.', 'Use top or ortho view to keep enough room around the projectile path for fair avoidance.'],
+      cautions: ['Avoid combining rolling projectile hazards with blind corners, forced landings, or crowded obstacle stacks where their motion becomes hard to read.', 'This object depends on the Bowser Castle airship asset set and is only known to work on slot 6.2 in vanilla Mario Kart Wii.'],
+      routeLabel: 'Projectile Path',
+    };
+  }
+  if (/(^|\s)(sunds)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Angry Sun',
+      summary: 'Route-driven overhead hazard. Place it where the player can read the drop path and the waiting time between attacks before the section becomes too busy.',
+      tips: ['Use the movement path below to shape where the sun pauses and where it drops hazards.', 'Top or ortho view is the fastest way to verify that the sun stays over the intended section of track.'],
+      cautions: ['This object is only known to work on a small set of vanilla slots, and its route setting 2 values change whether it waits or drops a FireSnake hazard.'],
+      routeLabel: 'Movement Path',
+    };
+  }
+  if (/(^|\s)(penguin_s|penguin_m|penguin_l)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Penguin',
+      summary: 'Sliding wildlife obstacle. Place it where the player can read the occupied space and still react cleanly without mistaking it for background decoration.',
+      tips: ['Use top or ortho view to keep enough room around the penguin for a fair line choice.', 'Use the variant switcher below to swap between small, medium, and large penguins without rebuilding the placement.'],
+      cautions: ['Avoid hiding penguins in heavy snow clutter, blind crests, or tight wall sections where their collision becomes hard to read.'],
+      routeLabel: 'Movement Path',
+      variantLabel: 'Penguin Type',
+    };
+  }
+  if (/(^|\s)(basabasa)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Swooper',
+      summary: 'Flying bat hazard. Place it where the player can identify the flight space early instead of being surprised at the last instant.',
+      tips: ['Check the bat from the racing line and from top view so its occupied airspace is obvious.', 'Keep repeated bat groups spaced out enough that each threat remains readable on its own.'],
+      cautions: ['Avoid combining flying bat hazards with dark ceilings, tunnel clutter, or stacked moving hazards where the silhouette disappears.'],
+      routeLabel: 'Movement Path',
+    };
+  }
+  if (/(^|\s)(kuribo|goomba)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Goomba',
+      summary: 'Basic walking enemy. Keep it on solid ground and away from walls or tiny seams so the obstacle reads cleanly in play.',
+      tips: ['Snap it to the collision surface after placement.', 'Duplicate one tuned setup to build repeated enemy groups.'],
+      routeLabel: 'Movement Path',
+    };
+  }
+  if (/(^|\s)(choropu|choropu2|choropu_ground)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Monty Mole',
+      summary: 'Pop-up enemy object. Place it on a clear patch of terrain where the attack is easy for the player to read.',
+      tips: ['Place it directly on the collision surface.', 'Avoid burying it inside steep banks or decorative geometry.'],
+      cautions: ['Vanilla Mario Kart Wii should not mix choropu and choropu2 in the same track because they share the same model resource.'],
+      routeLabel: 'Movement Path',
+      variantLabel: 'Variant',
+    };
+  }
+  if (/(^|\s)(firesnake|firesnake_v)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Podoboo',
+      summary: 'Jumping lava hazard. Place it where the player can read the launch and landing space clearly before committing to the line.',
+      tips: ['Check the hazard from the racing line and from top view so the landing space stays obvious.', 'Keep enough room around the landing zone that the obstacle pressures the line instead of making the section feel arbitrary.'],
+      cautions: ['Avoid stacking jumping lava hazards into blind turns, wall squeezes, or forced landings where the motion becomes unreadable.'],
+    };
+  }
+  if (/(^|\s)(koopafirebar|wlfirebargc|wlfireringgc)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Fire Bar',
+      summary: 'Rotating hazard. Place it where racers can read the sweep arc early enough to react, especially on narrow lines.',
+      tips: ['Check the arc from the racing line, not just from the object center.', 'Use duplicate sparingly; too many sweep hazards in a row become visual noise quickly.'],
+      cautions: ['Avoid placing fire bars where their sweep overlaps blind turns, boost landings, or forced-motion sections.'],
+      variantLabel: 'Fire Bar Type',
+    };
+  }
+  if (/(^|\s)(heyhoshipgba|heyhoballgba|heyhotreegbac)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Shy Guy Obstacle',
+      summary: 'Trackside hazard object. Place it where the player can identify the obstacle behavior early and still make a clean steering choice.',
+      tips: ['Check the obstacle from the racing line and from top or ortho view to verify spacing.', 'Use the variant switcher below to swap between the common Shy Guy obstacle styles without replacing the placement.'],
+      cautions: ['Do not stack multiple busy hazards into the same short reaction window; these obstacles work best when their threat is visually distinct.'],
+      routeLabel: entity.objectId === 0x0ce ? 'Flight Path' : undefined,
+      variantLabel: 'Obstacle Type',
+    };
+  }
+  if (/(^|\s)(heyho2)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Ski Lift',
+      summary: 'Chairlift manager from DK Summit. Assign a path first, then tune the chairlift model while checking the moving line from the player route.',
+      tips: ['Use the movement path field below to bind the lift to a full loop before adjusting anything else.', 'Check the line from top or ortho view so the lift spacing stays readable over the course section below.'],
+      cautions: ['This is not a roaming ground enemy. It manages a moving chairlift setpiece, so ground-level Shy Guy assumptions do not apply here.'],
+      routeLabel: 'Movement Path',
+    };
+  }
+  if (/(^|\s)(heyho)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Shy Guy',
+      summary: 'Small roaming obstacle. Place it where the player can identify the occupied space clearly without losing the route to clutter.',
+      tips: ['Check the placement from the racing line so the obstacle reads early enough to steer around.', 'Use the variant switcher below to swap between the common Shy Guy styles without replacing the setup.'],
+      cautions: ['Avoid dropping small roaming hazards into already busy line checks where players cannot distinguish them from scenery quickly enough.'],
+      routeLabel: 'Movement Path',
+      variantLabel: 'Shy Guy Type',
+    };
+  }
+  if (/(^|\s)(woodbox|w_woodbox|bblock)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Breakable Box',
+      summary: 'Simple breakable obstacle. Place it where it adds line pressure or decoration without turning the route into clutter.',
+      tips: ['Use duplicate and multi-select to lay out repeated box groups quickly.', 'Check spacing from the racing line so the box reads as a choice, not random collision noise.'],
+      cautions: ['Avoid stacking boxes so tightly that players cannot read which ones are solid threats and which lines remain open.'],
+      variantLabel: 'Box Type',
+    };
+  }
+  if (/(^|\s)(mashballoongc|castleballoon1|mii_balloon)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Balloon Hazard',
+      summary: 'Large floating obstacle prop. Place it where it shapes the player line clearly without turning the route into visual clutter.',
+      tips: ['Check the balloon from both the racing line and top view so its footprint is obvious.', 'Use scale and duplicate carefully; large floating props can dominate the scene quickly.'],
+      cautions: ['Keep oversized floating hazards away from blind landings, cannons, and spawn zones so they do not create unreadable collisions.'],
+      routeLabel: 'Flight Path',
+    };
+  }
+  if (/(^|\s)(dossun|dossunc|dossunc_soko|kdossunc)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Thwomp',
+      summary: 'Large crushing hazard. Place it where the player can read the drop zone early and still make a deliberate steering decision.',
+      tips: ['Check the hazard from the racing line and from top view so its occupied space is obvious.', 'Leave enough lateral room that the player has a readable safe option instead of a blind guess.'],
+      cautions: ['Avoid stacking multiple drop hazards into the same short reaction window or placing them immediately after forced landings.'],
+      variantLabel: 'Thwomp Type',
+    };
+  }
+  if (/(^|\s)(sanbo|sanbo_big)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Pokey',
+      summary: 'Tall desert hazard. Place it where the player can identify its occupied space clearly without blocking the whole route.',
+      tips: ['Use the larger variants sparingly; they dominate narrow sections quickly.', 'Check from top or ortho view to keep enough room around the hazard for clean line choices.'],
+      cautions: ['Do not bury Pokey variants in cluttered scenery where their hit space becomes hard to read.'],
+      routeLabel: 'Movement Path',
+      variantLabel: 'Pokey Type',
+    };
+  }
+  if (/(^|\s)(cow)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Cow',
+      summary: 'Large wandering obstacle. Place it where the player can read the occupied space early and still make a deliberate steering choice around it.',
+      tips: ['Check the obstacle from the racing line and from top view so the footprint is obvious.', 'Use duplicate sparingly; repeated large animals can clutter the route quickly.'],
+      cautions: ['Avoid placing cows on blind crests, in narrow wall channels, or inside other busy hazards where their body space becomes hard to judge.'],
+      routeLabel: 'Movement Path',
+    };
+  }
+  if (/(^|\s)(pylon01)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Traffic Cone',
+      summary: 'Reactive road cone from Daisy Circuit. Use it to shape line pressure without turning the route into clutter.',
+      tips: ['Check cone spacing from the racing line so the obstacle reads as a clear steering choice instead of visual noise.', 'Use the start and sleep timing below carefully so the cone behavior matches the traffic pattern you want instead of spamming the start grid.'],
+      cautions: ['This object is slot-restricted in vanilla Mario Kart Wii and too many effect-heavy cones near the start can cause major slowdown.'],
+    };
+  }
+  if (/(^|\s)(karehayama)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Tumbleweed',
+      summary: 'Rolling desert obstacle. Place it where the player can read the crossing space early instead of discovering it at the last instant.',
+      tips: ['Check the hazard from the racing line and from top or ortho view so the crossing space stays obvious.', 'Leave enough room on both sides that the player can make a clean avoidance choice instead of a blind guess.', 'Use the item controls below only when you deliberately want the tumbleweed pile to hand out an item when hit.'],
+      cautions: ['Avoid dropping tumbleweeds into blind crests, narrow wall channels, or stacked hazard sections where the moving footprint becomes hard to read.'],
+    };
+  }
+  if (/(^|\s)(quicksand)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Quicksand',
+      summary: 'Area-style terrain hazard. Place it where the player can read the trap space clearly and still understand the intended safe line around it.',
+      tips: ['Check the footprint from top or ortho view so the dangerous area is obvious before turn-in.', 'Keep enough clear ground nearby that the hazard pressures a line choice instead of feeling unavoidable.'],
+      cautions: ['Avoid hiding quicksand inside heavy terrain clutter, under jumps, or immediately after blind landings where players cannot read the trap in time.'],
+    };
+  }
+  if (/(^|\s)(volcanoball1)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Volcano Rock',
+      summary: 'Route-driven falling fireball hazard. Bind it to a route and keep its route points close together so the motion stays stable in-game.',
+      tips: ['Check the full path from the racing line and from top view so the fireball reads early and the landing space stays fair.', 'Keep route points relatively close together; long gaps can break this object badly in vanilla Mario Kart Wii.'],
+      cautions: ['Avoid spawning volcano rocks into blind landings or cramped walls where the player cannot read the incoming threat before contact.'],
+      routeLabel: 'Movement Path',
+    };
+  }
+  if (/(^|\s)(m_obj_jump|m_obj_s_jump|m_obj_s_jump2|m_obj_jump2|m_obj_start)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Jump Pad',
+      summary: 'Launch ramp object. Place it where the player can read the takeoff and landing line cleanly before committing to the jump.',
+      tips: ['Check the object from the racing line and from top or ortho view so the takeoff angle stays readable.', 'Use surface snap and rotation together so the pad sits cleanly on the intended approach surface.'],
+      cautions: ['Avoid pointing jump pads into blind landings, walls, or stacked hazards where the forced motion becomes unreadable.'],
+      variantLabel: 'Jump Type',
+    };
+  }
+  if (/(^|\s)(stargate)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Star Gate',
+      summary: 'Drive-through gate prop. Place it where the player can identify the gate opening cleanly from the racing line instead of clipping it at the last second.',
+      tips: ['Check the gate from the racing line and from top or ortho view so the opening stays centered on the intended route.', 'Use rotation controls to line the gate up with the approach instead of forcing a late steering correction.'],
+      cautions: ['Avoid stacking gates into blind jumps, wall squeezes, or busy scenery where the opening becomes hard to read.'],
+    };
+  }
+  if (/(^|\s)(casino_roulette)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Roulette Platform',
+      summary: 'World-center rotating terrain gimmick. Use it only when the entire course setup is designed around a roulette-style moving floor.',
+      tips: ['Keep the object at the world center and verify the route from top or ortho view before committing to the gimmick.', 'Check player, item, and respawn behavior carefully; rotating terrain changes how the whole section plays, not just the visible model.'],
+      cautions: ['Do not treat this like a normal decorative prop. If the track layout is not built around rotating terrain, the result will be confusing or broken in play.'],
+    };
+  }
+  if (/(^|\s)(rm_ring1)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Driveable Ring',
+      summary: 'Galaxy Colosseum ring object. Set which ring it controls, then tune the shake and fall timing so the gimmick is readable in play.',
+      tips: ['Use top or ortho view to verify which ring zone this object is meant to control.', 'Keep enough warning time before the ring falls that players can understand what is happening and react deliberately.'],
+      cautions: ['Avoid using ring fall timing that triggers immediately without readable shake time, especially near jumps or forced-motion sections.'],
+      routeLabel: 'Movement Path',
+    };
+  }
+  if (/(^|\s)(hp_pipe)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Half-Pipe Trigger',
+      summary: 'Half-pipe style trigger object. Place it only where the surrounding course geometry and player approach are built for trick-wall movement.',
+      tips: ['Check the approach and exit from the racing line so the player can read the half-pipe entry early.', 'Use dev or top view to make sure the trigger sits exactly where the intended wall-riding section begins.'],
+      cautions: ['Avoid dropping half-pipe triggers into ordinary ground sections or cluttered scenery where players cannot tell why their movement changed.'],
+    };
+  }
+  if (/(^|\s)(utsubodokan)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Pipe Hazard',
+      summary: 'Large pop-out hazard. Place it where the player can read the occupied space early and still understand the safe line around it.',
+      tips: ['Check the hazard from the racing line and from top or ortho view so the footprint is obvious.', 'Leave enough lateral room that the player has a deliberate avoidance path instead of a blind guess.'],
+      cautions: ['Avoid hiding large pop-out hazards in tunnel clutter, behind walls, or immediately after blind landings where the threat appears too late.'],
+    };
+  }
+  if (/(^|\s)(honeball)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Rolling Ball',
+      summary: 'Moving hazard ball. Place it where the player can read the crossing path and react with a clean line choice before contact.',
+      tips: ['Check the hazard from the racing line and from top view so the crossing path is easy to understand.', 'This object is mission-style logic; its placement point does not matter and it behaves around a CPU target instead of following normal track-space authoring assumptions.'],
+      cautions: ['Avoid mixing rolling-ball hazards into blind corners, wall squeezes, or stacked moving hazards where the motion path becomes unreadable.', 'For mission use, define exactly one CPU or the behavior becomes unreliable.'],
+    };
+  }
+  if (/(^|\s)(epropeller)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Electric Propeller',
+      summary: 'Rotating hazard from Koopa Cape. Set the spin speed and direction so the obstacle reads clearly from the player approach.',
+      tips: ['Check the propeller from the racing line so the blade timing is readable before the player commits.', 'Use top or ortho view to verify the propeller sits centered on the intended corridor instead of clipping nearby walls.'],
+      cautions: ['Very fast propeller timing can become unreadable in narrow channels. Use the slowdown factor only when you deliberately target LE-CODE behavior.'],
+    };
+  }
+  if (/(^|\s)(pile)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Pylon Obstacle',
+      summary: 'Simple course obstacle. Place it where it shapes the line clearly without turning the route into clutter.',
+      tips: ['Use duplicate and multi-select to build repeated obstacle rows quickly.', 'Check spacing from the racing line so the obstacle reads as a clear steering choice.'],
+      cautions: ['Avoid stacking too many small blockers into one short reaction window where the route becomes noisy instead of readable.'],
+    };
+  }
+  if (/(^|\s)(poihana)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Cataquack',
+      summary: 'Line-disrupting enemy. Place it where the player can read the approach early and still understand where the safe space is around the attack zone.',
+      tips: ['Check the enemy from the racing line so its occupied zone is readable before turn-in.', 'Leave enough lateral room that the player has a deliberate avoidance option instead of a blind guess.'],
+      cautions: ['Avoid stacking Cataquacks into already crowded hazard sections where their push threat becomes visually ambiguous.'],
+    };
+  }
+  if (/(^|\s)(envfire|flamepole|flamepole_v|flamepole_v_big)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Flame Jet',
+      summary: 'Stationary fire hazard. Place it where the player can recognize the threat early and still make a deliberate line choice.',
+      tips: ['Use dev, top, or ortho view to check that the flame sits cleanly on the intended side of the route.', 'Leave enough lateral room that the hazard pressures the line instead of making the section feel arbitrary.'],
+      cautions: ['Avoid hiding flame hazards behind walls, props, or terrain crests where the player cannot read the danger before committing.'],
+      variantLabel: 'Flame Type',
+    };
+  }
+  if (/(^|\s)(pakkun_f|puchi_pakkun|pakkun_dokan)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Piranha Plant',
+      summary: 'Stationary hazard. Use it to pressure a line choice or defend a narrow space without hard-blocking the whole track.',
+      tips: ['Leave enough steering room around the hazard.', 'Open Advanced object data only when you need non-default behavior.'],
+      variantLabel: 'Variant',
+    };
+  }
+  if (/(^|\s)(crab)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Crab',
+      summary: 'Small moving obstacle. Keep it on visible ground where it reads as a hazard instead of visual clutter.',
+      tips: ['Avoid placing crab objects flush against walls.', 'Duplicate a placed crab to make consistent obstacle groups.'],
+      routeLabel: 'Movement Path',
+    };
+  }
+  if (/(^|\s)(insekia|insekib|dkrockgc|volcanorock1)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Falling Rock',
+      summary: 'Hazard prop that needs its object data configured before it is safe to use on a vanilla track.',
+      tips: ['Place it where the player can read the threat early.', 'Open Advanced object data if you need to tune its raw behavior values.'],
+      cautions: ['Vanilla Mario Kart Wii is known to crash if InsekiA or InsekiB keeps Setting 3 at 0.'],
+    };
+  }
+  if (/(^|\s)(press|press_soko)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Crusher',
+      summary: 'Heavy timing hazard. Place it where the player can see the cycle early enough to react instead of being surprised at the last second.',
+      tips: ['Check the hazard from the racing line, not just from free camera angles.', 'Use dev view or top view to make sure the crusher clears nearby walls and props cleanly.'],
+      cautions: ['Avoid placing crushers flush against blind corners or decorative ceilings where the timing becomes hard to read.'],
+    };
+  }
+  if (/(^|\s)(hwanwan|wanwan|twanwan|twanwan_ue)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Chain Chomp',
+      summary: 'Large moving hazard. Give it visible approach space and enough room around the racing line so the threat reads clearly before contact.',
+      tips: ['Place it where the player can identify the danger from a distance.', 'Use duplication sparingly; repeated large hazards can clutter the line quickly.'],
+      cautions: ['Keep large hazards away from spawn zones, cannons, and other forced-motion sections so they do not create unreadable failures.'],
+      routeLabel: 'Movement Path',
+      variantLabel: 'Chomp Type',
+    };
+  }
+  if (/(^|\s)(b_teresa|bgteresasfc)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Boo',
+      summary: 'Floating ghost obstacle. Place it where the player can clearly read the occupied airspace without mistaking it for background ambience.',
+      tips: ['Check the hazard from the racing line and from dev or top view so the height and footprint stay readable.', 'The SNES Ghost Valley Boo variant is controlled by AREA type 07 and the object position itself does not drive the visible path; set the AREA up first.', 'Use the variant switcher below to swap between the common Boo variants without rebuilding the placement.'],
+      cautions: ['Avoid hiding ghost obstacles in dark scenery, tunnel clutter, or overlapping particle-heavy set pieces where their silhouette disappears.', 'The SNES Ghost Valley Boo cannot go below Y=3000, and the background Boo variant looks best with scale values around 3 to 4.'],
+      variantLabel: 'Boo Type',
+    };
+  }
+  if (/(^|\s)(hanachan|bosshanachan|bosshanachanhead)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Wiggler',
+      summary: 'Large caterpillar hazard. Place it where the player can recognize the body space and react before the section becomes crowded.',
+      tips: ['Use top or ortho view to keep enough room around the hazard for clear racing lines.', 'Use the variant switcher below to swap between regular and boss variants without replacing the placement.'],
+      cautions: ['Avoid dropping large body-style hazards into narrow sections, blind crests, or cluttered scenery where their footprint becomes unreadable.'],
+      routeLabel: 'Movement Path',
+      variantLabel: 'Wiggler Type',
+    };
+  }
+  if (/(^|\s)(begoman_manager|begoman_spike)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Spinner Hazard',
+      summary: 'Rotating hazard object. Place it where the player can read the spin zone early and still make a clean line choice around it.',
+      tips: ['Check the occupied space from the racing line and from top view so the hazard footprint is obvious.', 'Use the variant switcher below to move between the common spinner variants without rebuilding the setup.'],
+      cautions: ['Avoid stacking rotating hazards into boost landings, blind corners, or cramped walls where the spin zone becomes unreadable.', 'The spawned Topman variant only works on specific slots, and it must be the first placed game object to appear at all.'],
+      variantLabel: 'Spinner Type',
+    };
+  }
+  if (/(^|\s)(k_sticklift00|kinoko_lift1|kinoko_ud|kinoko_bend|kinoko_nm|kinoko_kuki|escalator|escalator_group|belteasy|beltcrossing|beltcurvea|beltcurveb|belt|pendulum|sound_lift|dkship64|dkturibashigcc|dkmarutagcc|bulldozer_left|bulldozer_right|crane|townbridgedsc|venice_hasi|venice_gondola|twistedway|dkfalls)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Moving Platform',
+      summary: 'Route-driven moving object. Assign a path first, then verify the motion from the player line and from top or ortho view.',
+      tips: ['Use the path field below to bind the object to a route.', 'Leave route visibility on while setting movement up, then hide it again from the viewport eye menu.'],
+      routeLabel: 'Movement Path',
+    };
+  }
+  if (/(^|\s)(cara1|cara2|cara3|carb|car_body|truckwagon|k_bomb_car|k_bomb_car1|kart_truck)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Traffic Vehicle',
+      summary: 'Route-driven vehicle hazard. Bind it to a path, then check its motion from the racing line so it reads early and stays fair.',
+      tips: ['Use the traffic path field below to create, bind, or jump to its route.', 'Top or ortho view is the fastest way to clean up long traffic paths.'],
+      cautions: ['Keep traffic well clear of walls, decorative props, and blind corners so collisions stay readable in play.'],
+      routeLabel: 'Traffic Path',
+      variantLabel: 'Vehicle Type',
+    };
+  }
+  if (/(^|\s)(tree_cannon|donkycannongc|donkycannon_wii|donkycannon|cannon)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Cannon Object',
+      summary: 'Launch object. Place it with the intended player approach in mind and verify its facing from the main 3D view.',
+      tips: ['Use rotation controls to verify launch direction.', 'Keep the entry area visually clear so the cannon reads immediately.'],
+      cautions: ['This object is only the visible cannon prop. The actual launch behavior still depends on cannon points and matching cannon-trigger collision.'],
+    };
+  }
+  if (/(^|\s)(npc_mii|shmiiobj|dk_miiobj|miiobjd|mare_a|mare_b|miiposter)(\s|$)/.test(sourceText)) {
+    const daisyCrowd = entity.objectId === 0x2e8 || entity.objectId === 0x2e9 || entity.objectId === 0x2ea;
+    return {
+      title: 'Mii Spectator',
+      summary: 'Decorative crowd object. Use it to add life to spectator spaces without interfering with track collision or racing lines.',
+      tips: ['These are best placed off the main racing surface.', 'Duplicate one placement to build crowd clusters quickly.', 'The Noki spectator variants below can face the player and clap when you tune their distance settings.'],
+      cautions: daisyCrowd ? ['These Daisy Circuit crowd variants are limited to one instance each in vanilla Mario Kart Wii; more than one can crash the game.'] : undefined,
+      variantLabel: 'Crowd Variant',
+    };
+  }
+
+  return {
+    title: flow?.name || flow?.resources || fallbackObjectName(entity.objectId),
+    summary: 'Base-game object. Use placement, rotation, scale, path binding, and collision snap from the main inspector tools first.',
+    tips: ['Only open Advanced object data when you need non-default behavior.', 'Use duplication and multi-select for repeated placements.'],
+    routeLabel: entity.routeIndex !== undefined ? 'Path' : undefined,
+  };
+}
+
+function fallbackObjectName(objectId: number): string {
+  return getKnownObjectName(objectId) ?? `Unknown object ${objectId}`;
+}
+
+function getObjectVariantOptions(profile: ObjectInspectorProfile, objectOptions: ObjectOption[]): ObjectOption[] {
+  let variantIds: number[] = [];
+  switch (profile.title) {
+    case 'Item Box':
+      variantIds = [0x65, 0x76, 0xc9, 0xd4, 0xee, 0xd5];
+      break;
+    case 'Monty Mole':
+      variantIds = [0x192, 0x19a, 0x1a0];
+      break;
+    case 'Fire Bar':
+      variantIds = [0x195, 0x1a1, 0x1a5];
+      break;
+    case 'Chain Chomp':
+      variantIds = [0xe9, 0xeb, 0xef, 0x196];
+      break;
+    case 'Shy Guy Obstacle':
+      variantIds = [0xce, 0xea, 0x14a];
+      break;
+    case 'Shy Guy':
+      variantIds = [0x19c];
+      break;
+    case 'Breakable Box':
+      variantIds = [0x70, 0xd3];
+      break;
+    case 'Thwomp':
+      variantIds = [0xdb, 0xdc, 0xf1, 0x162];
+      break;
+    case 'Pokey':
+      variantIds = [0x199, 0x1ab, 0x1ac];
+      break;
+    case 'Penguin':
+      variantIds = [0xd7, 0xd8, 0xd9];
+      break;
+    case 'Boo':
+      variantIds = [0x18c, 0x18f];
+      break;
+    case 'Piranha Plant':
+      variantIds = [0x194, 0x1a2, 0x1aa];
+      break;
+    case 'Flame Jet':
+      variantIds = [0x2ee, 0x1fd, 0x212, 0x216];
+      break;
+    case 'Jump Pad':
+      variantIds = [0x20f, 0x213, 0x21a, 0x21b, 0x2f0];
+      break;
+    case 'Wiggler':
+      variantIds = [0xe2, 0xf0, 0xf2];
+      break;
+    case 'Mii Spectator':
+      variantIds = [0x139, 0x13a, 0x13b, 0x167, 0x168, 0x169, 0x16b, 0x16c, 0x2e8, 0x2e9, 0x2ea, 0x2eb, 0x2ec];
+      break;
+    case 'Spinner Hazard':
+      variantIds = [0x16, 0x1a3];
+      break;
+    case 'Traffic Vehicle':
+      variantIds = [0xcc, 0xd0, 0xd1, 0xde, 0xe7, 0xe8, 0xf3, 0x181, 0x19b];
+      break;
+    default:
+      return [];
+  }
+  const byId = new Map(objectOptions.map((option) => [option.id, option]));
+  return variantIds
+    .map((id) => byId.get(id))
+    .filter((option): option is ObjectOption => option !== undefined);
+}
+
+function setMaskedBits(value: number, mask: number, enabled: boolean): number {
+  return enabled ? value | mask : value & ~mask;
+}
+
+function decodeWrappedSpin(value: number): { direction: number; speed: number } {
+  if (value <= 0x7fff) return { direction: 1, speed: value };
+  return { direction: 0, speed: 0x10000 - value };
+}
+
+function encodeWrappedSpin(speed: number, direction: number): number {
+  const clampedSpeed = Math.max(0, Math.min(0xffff, Math.trunc(speed)));
+  if (clampedSpeed === 0) return 0;
+  return direction === 0 ? (0x10000 - clampedSpeed) & 0xffff : clampedSpeed;
+}
+
+function decodeSigned16(value: number): number {
+  return value >= 0x8000 ? value - 0x10000 : value;
+}
+
+function encodeSigned16(value: number): number {
+  const clamped = Math.max(-0x8000, Math.min(0x7fff, Math.trunc(value)));
+  return clamped < 0 ? clamped + 0x10000 : clamped;
+}
+
+function describePresenceFlags(value: number): string {
+  const activeLabels = gobjPresenceModeOptions.filter((option) => (value & option.mask) !== 0).map((option) => option.label);
+  const lowBits = value & 0x0007;
+  const summary = activeLabels.length > 0 ? activeLabels.join(', ') : 'Hidden in all player-count modes';
+  return `${summary} (${formatPresenceFlagsHex(value)}${value !== lowBits ? ` behaves like ${formatPresenceFlagsHex(lowBits)} in vanilla MKWii` : ''})`;
+}
+
+function formatPresenceFlagsHex(value: number): string {
+  return `0x${value.toString(16).toUpperCase().padStart(4, '0')}`;
+}
+
+function presentValidationIssue(message: string): { summary: string; detail?: string } {
+  if (message === 'course_model.brres is missing.') return { summary: 'The course model is missing.', detail: 'Exported tracks need course geometry to render in-game.' };
+  if (message === 'course.kmp is missing.') return { summary: 'The track data file is missing.', detail: 'The course cannot load gameplay objects, paths, or start data without course.kmp.' };
+  if (message === 'course.kcl is missing; snapping and collision overlay are unavailable.') return { summary: 'Collision data is missing.', detail: 'Surface snapping and collision-based editing will not work until the track collision data is present.' };
+  if (message === 'No start position is defined.') return { summary: 'No player start position is set.' };
+  if (message === 'Checkpoints are missing.') return { summary: 'No checkpoints are set.' };
+  if (message === 'Respawn points are missing.') return { summary: 'No respawn points are set.', detail: 'Lakitu recoveries will not have a valid place to send the player.' };
+  if (message === 'Enemy route points exist without enemy path groups.') return { summary: 'Enemy routes are incomplete.', detail: 'Enemy route points exist, but they are not grouped into usable path sections.' };
+  if (message === 'Item route points exist without item path groups.') return { summary: 'Item routes are incomplete.', detail: 'Item route points exist, but they are not grouped into usable path sections.' };
+  if (message === 'Checkpoints exist without checkpoint path groups.') return { summary: 'Checkpoint groups are incomplete.', detail: 'The checkpoints exist, but their path-group structure is missing.' };
+  if (message.includes('groups cover') && message.includes('points.')) return { summary: 'A route group does not cover all of its points.', detail: message };
+  if (message.includes('has points but no path connections.')) return { summary: 'A route has points but no connections.', detail: message };
+  if (message.includes('appears disconnected')) return { summary: 'A route appears disconnected.', detail: message };
+  if (message.includes('intro start references missing camera')) return { summary: 'The intro camera start is invalid.', detail: message };
+  if (message.includes('selection start references missing camera')) return { summary: 'The selection camera start is invalid.', detail: message };
+  if (message.startsWith('Checkpoint ') && message.includes('references missing respawn point')) return { summary: 'A checkpoint points to a respawn that does not exist.', detail: message };
+  if (message.startsWith('Checkpoint ') && message.includes('references missing previous checkpoint')) return { summary: 'A checkpoint previous-link is invalid.', detail: message };
+  if (message.startsWith('Checkpoint ') && message.includes('references missing next checkpoint')) return { summary: 'A checkpoint next-link is invalid.', detail: message };
+  if (message.startsWith('Object ') && message.includes('references missing route')) return { summary: 'An object points to a route that does not exist.', detail: message };
+  if (message.startsWith('Area ') && message.includes('references missing route')) return { summary: 'An area points to a route that does not exist.', detail: message };
+  if (message.startsWith('Area ') && message.includes('references missing camera')) return { summary: 'An area points to a camera that does not exist.', detail: message };
+  if (message.startsWith('Camera ') && message.includes('references missing route')) return { summary: 'A camera points to a route that does not exist.', detail: message };
+  if (message.startsWith('Camera ') && message.includes('references missing next camera')) return { summary: 'A camera chain points to a camera that does not exist.', detail: message };
+  if (message === 'Common.szs is not loaded; object resource validation is unavailable.') return { summary: 'Common object data is not loaded.', detail: 'Object resource checks are limited until the shared game asset archive is available.' };
+  if (message.includes('has no ObjFlow definition in Common.szs')) return { summary: 'An object type is missing its shared game definition.', detail: 'The shared game object data does not contain a definition for this object type.' };
+  if (message.includes('references missing resource')) return { summary: 'An object is missing one of its required model files.', detail: message };
+  if (message.includes('is a gameplay object but is hidden for some multiplayer player counts')) return { summary: 'A gameplay object is hidden in some multiplayer modes.', detail: message };
+  if (message.includes('unsupported player item-box setting')) return { summary: 'An item box uses an unsupported player-item setting.', detail: message };
+  if (message.includes('unsupported CPU item-box setting')) return { summary: 'An item box uses an unsupported CPU-item setting.', detail: message };
+  if (message.includes('unsupported item-box timing setting')) return { summary: 'An item box uses an unsupported timing setting.', detail: message };
+  if (message.includes('Monty Mole variants choropu and choropu2 are both present')) return { summary: 'Two incompatible Monty Mole variants are mixed together.', detail: message };
+  if (message.includes('has Setting 3 left at 0, which is known to crash vanilla Mario Kart Wii')) return { summary: 'A falling rock still uses a crash-prone setting.', detail: message };
+  if (message.includes('Daisy Circuit') || message.includes('MiiObjD')) return { summary: 'A Daisy Circuit crowd object is duplicated.', detail: message };
+  if (message.includes('slot-restricted objects')) return { summary: 'This track uses objects that only work on certain vanilla slots.', detail: message };
+  if (message.includes('begoman_spike must be the first placed game object')) return { summary: 'A Topman hazard is ordered incorrectly.', detail: message };
+  return { summary: message };
+}
+
+function getAreaInspectorLabels(type: number) {
+  switch (type) {
+    case 0:
+      return { cameraLabel: 'Camera' };
+    case 1:
+      return { setting1Label: 'Environment Object' };
+    case 2:
+      return { setting1Label: 'BFG Entry', setting2Label: 'Setting 2' };
+    case 3:
+      return { routeLabel: 'Water Route', setting1Label: 'Acceleration', setting2Label: 'Route Speed' };
+    case 4:
+      return { enemyLabel: 'Enemy Point' };
+    case 5:
+      return { setting1Label: 'Setting 1', setting2Label: 'Setting 2' };
+    case 6:
+      return { setting1Label: 'BBLM File', setting2Label: 'Fade Time' };
+    case 8:
+    case 9:
+      return { setting1Label: 'Group ID' };
+    case 10:
+      return { setting1Label: 'Start Index', setting2Label: 'End Index' };
+    default:
+      return {};
+  }
+}
+
+function getKnownObjectName(objectId: number | undefined): string | null {
+  if (objectId === undefined) return null;
+  const raw = (objectNamesById as Record<string, string>)[String(objectId)];
+  if (!raw) return null;
+  return humanizeObjectName(raw);
+}
+
+function humanizeObjectName(value: string): string {
+  const normalized = value
+    .trim()
+    .replace(/_/g, ' ')
+    .replace(/itembox/gi, 'item box')
+    .replace(/sticklift/gi, 'stick lift')
+    .replace(/firebar/gi, 'fire bar')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/([A-Za-z])(\d+)/g, '$1 $2')
+    .replace(/\s+/g, ' ');
+  return normalized
+    .split(' ')
+    .map((part) => {
+      const lower = part.toLowerCase();
+      if (lower === 'npc') return 'NPC';
+      if (lower === 'mii') return 'Mii';
+      if (lower === 'gc' || lower === 'gba' || lower === 'sfc' || lower === 'ds' || lower === 'wii') return lower.toUpperCase();
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(' ');
+}
+
 function shortAssetName(resource: string): string {
   return resource.replace(/\.[^.]+$/, '').replace(/_/g, ' ').slice(0, 18) || 'model';
+}
+
+function friendlyTrackAssetName(path: string): string {
+  const fileName = path.split('/').pop() ?? path;
+  const lower = fileName.toLowerCase();
+  if (lower === 'course_model.brres') return 'Course Model';
+  if (lower === 'vrcorn_model.brres') return 'Skybox Model';
+  if (lower.endsWith('.brres')) return shortAssetName(fileName);
+  return fileName;
 }
 
 function firstResourceSummary(resources: string[], summaries: Record<string, NoclipBrresSummary>): NoclipBrresSummary | undefined {
@@ -1474,6 +6207,18 @@ function firstResourceSummary(resources: string[], summaries: Record<string, Noc
     if (summary) return summary;
   }
   return undefined;
+}
+
+function describeCourseAsset(asset: PlaceableCourseAssetRecord): string {
+  const kindLabel =
+    asset.kind === 'sharedObject'
+      ? 'shared object'
+      : asset.kind === 'course'
+        ? 'course mesh'
+        : asset.kind === 'skybox'
+        ? 'skybox'
+          : 'course asset';
+  return asset.objectId !== null ? `${kindLabel} · drag to place · ${asset.trackLabel}` : `${kindLabel} · reference only · ${asset.trackLabel}`;
 }
 
 function describeBrres(summary: TrackDocument['brresSummaries'][string] | undefined): string {

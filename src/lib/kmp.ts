@@ -29,6 +29,7 @@ export interface KmpEntity {
   section: KmpSectionName;
   index: number;
   checkpoint?: { left: Vec3; right: Vec3; respawnIndex: number; type: number; prev: number; next: number };
+  pointDeviation?: number;
   pointSettings?: number[];
   area?: {
     shape: number;
@@ -280,8 +281,14 @@ function parseSectionEntries(
     if (rotationOffset !== undefined && recordSize >= rotationOffset + 12) entity.rotation = readVec3(reader, rawOffset + rotationOffset);
     const scaleOffset = SCALE_OFFSETS[section];
     if (scaleOffset !== undefined && recordSize >= scaleOffset + 12) entity.scale = readVec3(reader, rawOffset + scaleOffset);
-    if (section === 'ENPT' && recordSize >= 0x10) entity.pointSettings = [reader.u16(rawOffset + 0x0c), reader.u8(rawOffset + 0x0e), reader.u8(rawOffset + 0x0f)];
-    if (section === 'ITPT' && recordSize >= 0x10) entity.pointSettings = [reader.u16(rawOffset + 0x0c), reader.u16(rawOffset + 0x0e)];
+    if (section === 'ENPT' && recordSize >= 0x14) {
+      entity.pointDeviation = reader.f32(rawOffset + 0x0c);
+      entity.pointSettings = [reader.u16(rawOffset + 0x10), reader.u8(rawOffset + 0x12), reader.u8(rawOffset + 0x13)];
+    }
+    if (section === 'ITPT' && recordSize >= 0x14) {
+      entity.pointDeviation = reader.f32(rawOffset + 0x0c);
+      entity.pointSettings = [reader.u16(rawOffset + 0x10), reader.u16(rawOffset + 0x12)];
+    }
     if (section === 'AREA' && recordSize >= 0x2e) {
       entity.area = {
         shape: reader.u8(rawOffset),
@@ -500,17 +507,24 @@ export function patchKmpPointSetting(document: KmpDocument, entity: KmpEntity, s
   const out = new Uint8Array(document.original);
   const view = new DataView(out.buffer);
   if (entity.section === 'ENPT') {
-    if (settingIndex === 0 && entity.recordSize >= 0x0e) view.setUint16(entity.rawOffset + 0x0c, value & 0xffff, false);
-    else if (settingIndex === 1 && entity.recordSize >= 0x0f) view.setUint8(entity.rawOffset + 0x0e, value & 0xff);
-    else if (settingIndex === 2 && entity.recordSize >= 0x10) view.setUint8(entity.rawOffset + 0x0f, value & 0xff);
+    if (settingIndex === 0 && entity.recordSize >= 0x12) view.setUint16(entity.rawOffset + 0x10, value & 0xffff, false);
+    else if (settingIndex === 1 && entity.recordSize >= 0x13) view.setUint8(entity.rawOffset + 0x12, value & 0xff);
+    else if (settingIndex === 2 && entity.recordSize >= 0x14) view.setUint8(entity.rawOffset + 0x13, value & 0xff);
     return out;
   }
   if (entity.section === 'ITPT') {
-    if (settingIndex === 0 && entity.recordSize >= 0x0e) view.setUint16(entity.rawOffset + 0x0c, value & 0xffff, false);
-    else if (settingIndex === 1 && entity.recordSize >= 0x10) view.setUint16(entity.rawOffset + 0x0e, value & 0xffff, false);
+    if (settingIndex === 0 && entity.recordSize >= 0x12) view.setUint16(entity.rawOffset + 0x10, value & 0xffff, false);
+    else if (settingIndex === 1 && entity.recordSize >= 0x14) view.setUint16(entity.rawOffset + 0x12, value & 0xffff, false);
     return out;
   }
   return document.original;
+}
+
+export function patchKmpPointDeviation(document: KmpDocument, entity: KmpEntity, value: number): Uint8Array {
+  if ((entity.section !== 'ENPT' && entity.section !== 'ITPT') || entity.recordSize < 0x10) return document.original;
+  const out = new Uint8Array(document.original);
+  new DataView(out.buffer).setFloat32(entity.rawOffset + 0x0c, value, false);
+  return out;
 }
 
 export function patchKmpPotiRouteSetting(document: KmpDocument, entity: KmpEntity, settingIndex: number, value: number): Uint8Array {
@@ -842,6 +856,7 @@ export function appendKmpPoint(document: KmpDocument, sectionName: AppendableKmp
   view.setFloat32(positionOffset, position.x, false);
   view.setFloat32(positionOffset + 4, position.y, false);
   view.setFloat32(positionOffset + 8, position.z, false);
+  if (sectionName === 'ENPT' || sectionName === 'ITPT') view.setFloat32(0x0c, 10, false);
   const appended = appendKmpRecord(document, sectionName, record);
   if (sectionName === 'ENPT') return connectAppendedPathPoint(appended, 'ENPT', 'ENPH');
   if (sectionName === 'ITPT') return connectAppendedPathPoint(appended, 'ITPT', 'ITPH');
