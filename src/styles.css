@@ -283,6 +283,13 @@ input {
   font-size: 12px;
 }
 
+.routePanelSection {
+  display: grid;
+  gap: 6px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
 .routeVisibilityEmpty {
   color: #9faaba;
   font-size: 12px;
@@ -298,6 +305,26 @@ input {
 
 .routeVisibilityRow input {
   margin: 0;
+}
+
+.routeModeButtons {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.routeModeButton {
+  height: 28px;
+  border: 1px solid #343d4a;
+  border-radius: 6px;
+  color: #dbe3ef;
+  background: #202630;
+  cursor: pointer;
+}
+
+.routeModeButton.active {
+  border-color: #5fd6ff;
+  background: #253241;
 }
 
 .viewportToolbar {
@@ -616,10 +643,13 @@ input {
 
 .contentBrowser {
   position: relative;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   height: 248px;
   min-height: 46px;
   border-top: 1px solid #272d37;
   background: #171c24;
+  overflow: hidden;
   transition: height 150ms ease;
 }
 
@@ -646,6 +676,7 @@ input {
   gap: 10px;
   min-height: 46px;
   padding: 12px 52px 0 14px;
+  min-width: 0;
 }
 
 .browserHeader span {
@@ -724,6 +755,7 @@ input {
   gap: 8px;
   overflow: auto hidden;
   padding: 10px 14px 8px;
+  min-width: 0;
 }
 
 .collapsed .browserSearchRow,
@@ -772,6 +804,7 @@ input {
   grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
   gap: 10px;
   overflow: auto;
+  min-height: 0;
   padding: 0 14px 14px;
   align-content: start;
 }
@@ -852,10 +885,9 @@ input {
   align-items: stretch;
   justify-items: stretch;
   overflow: hidden;
-  border-color: #385b73;
-  background:
-    linear-gradient(140deg, rgba(95, 214, 255, 0.18), transparent 55%),
-    #101820;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .objectPreview img {
@@ -864,10 +896,8 @@ input {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  padding: 4px;
-  background:
-    linear-gradient(45deg, rgba(255, 255, 255, 0.04) 25%, transparent 25% 75%, rgba(255, 255, 255, 0.04) 75%),
-    #101820;
+  padding: 0;
+  background: transparent;
 }
 
 .objectPreview[data-state='missing'] {

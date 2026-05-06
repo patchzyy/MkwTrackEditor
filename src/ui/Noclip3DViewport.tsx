@@ -218,6 +218,7 @@ interface RouteVisibilityItem {
 }
 
 type RouteVisibilityKey = 'ENPT' | 'ITPT' | 'CKPT' | 'POTI_OBJECT' | 'POTI_CAMERA';
+type DofMode = 'full' | 'reduced' | 'off';
 
 const MKW_RENDER_SCALE = 0.1;
 
@@ -328,6 +329,7 @@ export function Noclip3DViewport({
   const [smokeMouseLookWorked, setSmokeMouseLookWorked] = useState<'pending' | 'yes' | 'no'>('pending');
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [routePanelOpen, setRoutePanelOpen] = useState(false);
+  const [dofMode, setDofMode] = useState<DofMode>('full');
   const [routeVisibility, setRouteVisibility] = useState<Record<RouteVisibilityKey, boolean>>({
     ENPT: true,
     ITPT: true,
@@ -577,6 +579,13 @@ export function Noclip3DViewport({
   useEffect(() => {
     applyViewMode(track, false);
   }, [viewMode, viewerReady]);
+
+  useEffect(() => {
+    const scene = sceneRef.current as SceneGfx & {
+      setEditorDOFMode?: (mode: DofMode) => void;
+    } | null;
+    scene?.setEditorDOFMode?.(dofMode);
+  }, [dofMode, viewerReady, sceneKey]);
 
   useEffect(() => {
     setRouteVisibility((current) => {
@@ -1181,6 +1190,32 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
                 </label>
               ))
             )}
+            <div className="routePanelSection">
+              <strong>Depth Of Field</strong>
+              <div className="routeModeButtons">
+                <button
+                  type="button"
+                  className={dofMode === 'full' ? 'routeModeButton active' : 'routeModeButton'}
+                  onClick={() => setDofMode('full')}
+                >
+                  Full
+                </button>
+                <button
+                  type="button"
+                  className={dofMode === 'reduced' ? 'routeModeButton active' : 'routeModeButton'}
+                  onClick={() => setDofMode('reduced')}
+                >
+                  Reduced
+                </button>
+                <button
+                  type="button"
+                  className={dofMode === 'off' ? 'routeModeButton active' : 'routeModeButton'}
+                  onClick={() => setDofMode('off')}
+                >
+                  Off
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

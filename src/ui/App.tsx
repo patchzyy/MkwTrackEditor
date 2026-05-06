@@ -302,7 +302,8 @@ const kmpPointCatalog: Array<{ section: AppendableKmpSection; label: string; cat
 ];
 
 type BrowserObject = (typeof objectCatalog)[number] | ObjFlowEntry;
-type BrowserFolderId = 'featured' | 'kmp' | 'enemies' | 'nature' | 'gameplay' | 'props' | 'common' | 'courseAssets' | 'track';
+type BrowserAssetItem = BrowserObject | PlaceableCourseAssetRecord;
+type BrowserFolderId = 'featured' | 'kmp' | 'enemies' | 'nature' | 'gameplay' | 'props' | 'common' | 'track';
 interface CourseAssetRecord {
   id: string;
   source: 'courseArchive' | 'sharedObjectDir';
@@ -329,9 +330,8 @@ interface CourseAssetDatabase {
 
 type BrowserFolder =
   | { id: BrowserFolderId; label: string; detail: string; kind: 'kmp'; items: typeof kmpPointCatalog }
-  | { id: BrowserFolderId; label: string; detail: string; kind: 'object'; items: BrowserObject[] }
-  | { id: BrowserFolderId; label: string; detail: string; kind: 'brres'; items: string[] }
-  | { id: BrowserFolderId; label: string; detail: string; kind: 'courseAsset'; items: PlaceableCourseAssetRecord[] };
+  | { id: BrowserFolderId; label: string; detail: string; kind: 'object'; items: BrowserAssetItem[] }
+  | { id: BrowserFolderId; label: string; detail: string; kind: 'brres'; items: string[] };
 
 export function App() {
   const smokeTrackUrl = useMemo(() => (typeof window === 'undefined' ? null : new URL(window.location.href).searchParams.get('smokeTrack')), []);
@@ -430,13 +430,7 @@ export function App() {
   }, [objFlow, commonArchive]);
   const browserFolders = useMemo<BrowserFolder[]>(() => {
     const objects = (realObjectCatalog.length ? realObjectCatalog : objectCatalog).filter((object, index, list) => index === list.findIndex((candidate) => catalogId(candidate) === catalogId(object)));
-    const featured = objects.filter((object) => isFeaturedObject(object)).slice(0, 18);
-    const enemies = objects.filter((object) => classifyObjectFolder(object) === 'enemies').slice(0, 36);
-    const nature = objects.filter((object) => classifyObjectFolder(object) === 'nature').slice(0, 36);
-    const gameplay = objects.filter((object) => classifyObjectFolder(object) === 'gameplay').slice(0, 36);
-    const props = objects.filter((object) => classifyObjectFolder(object) === 'props').slice(0, 36);
-    const common = objects.slice(0, 120);
-    const courseAssets =
+    const placeableCourseAssets =
       courseAssetDb?.assets
         .filter((asset) => asset.kind === 'object' || asset.kind === 'sharedObject')
         .map((asset) => mapCourseAssetToPlaceable(asset, objFlow))
@@ -444,8 +438,13 @@ export function App() {
           const placeableScore = Number(b.objectId !== null) - Number(a.objectId !== null);
           const sharedScore = Number(b.source === 'sharedObjectDir') - Number(a.source === 'sharedObjectDir');
           return placeableScore || sharedScore || a.baseName.localeCompare(b.baseName) || a.trackLabel.localeCompare(b.trackLabel);
-        })
-        .slice(0, 240) ?? [];
+        }) ?? [];
+    const featured = objects.filter((object) => isFeaturedObject(object)).slice(0, 18);
+    const enemies = [...objects.filter((object) => classifyObjectFolder(object) === 'enemies'), ...placeableCourseAssets.filter((asset) => classifyObjectFolder(asset) === 'enemies')].slice(0, 72);
+    const nature = [...objects.filter((object) => classifyObjectFolder(object) === 'nature'), ...placeableCourseAssets.filter((asset) => classifyObjectFolder(asset) === 'nature')].slice(0, 72);
+    const gameplay = [...objects.filter((object) => classifyObjectFolder(object) === 'gameplay'), ...placeableCourseAssets.filter((asset) => classifyObjectFolder(asset) === 'gameplay')].slice(0, 72);
+    const props = [...objects.filter((object) => classifyObjectFolder(object) === 'props'), ...placeableCourseAssets.filter((asset) => classifyObjectFolder(asset) === 'props')].slice(0, 72);
+    const common = [...objects, ...placeableCourseAssets].slice(0, 240);
     const trackAssets = track?.brresFiles.slice(0, 48) ?? [];
     return [
       { id: 'featured', label: 'Common', detail: `${featured.length} highlighted objects`, kind: 'object', items: featured },
@@ -455,7 +454,6 @@ export function App() {
       { id: 'gameplay', label: 'Gameplay', detail: `${gameplay.length} interactive objects`, kind: 'object', items: gameplay },
       { id: 'props', label: 'Props', detail: `${props.length} scenery and structures`, kind: 'object', items: props },
       { id: 'common', label: 'All Objects', detail: `${common.length} placeable game objects`, kind: 'object', items: common },
-      { id: 'courseAssets', label: 'Course Assets', detail: courseAssetDb ? `${courseAssetDb.assetCount} indexed assets from ${courseAssetDb.trackCount} tracks` : 'Scanning course asset database', kind: 'courseAsset', items: courseAssets },
       { id: 'track', label: 'Track Meshes', detail: track ? `${trackAssets.length} track asset files` : 'Load a track to list track assets', kind: 'brres', items: trackAssets },
     ].filter((folder) => folder.items.length > 0 || folder.id === 'track');
   }, [commonArchive, courseAssetDb, objFlow, realObjectCatalog, track]);
@@ -1696,34 +1694,34 @@ export function App() {
               </div>
             ))}
           {filteredBrowserFolder?.kind === 'object' &&
-            filteredBrowserFolder.items.map((object) => (
-              <div className="assetTile" key={catalogId(object)} draggable onDragStart={(event) => event.dataTransfer.setData('application/mkw-object-id', String(catalogId(object)))}>
-                <ObjectThumbnail object={object} common={commonArchive} summaries={commonBrresSummaries} />
-                <strong>{browserObjectTitle(object)}</strong>
-                <span>{objectAssetLabel(object, commonArchive, commonBrresSummaries)}</span>
-              </div>
-            ))}
+            filteredBrowserFolder.items.map((object) =>
+              isCourseAssetBrowserItem(object) ? (
+                <div
+                  className={object.objectId !== null ? 'assetTile' : 'assetTile disabled'}
+                  key={object.id}
+                  draggable={object.objectId !== null}
+                  onDragStart={(event) => {
+                    if (object.objectId !== null) event.dataTransfer.setData('application/mkw-object-id', String(object.objectId));
+                  }}
+                >
+                  <CourseAssetThumbnail asset={object} summaries={commonBrresSummaries} />
+                  <strong>{object.objectLabel ?? object.baseName.replace(/\.brres$/i, '')}</strong>
+                  <span>{describeCourseAsset(object)}</span>
+                </div>
+              ) : (
+                <div className="assetTile" key={catalogId(object)} draggable onDragStart={(event) => event.dataTransfer.setData('application/mkw-object-id', String(catalogId(object)))}>
+                  <ObjectThumbnail object={object} common={commonArchive} summaries={commonBrresSummaries} />
+                  <strong>{browserObjectTitle(object)}</strong>
+                  <span>{objectAssetLabel(object, commonArchive, commonBrresSummaries)}</span>
+                </div>
+              ),
+            )}
           {filteredBrowserFolder?.kind === 'brres' &&
             filteredBrowserFolder.items.map((path) => (
               <div className="assetTile" key={path}>
                 <div className="thumbnail brres">Asset</div>
                 <strong>{friendlyTrackAssetName(path)}</strong>
                 <span>{describeBrres(track?.brresSummaries[path]) || path}</span>
-              </div>
-            ))}
-          {filteredBrowserFolder?.kind === 'courseAsset' &&
-            filteredBrowserFolder.items.map((asset) => (
-              <div
-                className={asset.objectId !== null ? 'assetTile' : 'assetTile disabled'}
-                key={asset.id}
-                draggable={asset.objectId !== null}
-                onDragStart={(event) => {
-                  if (asset.objectId !== null) event.dataTransfer.setData('application/mkw-object-id', String(asset.objectId));
-                }}
-              >
-                <CourseAssetThumbnail asset={asset} summaries={commonBrresSummaries} />
-                <strong>{asset.objectLabel ?? asset.baseName.replace(/\.brres$/i, '')}</strong>
-                <span>{describeCourseAsset(asset)}</span>
               </div>
             ))}
           {filteredBrowserFolder && filteredBrowserFolder.items.length === 0 && <p className="browserEmpty">No assets match this search.</p>}
@@ -5455,7 +5453,7 @@ function ObjectThumbnail({
   return (
     <div className="thumbnail objectPreview" data-state={hasModel ? 'available' : 'missing'} data-preview={summary?.previewDataUrl ? 'image' : 'fallback'}>
       {summary?.previewDataUrl && <img src={summary.previewDataUrl} alt="" />}
-      <span className="previewModel">{summary ? `${summary.models.length} models · ${summary.textures.length} textures` : shortAssetName(primaryResource)}</span>
+      {!summary?.previewDataUrl && <span className="previewModel">{summary ? `${summary.models.length} models · ${summary.textures.length} textures` : shortAssetName(primaryResource)}</span>}
       {!summary?.previewDataUrl && (
         <span className="previewStack" aria-hidden="true">
           <i />
@@ -5472,7 +5470,7 @@ function CourseAssetThumbnail({ asset, summaries }: { asset: PlaceableCourseAsse
   return (
     <div className="thumbnail objectPreview" data-state={asset.objectId !== null ? 'available' : 'missing'} data-preview={summary?.previewDataUrl ? 'image' : 'fallback'}>
       {summary?.previewDataUrl && <img src={summary.previewDataUrl} alt="" />}
-      <span className="previewModel">{summary ? `${summary.models.length} models · ${summary.textures.length} textures` : shortAssetName(asset.baseName)}</span>
+      {!summary?.previewDataUrl && <span className="previewModel">{summary ? `${summary.models.length} models · ${summary.textures.length} textures` : shortAssetName(asset.baseName)}</span>}
       {!summary?.previewDataUrl && (
         <span className="previewStack" aria-hidden="true">
           <i />
@@ -5510,8 +5508,8 @@ function objectResources(object: (typeof objectCatalog)[number] | ObjFlowEntry):
   return 'resources' in object ? getObjFlowResourceNames(object) : [];
 }
 
-function classifyObjectFolder(object: BrowserObject): Exclude<BrowserFolderId, 'featured' | 'kmp' | 'common' | 'courseAssets' | 'track'> {
-  const text = objectSearchText(object);
+function classifyObjectFolder(object: BrowserAssetItem): Exclude<BrowserFolderId, 'featured' | 'kmp' | 'common' | 'track'> {
+  const text = browserItemSearchText(object);
   if (/(kuribo|goomba|choropu|pakkun|killer|wanwan|heyho|nokonoko|koopa|sanbo|crab|fish|enemy|boss)/.test(text)) return 'enemies';
   if (/(tree|wood|bush|grass|flower|plant|leaf|palm|forest|kinoko|mushroom|cactus)/.test(text)) return 'nature';
   if (/(item|lift|cannon|route|switch|gear|pendulum|flipper|jump|belt|panel|launcher|goal|sound|effect)/.test(text)) return 'gameplay';
@@ -5534,6 +5532,19 @@ function objectSearchText(object: BrowserObject): string {
     .toLowerCase();
 }
 
+function isCourseAssetBrowserItem(object: BrowserAssetItem): object is PlaceableCourseAssetRecord {
+  return 'trackLabel' in object;
+}
+
+function browserItemSearchText(object: BrowserAssetItem): string {
+  if (isCourseAssetBrowserItem(object)) {
+    return [object.objectLabel ?? object.baseName.replace(/\.brres$/i, ''), object.trackLabel, object.path, object.kind]
+      .join(' ')
+      .toLowerCase();
+  }
+  return objectSearchText(object);
+}
+
 function isBrowsableObjectEntry(entry: ObjFlowEntry): boolean {
   const text = objectSearchText(entry);
   return !/(^|\s)(dummy|escalator_group|sound_lift|truckchimsmk|truckchimsmkw)(\s|$)/.test(text);
@@ -5553,12 +5564,8 @@ function filterBrowserFolder(folder: BrowserFolder | null, query: string): Brows
     return { ...folder, detail: `${items.length} matching records`, items };
   }
   if (folder.kind === 'object') {
-    const items = folder.items.filter((item) => objectSearchText(item).includes(trimmed));
+    const items = folder.items.filter((item) => browserItemSearchText(item).includes(trimmed));
     return { ...folder, detail: `${items.length} matching objects`, items };
-  }
-  if (folder.kind === 'courseAsset') {
-    const items = folder.items.filter((asset) => `${asset.baseName} ${asset.trackLabel} ${asset.path} ${asset.kind}`.toLowerCase().includes(trimmed));
-    return { ...folder, detail: `${items.length} matching assets`, items };
   }
   const items = folder.items.filter((item) => item.toLowerCase().includes(trimmed));
   return { ...folder, detail: `${items.length} matching track asset files`, items };

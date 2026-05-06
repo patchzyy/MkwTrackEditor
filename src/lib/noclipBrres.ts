@@ -31,8 +31,8 @@ export async function parseNoclipBrresSummary(data: Uint8Array): Promise<NoclipB
       animations: { srt0: [], pat0: [], clr0: [], chr0: [], vis0: [], scn0: [] },
     };
   }
-  const modelPreviewDataUrl = createModelPreviewDataUrl(rres.mdl0);
   const texturePreviewDataUrl = await createTexturePreviewDataUrl(rres.tex0, GXTexture);
+  const modelPreviewDataUrl = createModelPreviewDataUrl(rres.mdl0);
   return {
     models: rres.mdl0.map((model: any) => ({
       name: model.name,
@@ -46,7 +46,7 @@ export async function parseNoclipBrresSummary(data: Uint8Array): Promise<NoclipB
       height: texture.height,
       format: String(texture.format),
     })),
-    previewDataUrl: modelPreviewDataUrl ?? texturePreviewDataUrl,
+    previewDataUrl: texturePreviewDataUrl ?? modelPreviewDataUrl,
     animations: {
       srt0: rres.srt0.map((animation: any) => animation.name),
       pat0: rres.pat0.map((animation: any) => animation.name),
