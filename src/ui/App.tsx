@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { startTransition, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Box, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ClipboardPaste, Copy, Database, Download, Eye, FolderOpen, Move3D, PanelRightClose, PanelRightOpen, Redo2, RotateCcw, Scale3D, TriangleAlert, Undo2 } from 'lucide-react';
 import {
   appendKmpArea,
@@ -586,6 +586,134 @@ interface ClipboardEntity {
 
 const HISTORY_LIMIT = 128;
 
+function vec3Equals(a: Vec3 | undefined, b: Vec3 | undefined): boolean {
+  if (!a || !b) return a === b;
+  return a.x === b.x && a.y === b.y && a.z === b.z;
+}
+
+function updateTrackEntityPreview(track: TrackDocument, entityId: string, update: (entity: KmpEntity) => KmpEntity): TrackDocument {
+  if (!track.kmp) return track;
+  const entityIndex = track.kmp.entities.findIndex((entity) => entity.id === entityId);
+  if (entityIndex < 0) return track;
+  const previousEntity = track.kmp.entities[entityIndex];
+  const nextEntity = update(previousEntity);
+  if (nextEntity === previousEntity) return track;
+
+  const nextEntities = [...track.kmp.entities];
+  nextEntities[entityIndex] = nextEntity;
+
+  const nextSections = previousEntity.routePoint
+    ? track.kmp.sections
+    : track.kmp.sections.map((section) =>
+        section.name === previousEntity.section
+          ? {
+              ...section,
+              entries: section.entries.map((entry, index) => (index === previousEntity.index ? nextEntity : entry)),
+            }
+          : section,
+      );
+
+  const nextRoutes = previousEntity.routePoint
+    ? track.kmp.routes.map((route, routeIndex) =>
+        routeIndex === previousEntity.routePoint!.routeIndex
+          ? {
+              ...route,
+              points: route.points.map((point, pointIndex) =>
+                pointIndex === previousEntity.routePoint!.pointIndex ? { ...point, position: nextEntity.position } : point,
+              ),
+            }
+          : route,
+      )
+    : track.kmp.routes;
+
+  return {
+    ...track,
+    kmp: {
+      ...track.kmp,
+      entities: nextEntities,
+      sections: nextSections,
+      routes: nextRoutes,
+    },
+  };
+}
+
+function previewMovedEntity(track: TrackDocument, entityId: string, position: Vec3): TrackDocument {
+  return updateTrackEntityPreview(track, entityId, (entity) => {
+    if (entity.section === 'CKPT' && entity.checkpoint) {
+      const dx = position.x - entity.position.x;
+      const dz = position.z - entity.position.z;
+      return {
+        ...entity,
+        position,
+        checkpoint: {
+          ...entity.checkpoint,
+          left: { ...entity.checkpoint.left, x: entity.checkpoint.left.x + dx, z: entity.checkpoint.left.z + dz },
+          right: { ...entity.checkpoint.right, x: entity.checkpoint.right.x + dx, z: entity.checkpoint.right.z + dz },
+        },
+      };
+    }
+    return { ...entity, position };
+  });
+}
+
+function previewMovedCheckpointEndpoint(track: TrackDocument, entityId: string, side: 'left' | 'right', position: Vec3): TrackDocument {
+  return updateTrackEntityPreview(track, entityId, (entity) => {
+    if (entity.section !== 'CKPT' || !entity.checkpoint) return entity;
+    const checkpoint =
+      side === 'left'
+        ? { ...entity.checkpoint, left: position }
+        : { ...entity.checkpoint, right: position };
+    return {
+      ...entity,
+      checkpoint,
+      position: {
+        x: (checkpoint.left.x + checkpoint.right.x) * 0.5,
+        y: (checkpoint.left.y + checkpoint.right.y) * 0.5,
+        z: (checkpoint.left.z + checkpoint.right.z) * 0.5,
+      },
+    };
+  });
+}
+
+function previewRotatedEntity(track: TrackDocument, entityId: string, rotation: Vec3): TrackDocument {
+  return updateTrackEntityPreview(track, entityId, (entity) => ({ ...entity, rotation }));
+}
+
+function previewScaledEntity(track: TrackDocument, entityId: string, scale: Vec3): TrackDocument {
+  return updateTrackEntityPreview(track, entityId, (entity) => ({ ...entity, scale }));
+}
+
+function materializeViewportInteractionTrack(baseTrack: TrackDocument | null, previewTrack: TrackDocument | null): TrackDocument | null {
+  if (!baseTrack?.kmp || !previewTrack?.kmp) return previewTrack;
+  let workingBytes = baseTrack.kmp.original;
+  const workingDocument = (): KmpDocument => ({ ...baseTrack.kmp!, original: workingBytes });
+  const previewEntitiesById = new Map(previewTrack.kmp.entities.map((entity) => [entity.id, entity]));
+
+  for (const baseEntity of baseTrack.kmp.entities) {
+    const previewEntity = previewEntitiesById.get(baseEntity.id);
+    if (!previewEntity) continue;
+    if (baseEntity.section === 'CKPT' && baseEntity.checkpoint && previewEntity.checkpoint) {
+      if (!vec3Equals(baseEntity.checkpoint.left, previewEntity.checkpoint.left)) {
+        workingBytes = patchKmpCheckpointEndpoint(workingDocument(), baseEntity, 'left', previewEntity.checkpoint.left);
+      }
+      if (!vec3Equals(baseEntity.checkpoint.right, previewEntity.checkpoint.right)) {
+        workingBytes = patchKmpCheckpointEndpoint(workingDocument(), baseEntity, 'right', previewEntity.checkpoint.right);
+      }
+    } else if (!vec3Equals(baseEntity.position, previewEntity.position)) {
+      workingBytes = patchKmpEntityPosition(workingDocument(), baseEntity, previewEntity.position);
+    }
+
+    if (baseEntity.rotation && previewEntity.rotation && !vec3Equals(baseEntity.rotation, previewEntity.rotation)) {
+      workingBytes = patchKmpEntityRotation(workingDocument(), baseEntity, previewEntity.rotation);
+    }
+    if (baseEntity.scale && previewEntity.scale && !vec3Equals(baseEntity.scale, previewEntity.scale)) {
+      workingBytes = patchKmpEntityScale(workingDocument(), baseEntity, previewEntity.scale);
+    }
+  }
+
+  return replaceCourseKmp(baseTrack, workingBytes);
+}
+
 const kmpPointCatalog: Array<{ section: AppendableKmpSection; label: string; category: string }> = [
   { section: 'KTPT', label: 'Start Point', category: 'Track Data' },
   { section: 'ENPT', label: 'Enemy Route Node', category: 'Routes' },
@@ -687,8 +815,10 @@ export function App() {
   const undoStackRef = useRef<EditorSnapshot[]>([]);
   const redoStackRef = useRef<EditorSnapshot[]>([]);
   const editSessionRef = useRef<EditorSnapshot | null>(null);
+  const transientViewportEditRef = useRef(false);
   const clipboardEntityRef = useRef<ClipboardEntity | null>(null);
   const objFlow = commonArchive?.objFlow ?? null;
+  const analysisTrack = transientViewportEditRef.current ? editSessionRef.current?.track ?? track : track;
   const selected = useMemo(() => track?.kmp?.entities.find((entity) => entity.id === selectedId) ?? null, [track, selectedId]);
   const selectedEntities = useMemo(() => {
     if (!track?.kmp || selectedIds.length === 0) return [];
@@ -711,11 +841,11 @@ export function App() {
       : []),
     [fillBetweenCount, fillBetweenPanelOpen, fillBetweenSelection],
   );
-  const cameraHeader = useMemo(() => (track?.kmp ? getKmpCameraHeader(track.kmp) : null), [track]);
-  const referenceCounts = useMemo(() => getReferenceCounts(track?.kmp ?? null), [track?.kmp]);
-  const validation = useMemo(() => (track ? validateTrack(track, { common: commonArchive }) : []), [track, commonArchive]);
-  const areaInspectorResources = useMemo(() => getAreaInspectorResources(track), [track]);
-  const postEffectResources = useMemo(() => getTrackPostEffectResources(track), [track]);
+  const cameraHeader = useMemo(() => (analysisTrack?.kmp ? getKmpCameraHeader(analysisTrack.kmp) : null), [analysisTrack]);
+  const referenceCounts = useMemo(() => getReferenceCounts(analysisTrack?.kmp ?? null), [analysisTrack?.kmp]);
+  const validation = useMemo(() => (analysisTrack ? validateTrack(analysisTrack, { common: commonArchive }) : []), [analysisTrack, commonArchive]);
+  const areaInspectorResources = useMemo(() => getAreaInspectorResources(analysisTrack), [analysisTrack]);
+  const postEffectResources = useMemo(() => getTrackPostEffectResources(analysisTrack), [analysisTrack]);
   const selectedObjectProfile = useMemo(() => (selected?.section === 'GOBJ' ? getObjectInspectorProfile(selected, objFlow) : null), [objFlow, selected]);
   const validationCounts = useMemo(() => {
     const errorCount = validation.filter((item) => item.level === 'error').length;
@@ -960,10 +1090,12 @@ export function App() {
     setSelectedIds(nextSelectedIds);
   }
 
-  function applyEditorSnapshot(snapshot: EditorSnapshot) {
+  function applyEditorSnapshot(snapshot: EditorSnapshot, transient = false) {
     trackStateRef.current = snapshot.track;
-    setTrack(snapshot.track);
     applySelection(snapshot.selectedIds, snapshot.selectedId ?? snapshot.selectedIds.at(-1) ?? null);
+    const updateState = () => setTrack(snapshot.track);
+    if (transient) startTransition(updateState);
+    else updateState();
   }
 
   function applyEditorChange(
@@ -985,6 +1117,15 @@ export function App() {
     applyEditorSnapshot({ track: nextTrack, selectedId: nextSelectedId, selectedIds: nextSelectedIds });
   }
 
+  function applyTransientEditorChange(
+    nextTrack: TrackDocument | null,
+    nextSelectedId: string | null = selectedIdStateRef.current,
+    nextSelectedIds: string[] = selectedIdsStateRef.current,
+  ) {
+    transientViewportEditRef.current = true;
+    applyEditorSnapshot({ track: nextTrack, selectedId: nextSelectedId, selectedIds: nextSelectedIds }, true);
+  }
+
   function beginEditSession() {
     if (editSessionRef.current) return;
     editSessionRef.current = captureSnapshot();
@@ -993,9 +1134,22 @@ export function App() {
   function endEditSession() {
     const before = editSessionRef.current;
     if (!before) return;
+    const hadTransientViewportEdit = transientViewportEditRef.current;
+    let after = captureSnapshot();
     editSessionRef.current = null;
-    const after = captureSnapshot();
-    if (after.track !== before.track || after.selectedId !== before.selectedId) pushUndoSnapshot(before);
+    if (hadTransientViewportEdit) {
+      transientViewportEditRef.current = false;
+      after = {
+        ...after,
+        track: materializeViewportInteractionTrack(before.track, after.track),
+      };
+      applyEditorSnapshot(after);
+    }
+    const selectionChanged =
+      after.selectedId !== before.selectedId ||
+      after.selectedIds.length !== before.selectedIds.length ||
+      after.selectedIds.some((value, index) => value !== before.selectedIds[index]);
+    if (after.track !== before.track || selectionChanged) pushUndoSnapshot(before);
   }
 
   function undoEdit() {
@@ -1423,25 +1577,45 @@ export function App() {
   }
 
   function moveEntity(entity: KmpEntity, position: Vec3) {
-    if (!track?.kmp) return;
-    const nextKmp = patchKmpEntityPosition(track.kmp, entity, position);
-    applyEditorChange(replaceCourseKmp(track, nextKmp));
+    const currentTrack = trackStateRef.current;
+    if (!currentTrack?.kmp) return;
+    if (editSessionRef.current) {
+      applyTransientEditorChange(previewMovedEntity(currentTrack, entity.id, position));
+      return;
+    }
+    const nextKmp = patchKmpEntityPosition(currentTrack.kmp, entity, position);
+    applyEditorChange(replaceCourseKmp(currentTrack, nextKmp));
   }
 
   function moveCheckpointEndpoint(entity: KmpEntity, side: 'left' | 'right', position: Vec3) {
-    if (!track?.kmp) return;
-    const nextKmp = patchKmpCheckpointEndpoint(track.kmp, entity, side, position);
-    applyEditorChange(replaceCourseKmp(track, nextKmp));
+    const currentTrack = trackStateRef.current;
+    if (!currentTrack?.kmp) return;
+    if (editSessionRef.current) {
+      applyTransientEditorChange(previewMovedCheckpointEndpoint(currentTrack, entity.id, side, position));
+      return;
+    }
+    const nextKmp = patchKmpCheckpointEndpoint(currentTrack.kmp, entity, side, position);
+    applyEditorChange(replaceCourseKmp(currentTrack, nextKmp));
   }
 
   function rotateEntity(entity: KmpEntity, rotation: Vec3) {
-    if (!track?.kmp || !entity.rotation) return;
-    applyEditorChange(replaceCourseKmp(track, patchKmpEntityRotation(track.kmp, entity, rotation)));
+    const currentTrack = trackStateRef.current;
+    if (!currentTrack?.kmp || !entity.rotation) return;
+    if (editSessionRef.current) {
+      applyTransientEditorChange(previewRotatedEntity(currentTrack, entity.id, rotation));
+      return;
+    }
+    applyEditorChange(replaceCourseKmp(currentTrack, patchKmpEntityRotation(currentTrack.kmp, entity, rotation)));
   }
 
   function scaleEntity(entity: KmpEntity, scale: Vec3) {
-    if (!track?.kmp || !entity.scale) return;
-    applyEditorChange(replaceCourseKmp(track, patchKmpEntityScale(track.kmp, entity, scale)));
+    const currentTrack = trackStateRef.current;
+    if (!currentTrack?.kmp || !entity.scale) return;
+    if (editSessionRef.current) {
+      applyTransientEditorChange(previewScaledEntity(currentTrack, entity.id, scale));
+      return;
+    }
+    applyEditorChange(replaceCourseKmp(currentTrack, patchKmpEntityScale(currentTrack.kmp, entity, scale)));
   }
 
   function patchSelectedEntity(patch: (kmp: KmpDocument, entity: KmpEntity) => Uint8Array) {

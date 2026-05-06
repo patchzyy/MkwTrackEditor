@@ -277,6 +277,12 @@ interface PendingEntityDragState {
   additive: boolean;
 }
 
+type PendingInteractionCommit =
+  | { kind: 'moveEntity'; entity: KmpEntity; position: Vec3 }
+  | { kind: 'rotateEntity'; entity: KmpEntity; rotation: Vec3 }
+  | { kind: 'scaleEntity'; entity: KmpEntity; scale: Vec3 }
+  | { kind: 'moveCheckpointEndpoint'; entity: KmpEntity; side: 'left' | 'right'; position: Vec3 };
+
 interface MarqueeSelectionState {
   additive: boolean;
   startX: number;
@@ -411,6 +417,8 @@ export function Noclip3DViewport({
   const sceneRef = useRef<SceneGfx | null>(null);
   const destroyablePoolRef = useRef<Destroyable[]>([]);
   const frameRef = useRef<number | null>(null);
+  const interactionCommitFrameRef = useRef<number | null>(null);
+  const pendingInteractionCommitRef = useRef<PendingInteractionCommit | null>(null);
   const smokeProbeFrameRef = useRef(0);
   const smokePlacementDoneRef = useRef(false);
   const smokePlacementUsedCollisionRef = useRef(false);
@@ -463,6 +471,10 @@ export function Noclip3DViewport({
   const [marqueeSelection, setMarqueeSelection] = useState<MarqueeSelectionState | null>(null);
   const marqueeSelectionRef = useRef<MarqueeSelectionState | null>(null);
   const suppressNextClickRef = useRef(false);
+  const onMoveEntityRef = useRef(onMoveEntity);
+  const onRotateEntityRef = useRef(onRotateEntity);
+  const onScaleEntityRef = useRef(onScaleEntity);
+  const onMoveCheckpointEndpointRef = useRef(onMoveCheckpointEndpoint);
   const selected = track?.kmp?.entities.find((entity) => entity.id === selectedId) ?? null;
   const sceneKey = track ? getSceneKey(track) : null;
   const gobjSignature = track ? getGobjSignature(track) : 'nogobj';
@@ -476,6 +488,10 @@ export function Noclip3DViewport({
   routeVisibilityRef.current = routeVisibility;
   hoveredIdRef.current = hoveredId;
   hoveredHandleRef.current = hoveredHandle;
+  onMoveEntityRef.current = onMoveEntity;
+  onRotateEntityRef.current = onRotateEntity;
+  onScaleEntityRef.current = onScaleEntity;
+  onMoveCheckpointEndpointRef.current = onMoveCheckpointEndpoint;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -542,6 +558,7 @@ export function Noclip3DViewport({
     return () => {
       cancelled = true;
       setViewportCameraLookActive(false);
+      flushPendingInteractionCommit();
       cleanupResize?.();
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
       const viewer = viewerRef.current;
@@ -700,7 +717,7 @@ export function Noclip3DViewport({
       viewer.gfxDevice,
       new ArrayBufferSlice(track.kmp.original.buffer, track.kmp.original.byteOffset, track.kmp.original.byteLength),
     );
-  }, [gobjSignature, track?.kmp]);
+  }, [gobjSignature]);
 
   useEffect(() => {
     syncSceneOverlay(track, selectedId);
@@ -940,6 +957,38 @@ export function Noclip3DViewport({
     };
   }
 
+  function flushPendingInteractionCommit() {
+    if (interactionCommitFrameRef.current !== null) {
+      cancelAnimationFrame(interactionCommitFrameRef.current);
+      interactionCommitFrameRef.current = null;
+    }
+    const pending = pendingInteractionCommitRef.current;
+    if (!pending) return;
+    pendingInteractionCommitRef.current = null;
+    if (pending.kind === 'moveEntity') {
+      onMoveEntityRef.current(pending.entity, pending.position);
+      return;
+    }
+    if (pending.kind === 'rotateEntity') {
+      onRotateEntityRef.current?.(pending.entity, pending.rotation);
+      return;
+    }
+    if (pending.kind === 'scaleEntity') {
+      onScaleEntityRef.current?.(pending.entity, pending.scale);
+      return;
+    }
+    onMoveCheckpointEndpointRef.current?.(pending.entity, pending.side, pending.position);
+  }
+
+  function scheduleInteractionCommit(pending: PendingInteractionCommit) {
+    pendingInteractionCommitRef.current = pending;
+    if (interactionCommitFrameRef.current !== null) return;
+    interactionCommitFrameRef.current = requestAnimationFrame(() => {
+      interactionCommitFrameRef.current = null;
+      flushPendingInteractionCommit();
+    });
+  }
+
   function startEntityDrag(entity: KmpEntity, clientX: number, clientY: number) {
     onSelect(entity.id);
     onInteractionStart?.();
@@ -964,7 +1013,7 @@ export function Noclip3DViewport({
       if (next) {
         setDragPreview({ id: entity.id, position: next, rotation: entity.rotation, scale: entity.scale });
         syncRenderedGobjTransform(entity, next, entity.rotation, entity.scale);
-        onMoveEntity(entity, next);
+        scheduleInteractionCommit({ kind: 'moveEntity', entity, position: next });
       }
       return;
     }
@@ -973,7 +1022,7 @@ export function Noclip3DViewport({
       const rotation = { ...drag.rotation, y: drag.rotation.y + delta };
       setDragPreview({ id: entity.id, position: entity.position, rotation, scale: entity.scale });
       syncRenderedGobjTransform(entity, entity.position, rotation, entity.scale);
-      onRotateEntity?.(entity, rotation);
+      scheduleInteractionCommit({ kind: 'rotateEntity', entity, rotation });
       return;
     }
     if (tool === 'scale' && drag.scale && entity.scale) {
@@ -981,7 +1030,7 @@ export function Noclip3DViewport({
       const scale = { x: drag.scale.x * factor, y: drag.scale.y * factor, z: drag.scale.z * factor };
       setDragPreview({ id: entity.id, position: entity.position, rotation: entity.rotation, scale });
       syncRenderedGobjTransform(entity, entity.position, entity.rotation, scale);
-      onScaleEntity?.(entity, scale);
+      scheduleInteractionCommit({ kind: 'scaleEntity', entity, scale });
     }
   }
 
@@ -1110,6 +1159,7 @@ export function Noclip3DViewport({
       suppressNextClickRef.current = true;
       onSelect(pendingEntityDrag.id, { additive: pendingEntityDrag.additive });
     }
+    flushPendingInteractionCommit();
     const hadDrag = draggingEntityRef.current !== null;
     draggingEntityRef.current = null;
     setActiveGizmoHandle(null);
@@ -1137,7 +1187,7 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
     const rotation = addAxisDelta(drag.rotation, drag.axis, deltaDegrees);
     setDragPreview({ id: entity.id, position: entity.position, rotation, scale: entity.scale });
     syncRenderedGobjTransform(entity, entity.position, rotation, entity.scale);
-    onRotateEntity?.(entity, rotation);
+    scheduleInteractionCommit({ kind: 'rotateEntity', entity, rotation });
     return;
   }
   if (drag.mode === 'planar') {
@@ -1151,7 +1201,7 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
     if (snapToFeatures) position = snapDraggedPositionToCollision(position);
     setDragPreview({ id: entity.id, position, rotation: entity.rotation, scale: entity.scale });
     syncRenderedGobjTransform(entity, position, entity.rotation, entity.scale);
-    onMoveEntity(entity, position);
+    scheduleInteractionCommit({ kind: 'moveEntity', entity, position });
     return;
   }
   if (drag.mode === 'uniformScale') {
@@ -1167,7 +1217,7 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
     };
     setDragPreview({ id: entity.id, position: entity.position, rotation: entity.rotation, scale });
     syncRenderedGobjTransform(entity, entity.position, entity.rotation, scale);
-    onScaleEntity?.(entity, scale);
+    scheduleInteractionCommit({ kind: 'scaleEntity', entity, scale });
     return;
   }
   if (drag.mode === 'planarScale') {
@@ -1190,7 +1240,7 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
           : { x: drag.scale.x, y: drag.scale.y * factorU, z: drag.scale.z * factorV };
     setDragPreview({ id: entity.id, position: entity.position, rotation: entity.rotation, scale });
     syncRenderedGobjTransform(entity, entity.position, entity.rotation, scale);
-    onScaleEntity?.(entity, scale);
+    scheduleInteractionCommit({ kind: 'scaleEntity', entity, scale });
     return;
   }
   const hit = intersectScreenWithPlane(clientX, clientY, canvas, viewer, drag.planePoint, drag.planeNormal);
@@ -1201,7 +1251,7 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
     if (snapToFeatures) position = snapDraggedPositionToCollision(position);
     setDragPreview({ id: entity.id, position, rotation: entity.rotation, scale: entity.scale });
     syncRenderedGobjTransform(entity, position, entity.rotation, entity.scale);
-    onMoveEntity(entity, position);
+    scheduleInteractionCommit({ kind: 'moveEntity', entity, position });
     return;
   }
   if (toolRef.current === 'scale' && drag.scale) {
@@ -1209,7 +1259,7 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
     const scale = multiplyAxis(drag.scale, drag.axis, factor);
     setDragPreview({ id: entity.id, position: entity.position, rotation: entity.rotation, scale });
     syncRenderedGobjTransform(entity, entity.position, entity.rotation, scale);
-    onScaleEntity?.(entity, scale);
+    scheduleInteractionCommit({ kind: 'scaleEntity', entity, scale });
   }
 }
 
@@ -1226,7 +1276,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     if (!entity?.checkpoint) return;
     const current = entity.checkpoint[drag.side];
     const next = placeFromScreen(clientX, clientY, current.y, snapToFeatures);
-    if (next) onMoveCheckpointEndpoint?.(entity, drag.side, next);
+    if (next) scheduleInteractionCommit({ kind: 'moveCheckpointEndpoint', entity, side: drag.side, position: next });
   }
 
   function handleDrop(event: DragEvent<HTMLElement>) {
@@ -1512,15 +1562,6 @@ function getGobjSignature(track: TrackDocument): string {
         [
           entity.index,
           entity.objectId ?? -1,
-          entity.position.x,
-          entity.position.y,
-          entity.position.z,
-          entity.rotation?.x ?? 0,
-          entity.rotation?.y ?? 0,
-          entity.rotation?.z ?? 0,
-          entity.scale?.x ?? 1,
-          entity.scale?.y ?? 1,
-          entity.scale?.z ?? 1,
           entity.routeIndex ?? -1,
           entity.presenceFlags ?? -1,
           ...(entity.objectSettings ?? []),

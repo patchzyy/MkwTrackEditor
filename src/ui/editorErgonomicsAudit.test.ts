@@ -6,6 +6,10 @@ import path from 'node:path';
 const uiDir = path.dirname(fileURLToPath(import.meta.url));
 const appSource = readFileSync(path.resolve(uiDir, 'App.tsx'), 'utf8');
 const viewportSource = readFileSync(path.resolve(uiDir, 'Noclip3DViewport.tsx'), 'utf8');
+const gobjSignatureBlock = viewportSource.slice(
+  viewportSource.indexOf('function getGobjSignature'),
+  viewportSource.indexOf('function buildSceneOverlayData'),
+);
 const sceneSource = readFileSync(
   path.resolve(uiDir, '../../vendor/noclip.website/src/MarioKartWii/Scenes_MarioKartWii.ts'),
   'utf8',
@@ -26,6 +30,13 @@ describe('editor ergonomics audit', () => {
     expect(appSource).toContain('copySelectedEntity');
     expect(appSource).toContain('duplicateSelectedEntity');
     expect(appSource).toContain('pasteClipboardEntity');
+    expect(appSource).toContain('const transientViewportEditRef = useRef(false);');
+    expect(appSource).toContain('const analysisTrack = transientViewportEditRef.current ? editSessionRef.current?.track ?? track : track;');
+    expect(appSource).toContain('function applyTransientEditorChange(');
+    expect(appSource).toContain('startTransition(updateState);');
+    expect(appSource).toContain('materializeViewportInteractionTrack(before.track, after.track)');
+    expect(appSource).toContain('previewMovedEntity(currentTrack, entity.id, position)');
+    expect(appSource).toContain('previewRotatedEntity(currentTrack, entity.id, rotation)');
     expect(appSource).toContain("const isViewportCameraLookActive = () => document.documentElement.dataset.viewportCameraLook === 'active';");
     expect(appSource).toContain("if (event.key.toLowerCase() === 'w') {");
     expect(appSource).toContain("setTool('translate');");
@@ -55,6 +66,9 @@ describe('editor ergonomics audit', () => {
     expect(viewportSource).toContain('const [hoveredHandle, setHoveredHandle] = useState<GizmoHandleKey | null>(null)');
     expect(viewportSource).toContain('const [previewTransform, setPreviewTransform] = useState<EntityTransformPreview | null>(null)');
     expect(viewportSource).toContain('const routeVisibilityRef = useRef<Record<RouteVisibilityKey, boolean>>({');
+    expect(viewportSource).toContain('const interactionCommitFrameRef = useRef<number | null>(null);');
+    expect(viewportSource).toContain('function scheduleInteractionCommit(pending: PendingInteractionCommit) {');
+    expect(viewportSource).toContain('function flushPendingInteractionCommit() {');
     expect(viewportSource).toContain('const deltaDegrees = -normalizeAngle(angle - drag.startAngle) * (180 / Math.PI);');
     expect(viewportSource).toContain('if (selectedIdRef.current && hasCameraPositionChanged(cameraPosition, overlayCameraPositionRef.current)) {');
     expect(viewportSource).toContain('const baseLength = Math.max(180, Math.min(900, scaleLength || 260));');
@@ -66,8 +80,16 @@ describe('editor ergonomics audit', () => {
     expect(viewportSource).toContain('const position = placeFromScreen(event.clientX, event.clientY, 0, isCollisionSnapModifier(event));');
     expect(viewportSource).toContain('getVisibleEntitiesForRouteFilter(track.kmp.entities, routeVisibilityRef.current, track.kmp, routeUsage)');
     expect(viewportSource).toContain('routeVisibilityRef.current,');
+    expect(viewportSource).toContain("scheduleInteractionCommit({ kind: 'moveEntity', entity, position });");
+    expect(viewportSource).toContain('flushPendingInteractionCommit();');
     expect(viewportSource).toContain('setDragPreview({ id: entity.id, position, rotation: entity.rotation, scale: entity.scale });');
     expect(viewportSource).toContain('rotation: startEntity.rotation');
+    expect(gobjSignatureBlock).toContain('entity.routeIndex ?? -1,');
+    expect(gobjSignatureBlock).not.toContain('entity.position.x,');
+    expect(gobjSignatureBlock).not.toContain('entity.rotation?.x ?? 0,');
+    expect(gobjSignatureBlock).not.toContain('entity.scale?.x ?? 1,');
+    expect(viewportSource).toContain('}, [gobjSignature]);');
+    expect(viewportSource).not.toContain('}, [gobjSignature, track?.kmp]);');
     expect(viewportSource).toContain('setHoveredId');
     expect(viewportSource).toContain('invalid:');
 
