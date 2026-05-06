@@ -242,11 +242,18 @@ input {
   pointer-events: none;
 }
 
-.routeVisibilityHud {
+.viewportTopRightStack {
   position: absolute;
   top: 12px;
   right: 12px;
   z-index: 3;
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+}
+
+.routeVisibilityHud {
+  position: relative;
   pointer-events: auto;
 }
 
@@ -270,6 +277,64 @@ input {
   color: #dbe3ef;
   background: rgba(17, 21, 28, 0.92);
   backdrop-filter: blur(6px);
+}
+
+.viewportOverlayPanel {
+  display: grid;
+  gap: 8px;
+  width: 248px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: #dbe3ef;
+  background: rgba(17, 21, 28, 0.92);
+  backdrop-filter: blur(6px);
+  pointer-events: auto;
+}
+
+.viewportOverlayHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.viewportOverlayHeader strong {
+  font-size: 12px;
+}
+
+.viewportOverlayDetail,
+.viewportOverlayHint {
+  color: #cbd5e1;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.viewportOverlayField {
+  display: grid;
+  gap: 4px;
+  color: #9faaba;
+  font-size: 12px;
+}
+
+.viewportOverlayField input {
+  min-width: 0;
+  height: 28px;
+  border: 1px solid #343d4a;
+  border-radius: 5px;
+  padding: 0 7px;
+  color: #eef3fb;
+  background: #11161d;
+}
+
+.viewportOverlayField input:focus {
+  border-color: #5fd6ff;
+  outline: none;
+}
+
+.viewportOverlayActions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .routeVisibilityPanel strong {
@@ -563,6 +628,18 @@ input {
 .settingInputs {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.postEffectEditor {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.colorField {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
   gap: 6px;
 }
 

@@ -12,7 +12,8 @@
     "smoke:browser:real-tracks": "node scripts/browser-smoke-real-tracks.mjs",
     "build:course-assets": "node scripts/build-course-asset-db.mjs",
     "build:object-names": "node scripts/build-object-name-db.mjs",
-    "build:extracted-assets": "node scripts/build-extracted-asset-pool.mjs"
+    "build:extracted-assets": "node scripts/build-extracted-asset-pool.mjs",
+    "build:preview-dummies": "node scripts/build-preview-dummy-assets.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^6.0.1",

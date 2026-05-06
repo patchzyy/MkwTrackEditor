@@ -54,9 +54,30 @@ import {
 import { raycastDown } from '../lib/kcl';
 import { getObjFlowResourceNames, mergeCommonResourceEntries, parseCommonResourceArchive, type CommonResourceArchive, type ObjFlowEntry } from '../lib/objflow';
 import { parseNoclipBrresSummary, type NoclipBrresSummary } from '../lib/noclipBrres';
-import { describeEntity, exportTrack, loadTrackBytes, loadTrackFile, replaceCourseKmp, validateExportBytes, validateTrack, type TrackDocument } from '../lib/track';
+import {
+  createDefaultBlight,
+  createDefaultBblm,
+  createDefaultBdof,
+  createDefaultBfg,
+  parseBlight,
+  parseBblm,
+  parseBdof,
+  parseBfgFogEntries,
+  writeBlight,
+  writeBblm,
+  writeBdof,
+  writeBfgFogEntries,
+  type PostEffectBlightFile,
+  type PostEffectBloomFile,
+  type PostEffectDofFile,
+  type PostEffectFogEntry,
+  type RgbColor,
+  type RgbaColor,
+} from '../lib/posteffects';
+import { describeEntity, exportTrack, loadTrackBytes, loadTrackFile, replaceArchiveFile, replaceCourseKmp, validateExportBytes, validateTrack, type TrackDocument } from '../lib/track';
 import { parseU8 } from '../lib/u8';
 import { comparePlaceableCourseAssetPriority, dedupePlaceableCourseAssetsForBrowser } from './browserAssetDedupe';
+import { buildFillBetweenPositions, getFillBetweenSelection } from './fillBetween';
 import { Noclip3DViewport, type TransformTool, type ViewMode } from './Noclip3DViewport';
 import objectNamesById from '../generated/mkwObjectNames.json';
 
@@ -253,19 +274,12 @@ interface AreaInspectorOption {
   label: string;
 }
 
-interface AreaFogPreset {
-  index: number;
-  fogType: number;
-  startZ: number;
-  endZ: number;
-  color: [number, number, number];
-  fadeSpeed: number;
-}
+type AreaFogPreset = PostEffectFogEntry;
 
 interface AreaBloomPreset {
   index: number;
   thresholdAmount: number;
-  tintColor: [number, number, number];
+  tintColor: RgbColor;
   blur0Radius: number;
   blur0Intensity: number;
   blur1Radius: number;
@@ -275,6 +289,27 @@ interface AreaBloomPreset {
 interface AreaInspectorResources {
   fogPresets: AreaFogPreset[];
   bloomPresets: AreaBloomPreset[];
+}
+
+interface PostEffectBloomPresetFile {
+  index: number;
+  path: string;
+  data: PostEffectBloomFile;
+}
+
+interface PostEffectDofFileRecord {
+  label: string;
+  path: string;
+  data: PostEffectDofFile;
+}
+
+interface PostEffectResources {
+  fogPath: string | null;
+  fogPresets: AreaFogPreset[];
+  bloomFiles: PostEffectBloomPresetFile[];
+  dofFiles: PostEffectDofFileRecord[];
+  blightPath: string | null;
+  blight: PostEffectBlightFile | null;
 }
 
 interface AreaInspectorConfig {
@@ -288,59 +323,54 @@ interface AreaInspectorConfig {
 }
 
 const emptyAreaInspectorResources: AreaInspectorResources = { fogPresets: [], bloomPresets: [] };
+const emptyPostEffectResources: PostEffectResources = { fogPath: null, fogPresets: [], bloomFiles: [], dofFiles: [], blightPath: null, blight: null };
 
 function getAreaInspectorResources(track: TrackDocument | null): AreaInspectorResources {
-  if (!track) return emptyAreaInspectorResources;
-  const fogEntry = track.archiveEntries.find((entry) => entry.type === 'file' && entry.path.toLowerCase().endsWith('posteffect.bfg'));
-  const fogPresets = fogEntry?.data ? parseAreaFogPresets(fogEntry.data) : [];
-  const bloomPresets = track.archiveEntries
+  const resources = getTrackPostEffectResources(track);
+  return {
+    fogPresets: resources.fogPresets,
+    bloomPresets: resources.bloomFiles.map((preset) => ({
+      index: preset.index,
+      thresholdAmount: preset.data.thresholdAmount,
+      tintColor: preset.data.compositeColor.slice(0, 3) as RgbColor,
+      blur0Radius: preset.data.blur0Radius,
+      blur0Intensity: preset.data.blur0Intensity,
+      blur1Radius: preset.data.blur1Radius,
+      blur1Intensity: preset.data.blur1Intensity,
+    })),
+  };
+}
+
+function getTrackPostEffectResources(track: TrackDocument | null): PostEffectResources {
+  if (!track) return emptyPostEffectResources;
+  const fogEntry = track.archiveEntries.find((entry) => entry.type === 'file' && /posteffect\/posteffect\.bfg$/i.test(entry.path));
+  const fogPresets = fogEntry?.data ? parseBfgFogEntries(fogEntry.data) : [];
+  const bloomFiles = track.archiveEntries
     .filter((entry) => entry.type === 'file' && /posteffect\/posteffect\.bblm\d*$/i.test(entry.path))
     .map((entry) => {
       const match = entry.path.match(/posteffect\.bblm(\d*)$/i);
       const suffix = match?.[1] ?? '';
       const index = suffix === '' ? 0 : Number(suffix);
-      return entry.data && Number.isFinite(index) ? parseAreaBloomPreset(entry.data, index) : null;
+      const parsed = entry.data && Number.isFinite(index) ? parseBblm(entry.data) : null;
+      return parsed ? { index, path: entry.path, data: parsed } : null;
     })
-    .filter((preset): preset is AreaBloomPreset => preset !== null)
+    .filter((preset): preset is PostEffectBloomPresetFile => preset !== null)
     .sort((a, b) => a.index - b.index);
-  return { fogPresets, bloomPresets };
-}
-
-function parseAreaFogPresets(data: Uint8Array): AreaFogPreset[] {
-  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-  const entrySize = 0x1c;
-  const count = Math.min(4, Math.floor(data.byteLength / entrySize));
-  const out: AreaFogPreset[] = [];
-  for (let index = 0; index < count; index++) {
-    const base = index * entrySize;
-    out.push({
-      index,
-      fogType: view.getInt32(base, false),
-      startZ: view.getFloat32(base + 0x04, false),
-      endZ: view.getFloat32(base + 0x08, false),
-      color: [view.getUint8(base + 0x0c), view.getUint8(base + 0x0d), view.getUint8(base + 0x0e)],
-      fadeSpeed: view.getFloat32(base + 0x14, false),
-    });
-  }
-  return out;
-}
-
-function parseAreaBloomPreset(data: Uint8Array, index: number): AreaBloomPreset | null {
-  if (data.byteLength < 0xa4 || readAscii(data, 0, 4) !== 'PBLM') return null;
-  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-  return {
-    index,
-    thresholdAmount: view.getFloat32(0x10, false),
-    tintColor: [view.getUint8(0x18), view.getUint8(0x19), view.getUint8(0x1a)],
-    blur0Radius: view.getFloat32(0x20, false),
-    blur0Intensity: view.getFloat32(0x24, false),
-    blur1Radius: view.getFloat32(0x40, false),
-    blur1Intensity: view.getFloat32(0x44, false),
-  };
-}
-
-function readAscii(data: Uint8Array, offset: number, length: number): string {
-  return String.fromCharCode(...data.slice(offset, offset + length));
+  const dofFiles = track.archiveEntries
+    .filter((entry) => entry.type === 'file' && /posteffect\/posteffect\.bdof(_demo)?$/i.test(entry.path))
+    .map((entry) => {
+      const parsed = entry.data ? parseBdof(entry.data) : null;
+      if (!parsed) return null;
+      return {
+        label: /_demo$/i.test(entry.path) ? 'Intro DOF' : 'Main DOF',
+        path: entry.path,
+        data: parsed,
+      };
+    })
+    .filter((entry): entry is PostEffectDofFileRecord => entry !== null)
+    .sort((a, b) => a.path.localeCompare(b.path));
+  const blightEntry = track.archiveEntries.find((entry) => entry.type === 'file' && /posteffect\/posteffect\.blight$/i.test(entry.path));
+  return { fogPath: fogEntry?.path ?? null, fogPresets, bloomFiles, dofFiles, blightPath: blightEntry?.path ?? null, blight: blightEntry?.data ? parseBlight(blightEntry.data) : null };
 }
 
 function getFogTypeLabel(fogType: number): string {
@@ -362,6 +392,29 @@ function getFogTypeLabel(fogType: number): string {
 
 function formatCompactFloat(value: number): string {
   return Number.isFinite(value) ? Number(value.toFixed(Math.abs(value) >= 10 ? 1 : 2)).toString() : '0';
+}
+
+function findArchiveData(track: TrackDocument, path: string): Uint8Array | null {
+  const entry = track.archiveEntries.find((candidate) => candidate.type === 'file' && candidate.path.toLowerCase() === path.toLowerCase());
+  return entry?.data ?? null;
+}
+
+function rgbToHex(color: RgbColor): string {
+  return `#${color.map((channel) => clampByte(channel).toString(16).padStart(2, '0')).join('')}`;
+}
+
+function hexToRgb(value: string): RgbColor {
+  const normalized = value.replace('#', '').trim();
+  if (normalized.length !== 6) return [255, 255, 255];
+  return [
+    Number.parseInt(normalized.slice(0, 2), 16),
+    Number.parseInt(normalized.slice(2, 4), 16),
+    Number.parseInt(normalized.slice(4, 6), 16),
+  ].map((channel) => (Number.isFinite(channel) ? channel : 255)) as RgbColor;
+}
+
+function clampByte(value: number): number {
+  return Math.max(0, Math.min(0xff, Math.round(value)));
 }
 
 function getAreaInspectorConfig(type: number, resources: AreaInspectorResources): AreaInspectorConfig {
@@ -622,6 +675,8 @@ export function App() {
   const [smokeUndoRedoWorked, setSmokeUndoRedoWorked] = useState<'pending' | 'yes' | 'no'>('pending');
   const [batchOffset, setBatchOffset] = useState<Vec3>({ x: 0, y: 0, z: 0 });
   const [batchObjectId, setBatchObjectId] = useState<number | null>(null);
+  const [fillBetweenCount, setFillBetweenCount] = useState(3);
+  const [fillBetweenPanelOpen, setFillBetweenPanelOpen] = useState(false);
   const appShellRef = useRef<HTMLElement | null>(null);
   const topBarRef = useRef<HTMLElement | null>(null);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
@@ -646,10 +701,22 @@ export function App() {
     () => selectedEntities.length > 1 && selectedEntities.every((entity) => entity.section === 'GOBJ' && entity.objectId !== undefined),
     [selectedEntities],
   );
+  const fillBetweenSelection = useMemo(() => getFillBetweenSelection(selectedEntities), [selectedEntities]);
+  const fillBetweenPreviewPositions = useMemo(
+    () => (fillBetweenPanelOpen && fillBetweenSelection
+      ? buildFillBetweenPositions(
+          fillBetweenSelection.endpoints[0].position,
+          fillBetweenSelection.endpoints[1].position,
+          fillBetweenCount,
+        )
+      : []),
+    [fillBetweenCount, fillBetweenPanelOpen, fillBetweenSelection],
+  );
   const cameraHeader = useMemo(() => (track?.kmp ? getKmpCameraHeader(track.kmp) : null), [track]);
   const referenceCounts = useMemo(() => getReferenceCounts(track?.kmp ?? null), [track?.kmp]);
   const validation = useMemo(() => (track ? validateTrack(track, { common: commonArchive }) : []), [track, commonArchive]);
   const areaInspectorResources = useMemo(() => getAreaInspectorResources(track), [track]);
+  const postEffectResources = useMemo(() => getTrackPostEffectResources(track), [track]);
   const selectedObjectProfile = useMemo(() => (selected?.section === 'GOBJ' ? getObjectInspectorProfile(selected, objFlow) : null), [objFlow, selected]);
   const validationCounts = useMemo(() => {
     const errorCount = validation.filter((item) => item.level === 'error').length;
@@ -829,6 +896,10 @@ export function App() {
       setBatchObjectId(null);
     }
   }, [canBatchReplaceObjects, selectedEntities]);
+
+  useEffect(() => {
+    if (!fillBetweenSelection) setFillBetweenPanelOpen(false);
+  }, [fillBetweenSelection]);
 
   function beginBrowserResize(event: React.PointerEvent<HTMLElement>) {
     browserResizeRef.current = {
@@ -1177,7 +1248,7 @@ export function App() {
         commonLoadStatus,
         rendererStatus,
         loaded: track !== null,
-        rendered: rendererStatus.includes('rendered with noclip Mario Kart Wii renderer'),
+        rendered: rendererStatus.includes('sigma'),
         hasCommonArchiveLoaded: commonArchive !== null,
         commonObjectCount: commonArchive?.objFlow.entries.length ?? 0,
         commonSummaryCount: Object.keys(commonBrresSummaries).length,
@@ -1264,6 +1335,7 @@ export function App() {
   }, [smokeMode, selected, track]);
 
   useEffect(() => {
+    const isViewportCameraLookActive = () => document.documentElement.dataset.viewportCameraLook === 'active';
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
@@ -1295,11 +1367,38 @@ export function App() {
           duplicateSelectedEntity();
           return;
         }
+        if (event.key.toLowerCase() === 'l') {
+          event.preventDefault();
+          if (!fillBetweenSelection) {
+            setStatus('Fill Between needs exactly two matching objects selected.');
+            return;
+          }
+          setFillBetweenPanelOpen(true);
+          setStatus(`Fill Between ready for ${browserObjectTitle({ objectId: fillBetweenSelection.objectId, name: objFlow?.byId.get(fillBetweenSelection.objectId)?.name ?? '', resources: objFlow?.byId.get(fillBetweenSelection.objectId)?.resources ?? '' })}.`);
+          return;
+        }
         if (event.key.toLowerCase() === 's') {
           event.preventDefault();
           downloadExport();
         }
         return;
+      }
+      if (!isViewportCameraLookActive()) {
+        if (event.key.toLowerCase() === 'w') {
+          event.preventDefault();
+          setTool('translate');
+          return;
+        }
+        if (event.key.toLowerCase() === 'e') {
+          event.preventDefault();
+          setTool('rotate');
+          return;
+        }
+        if (event.key.toLowerCase() === 'r') {
+          event.preventDefault();
+          setTool('scale');
+          return;
+        }
       }
       if ((event.key === 'Delete' || event.key === 'Backspace') && selectedIdsStateRef.current.length > 0) {
         event.preventDefault();
@@ -1308,7 +1407,7 @@ export function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selected, track]);
+  }, [fillBetweenSelection, objFlow, selected, track]);
 
   async function openFiles(files: FileList | null) {
     const file = files?.[0];
@@ -1698,6 +1797,116 @@ export function App() {
     }
   }
 
+  function applyFillBetween() {
+    if (!track?.kmp || !fillBetweenSelection) return;
+    const positions = buildFillBetweenPositions(
+      fillBetweenSelection.endpoints[0].position,
+      fillBetweenSelection.endpoints[1].position,
+      fillBetweenCount,
+    );
+    if (positions.length === 0) {
+      setStatus('Fill Between needs at least one object in between.');
+      return;
+    }
+    try {
+      let current = track.kmp;
+      const source = selected?.section === 'GOBJ' && selected.objectId === fillBetweenSelection.objectId ? selected : fillBetweenSelection.endpoints[0];
+      const newSelectedIds: string[] = [];
+      for (const position of positions) {
+        const result = appendCopiedEntity(current, source, position);
+        current = parseKmp(result.bytes);
+        newSelectedIds.push(result.selectedId);
+      }
+      const nextSelectedIds = [...selectedIdsStateRef.current, ...newSelectedIds].filter((id, index, ids) => ids.indexOf(id) === index);
+      const nextPrimaryId = newSelectedIds.at(-1) ?? selectedIdStateRef.current ?? nextSelectedIds.at(-1) ?? null;
+      applyEditorChange(replaceCourseKmp(track, current.original), nextPrimaryId, true, nextSelectedIds);
+      setStatus(`Filled the gap with ${positions.length} ${positions.length === 1 ? 'object' : 'objects'}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function resolveArchivePath(pattern: RegExp, fallback: string): string {
+    const existing = track?.archiveEntries.find((entry) => entry.type === 'file' && pattern.test(entry.path));
+    return existing?.path ?? fallback;
+  }
+
+  function applyPostEffectArchiveFile(pattern: RegExp, fallback: string, data: Uint8Array, statusMessage: string) {
+    if (!track) return;
+    applyEditorChange(replaceArchiveFile(track, resolveArchivePath(pattern, fallback), data), selectedIdStateRef.current, true, selectedIdsStateRef.current);
+    setStatus(statusMessage);
+  }
+
+  function createFogPostEffectFile() {
+    applyPostEffectArchiveFile(/posteffect\/posteffect\.bfg$/i, 'posteffect/posteffect.bfg', createDefaultBfg(), 'Created posteffect.bfg.');
+  }
+
+  function updateFogPreset(index: number, patch: (entry: AreaFogPreset) => AreaFogPreset) {
+    if (!track || !postEffectResources.fogPath) return;
+    const nextEntries = postEffectResources.fogPresets.map((entry) => (entry.index === index ? patch(entry) : entry));
+    applyPostEffectArchiveFile(
+      /posteffect\/posteffect\.bfg$/i,
+      postEffectResources.fogPath,
+      writeBfgFogEntries(findArchiveData(track, postEffectResources.fogPath) ?? createDefaultBfg(), nextEntries),
+      `Updated fog preset ${index}.`,
+    );
+  }
+
+  function addBloomPostEffectFile() {
+    const nextIndex = (postEffectResources.bloomFiles.at(-1)?.index ?? -1) + 1;
+    const suffix = nextIndex === 0 ? '' : String(nextIndex);
+    applyPostEffectArchiveFile(
+      new RegExp(`posteffect\\/posteffect\\.bblm${suffix}$`, 'i'),
+      `posteffect/posteffect.bblm${suffix}`,
+      createDefaultBblm(),
+      `Created posteffect.bblm${suffix || '0'}.`,
+    );
+  }
+
+  function updateBloomPostEffectFile(path: string, data: PostEffectBloomFile) {
+    if (!track) return;
+    applyPostEffectArchiveFile(
+      /posteffect\/posteffect\.bblm\d*$/i,
+      path,
+      writeBblm(findArchiveData(track, path) ?? createDefaultBblm(), data),
+      `Updated ${path.split('/').pop()}.`,
+    );
+  }
+
+  function createDofPostEffectFile(kind: 'main' | 'demo') {
+    const fallback = kind === 'demo' ? 'posteffect/posteffect.bdof_demo' : 'posteffect/posteffect.bdof';
+    applyPostEffectArchiveFile(
+      kind === 'demo' ? /posteffect\/posteffect\.bdof_demo$/i : /posteffect\/posteffect\.bdof$/i,
+      fallback,
+      createDefaultBdof(),
+      `Created ${fallback.split('/').pop()}.`,
+    );
+  }
+
+  function updateDofPostEffectFile(path: string, data: PostEffectDofFile) {
+    if (!track) return;
+    applyPostEffectArchiveFile(
+      /posteffect\/posteffect\.bdof(_demo)?$/i,
+      path,
+      writeBdof(findArchiveData(track, path) ?? createDefaultBdof(), data),
+      `Updated ${path.split('/').pop()}.`,
+    );
+  }
+
+  function createBlightPostEffectFile() {
+    applyPostEffectArchiveFile(/posteffect\/posteffect\.blight$/i, 'posteffect/posteffect.blight', createDefaultBlight(), 'Created posteffect.blight.');
+  }
+
+  function updateBlightPostEffectFile(data: PostEffectBlightFile) {
+    if (!track) return;
+    applyPostEffectArchiveFile(
+      /posteffect\/posteffect\.blight$/i,
+      postEffectResources.blightPath ?? 'posteffect/posteffect.blight',
+      writeBlight(findArchiveData(track, postEffectResources.blightPath ?? 'posteffect/posteffect.blight') ?? createDefaultBlight(), data),
+      'Updated posteffect.blight.',
+    );
+  }
+
   async function openCommon(files: FileList | null) {
     const file = files?.[0];
     if (!file) return;
@@ -1906,6 +2115,7 @@ export function App() {
           track={track}
           selectedId={selectedId}
           selectedIds={selectedIds}
+          fillBetweenPreviewPositions={fillBetweenPreviewPositions}
           smokeCommonUrl={smokeCommonUrl}
           tool={tool}
           viewMode={viewMode}
@@ -1921,6 +2131,21 @@ export function App() {
           onAddKmpPoint={addKmpPoint}
           onInteractionStart={beginEditSession}
           onInteractionEnd={endEditSession}
+          topRightOverlay={
+            fillBetweenPanelOpen && fillBetweenSelection ? (
+              <FillBetweenPanel
+                objectLabel={browserObjectTitle({
+                  objectId: fillBetweenSelection.objectId,
+                  name: objFlow?.byId.get(fillBetweenSelection.objectId)?.name ?? '',
+                  resources: objFlow?.byId.get(fillBetweenSelection.objectId)?.resources ?? '',
+                })}
+                count={fillBetweenCount}
+                onChangeCount={setFillBetweenCount}
+                onApply={applyFillBetween}
+                onClose={() => setFillBetweenPanelOpen(false)}
+              />
+            ) : null
+          }
         />
         <aside className="inspector">
           {inspectorOpen && <div className="sidebarResizeHandle sidebarResizeHandleLeft" onPointerDown={(event) => beginSidebarResize('inspector', event)} />}
@@ -2004,6 +2229,19 @@ export function App() {
           )}
           {selectedEntities.length > 1 && <p className="muted">{selectedEntities.length} selected. Inspector is showing the primary selection, with batch tools above.</p>}
           {track?.kmp && <KmpOverview kmp={track.kmp} onSelect={(id, options) => selectEntity(id, options?.additive)} />}
+          {track && (
+            <PostEffectsPanel
+              resources={postEffectResources}
+              onCreateFog={createFogPostEffectFile}
+              onChangeFogPreset={updateFogPreset}
+              onAddBloom={addBloomPostEffectFile}
+              onChangeBloomFile={updateBloomPostEffectFile}
+              onCreateDof={createDofPostEffectFile}
+              onChangeDofFile={updateDofPostEffectFile}
+              onCreateBlight={createBlightPostEffectFile}
+              onChangeBlight={updateBlightPostEffectFile}
+            />
+          )}
           <h2>Validation</h2>
           <div className="validationSummary">
             <span className={`validationBadge${validationCounts.errorCount > 0 ? ' error' : ''}`}>{validationCounts.errorCount} errors</span>
@@ -2461,6 +2699,51 @@ function BatchSelectionPanel({
         )}
       </div>
     </>
+  );
+}
+
+function FillBetweenPanel({
+  objectLabel,
+  count,
+  onChangeCount,
+  onApply,
+  onClose,
+}: {
+  objectLabel: string;
+  count: number;
+  onChangeCount: (value: number) => void;
+  onApply: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="viewportOverlayPanel">
+      <div className="viewportOverlayHeader">
+        <strong>Fill Between</strong>
+        <button className="iconButton" type="button" onClick={onClose} aria-label="Close fill between" title="Close fill between">
+          <ChevronUp size={16} />
+        </button>
+      </div>
+      <span className="viewportOverlayDetail">{objectLabel}</span>
+      <label className="viewportOverlayField">
+        In-between Count
+        <input
+          type="number"
+          min="1"
+          max="255"
+          value={count}
+          onChange={(event) => {
+            const next = Number(event.currentTarget.value);
+            if (Number.isFinite(next)) onChangeCount(Math.max(1, Math.min(255, Math.trunc(next))));
+          }}
+        />
+      </label>
+      <div className="viewportOverlayActions">
+        <button className="inlineAction" type="button" onClick={onApply}>
+          Apply
+        </button>
+      </div>
+      <span className="viewportOverlayHint">Select two matching objects, press Ctrl/Cmd+L, then apply the number of new objects you want between them.</span>
+    </div>
   );
 }
 
@@ -6402,6 +6685,710 @@ function NumberOptionSelect({
         </option>
       ))}
     </select>
+  );
+}
+
+const fogTypeOptions = [
+  { value: 0, label: 'None' },
+  { value: 1, label: 'Perspective Linear' },
+  { value: 2, label: 'Perspective Exp' },
+  { value: 3, label: 'Perspective Exp2' },
+  { value: 4, label: 'Perspective InvExp' },
+  { value: 5, label: 'Perspective InvExp2' },
+  { value: 6, label: 'Orthographic Linear' },
+  { value: 7, label: 'Orthographic Exp' },
+  { value: 8, label: 'Orthographic Exp2' },
+  { value: 9, label: 'Orthographic InvExp' },
+  { value: 10, label: 'Orthographic InvExp2' },
+];
+
+const dofDrawModeOptions = [
+  { value: 0, label: 'Off / Unknown' },
+  { value: 1, label: 'Inverse Only' },
+  { value: 2, label: 'Normal + Inverse' },
+];
+
+const dofDrawAmountOptions = [
+  { value: 0, label: 'Wide Blur' },
+  { value: 1, label: 'Tighter Blur' },
+];
+
+const lightTypeOptions = [
+  { value: 0, label: 'Omni' },
+  { value: 1, label: 'Directional' },
+  { value: 2, label: 'Spotlight' },
+];
+
+const lightCoordinateOptions = [
+  { value: 1, label: 'World' },
+  { value: 2, label: 'View' },
+  { value: 3, label: 'Top-Down' },
+  { value: 4, label: 'Bottom-Up' },
+];
+
+const lightSpotFunctionOptions = [
+  { value: 0, label: 'Disabled' },
+  { value: 1, label: 'Flat' },
+  { value: 2, label: 'Cosine' },
+  { value: 3, label: 'Cosine Smooth' },
+  { value: 4, label: 'Sharp' },
+  { value: 5, label: 'Ring Dim' },
+  { value: 6, label: 'Ring' },
+];
+
+const lightDistanceOptions = [
+  { value: 0, label: 'Disabled' },
+  { value: 1, label: 'Gentle' },
+  { value: 2, label: 'Medium' },
+  { value: 3, label: 'Steep' },
+];
+
+function RgbColorField({ value, onChange }: { value: RgbColor; onChange: (value: RgbColor) => void }) {
+  return <input type="color" value={rgbToHex(value)} onChange={(event) => onChange(hexToRgb(event.currentTarget.value))} />;
+}
+
+function RgbaColorField({ value, onChange }: { value: RgbaColor; onChange: (value: RgbaColor) => void }) {
+  return (
+    <div className="colorField">
+      <input
+        type="color"
+        value={rgbToHex([value[0], value[1], value[2]])}
+        onChange={(event) => {
+          const [r, g, b] = hexToRgb(event.currentTarget.value);
+          onChange([r, g, b, value[3]]);
+        }}
+      />
+      <input
+        type="number"
+        min="0"
+        max="255"
+        value={value[3]}
+        onChange={(event) => {
+          const next = Number(event.currentTarget.value);
+          if (Number.isFinite(next)) onChange([value[0], value[1], value[2], clampByte(next)]);
+        }}
+      />
+    </div>
+  );
+}
+
+function PostEffectsPanel({
+  resources,
+  onCreateFog,
+  onChangeFogPreset,
+  onAddBloom,
+  onChangeBloomFile,
+  onCreateDof,
+  onChangeDofFile,
+  onCreateBlight,
+  onChangeBlight,
+}: {
+  resources: PostEffectResources;
+  onCreateFog: () => void;
+  onChangeFogPreset: (index: number, patch: (entry: AreaFogPreset) => AreaFogPreset) => void;
+  onAddBloom: () => void;
+  onChangeBloomFile: (path: string, data: PostEffectBloomFile) => void;
+  onCreateDof: (kind: 'main' | 'demo') => void;
+  onChangeDofFile: (path: string, data: PostEffectDofFile) => void;
+  onCreateBlight: () => void;
+  onChangeBlight: (data: PostEffectBlightFile) => void;
+}) {
+  return (
+    <>
+      <h2>Post Effects</h2>
+      <div className="propertyGrid">
+        <label>
+          Overview
+          <span>Edit fog, bloom, and depth-of-field directly from the loaded track archive. Missing files can be created here and will export with the track.</span>
+        </label>
+        {resources.fogPath ? (
+          resources.fogPresets.map((preset) => (
+            <label key={`fog-${preset.index}`}>
+              Fog Preset {preset.index}
+              <div className="postEffectEditor">
+                <select value={preset.fogType} onChange={(event) => onChangeFogPreset(preset.index, (entry) => ({ ...entry, fogType: Number(event.currentTarget.value) }))}>
+                  {fogTypeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="number"
+                  step="1"
+                  value={Number.isFinite(preset.startZ) ? Number(preset.startZ.toFixed(2)) : 0}
+                  title="Start Z"
+                  aria-label={`Fog preset ${preset.index} start Z`}
+                  onChange={(event) => {
+                    const next = Number(event.currentTarget.value);
+                    if (Number.isFinite(next)) onChangeFogPreset(preset.index, (entry) => ({ ...entry, startZ: next }));
+                  }}
+                />
+                <input
+                  type="number"
+                  step="1"
+                  value={Number.isFinite(preset.endZ) ? Number(preset.endZ.toFixed(2)) : 0}
+                  title="End Z"
+                  aria-label={`Fog preset ${preset.index} end Z`}
+                  onChange={(event) => {
+                    const next = Number(event.currentTarget.value);
+                    if (Number.isFinite(next)) onChangeFogPreset(preset.index, (entry) => ({ ...entry, endZ: next }));
+                  }}
+                />
+                <RgbColorField value={preset.color} onChange={(color) => onChangeFogPreset(preset.index, (entry) => ({ ...entry, color }))} />
+                <input
+                  type="number"
+                  step="0.01"
+                  value={Number.isFinite(preset.fadeSpeed) ? Number(preset.fadeSpeed.toFixed(3)) : 0}
+                  title="Fade Speed"
+                  aria-label={`Fog preset ${preset.index} fade speed`}
+                  onChange={(event) => {
+                    const next = Number(event.currentTarget.value);
+                    if (Number.isFinite(next)) onChangeFogPreset(preset.index, (entry) => ({ ...entry, fadeSpeed: next }));
+                  }}
+                />
+              </div>
+              <span>Type, near Z, far Z, color, and fade speed. AREA type 2 can swap these presets in-game.</span>
+            </label>
+          ))
+        ) : (
+          <label>
+            Fog
+            <button className="inlineAction" type="button" onClick={onCreateFog}>
+              Create Fog File
+            </button>
+          </label>
+        )}
+        <label>
+          Bloom Files
+          <div className="actionStack">
+            <button className="inlineAction" type="button" onClick={onAddBloom}>
+              Add Bloom Preset
+            </button>
+            <span>AREA type 6 can swap between `posteffect.bblm`, `posteffect.bblm1`, and later files.</span>
+          </div>
+        </label>
+        {resources.bloomFiles.map((file) => (
+          <label key={file.path}>
+            Bloom Preset {file.index}
+            <div className="postEffectEditor">
+              <input
+                type="number"
+                step="0.01"
+                value={Number.isFinite(file.data.thresholdAmount) ? Number(file.data.thresholdAmount.toFixed(3)) : 0}
+                title="Threshold Amount"
+                aria-label={`${file.path} threshold amount`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeBloomFile(file.path, { ...file.data, thresholdAmount: next });
+                }}
+              />
+              <RgbaColorField value={file.data.thresholdColor} onChange={(thresholdColor) => onChangeBloomFile(file.path, { ...file.data, thresholdColor })} />
+              <RgbaColorField value={file.data.compositeColor} onChange={(compositeColor) => onChangeBloomFile(file.path, { ...file.data, compositeColor })} />
+              <input
+                type="number"
+                min="0"
+                max="65535"
+                value={file.data.blurFlags}
+                title="Blur Flags"
+                aria-label={`${file.path} blur flags`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeBloomFile(file.path, { ...file.data, blurFlags: Math.max(0, Math.min(0xffff, Math.trunc(next))) });
+                }}
+              />
+              <input
+                type="number"
+                step="0.01"
+                value={Number.isFinite(file.data.blur0Radius) ? Number(file.data.blur0Radius.toFixed(3)) : 0}
+                title="Blur 0 Radius"
+                aria-label={`${file.path} blur 0 radius`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeBloomFile(file.path, { ...file.data, blur0Radius: next });
+                }}
+              />
+              <input
+                type="number"
+                step="0.01"
+                value={Number.isFinite(file.data.blur0Intensity) ? Number(file.data.blur0Intensity.toFixed(3)) : 0}
+                title="Blur 0 Intensity"
+                aria-label={`${file.path} blur 0 intensity`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeBloomFile(file.path, { ...file.data, blur0Intensity: next });
+                }}
+              />
+              <input
+                type="number"
+                step="0.01"
+                value={Number.isFinite(file.data.blur1Radius) ? Number(file.data.blur1Radius.toFixed(3)) : 0}
+                title="Blur 1 Radius"
+                aria-label={`${file.path} blur 1 radius`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeBloomFile(file.path, { ...file.data, blur1Radius: next });
+                }}
+              />
+              <input
+                type="number"
+                step="0.01"
+                value={Number.isFinite(file.data.blur1Intensity) ? Number(file.data.blur1Intensity.toFixed(3)) : 0}
+                title="Blur 1 Intensity"
+                aria-label={`${file.path} blur 1 intensity`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeBloomFile(file.path, { ...file.data, blur1Intensity: next });
+                }}
+              />
+              <input
+                type="number"
+                min="0"
+                max="255"
+                value={file.data.compositeBlendMode}
+                title="Blend Mode"
+                aria-label={`${file.path} blend mode`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeBloomFile(file.path, { ...file.data, compositeBlendMode: Math.max(0, Math.min(0xff, Math.trunc(next))) });
+                }}
+              />
+              <input
+                type="number"
+                min="0"
+                max="255"
+                value={file.data.blur1NumPasses}
+                title="Second Blur Passes"
+                aria-label={`${file.path} second blur passes`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeBloomFile(file.path, { ...file.data, blur1NumPasses: Math.max(0, Math.min(0xff, Math.trunc(next))) });
+                }}
+              />
+              <input
+                type="number"
+                step="0.01"
+                value={Number.isFinite(file.data.bokehColorScale0) ? Number(file.data.bokehColorScale0.toFixed(3)) : 0}
+                title="Bokeh Scale 0"
+                aria-label={`${file.path} bokeh scale 0`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeBloomFile(file.path, { ...file.data, bokehColorScale0: next });
+                }}
+              />
+              <input
+                type="number"
+                step="0.01"
+                value={Number.isFinite(file.data.bokehColorScale1) ? Number(file.data.bokehColorScale1.toFixed(3)) : 0}
+                title="Bokeh Scale 1"
+                aria-label={`${file.path} bokeh scale 1`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeBloomFile(file.path, { ...file.data, bokehColorScale1: next });
+                }}
+              />
+            </div>
+            <span>Threshold, colors, blur passes, and glow scales for {file.path.split('/').pop()}.</span>
+          </label>
+        ))}
+        {resources.bloomFiles.length === 0 && (
+          <label>
+            Bloom
+            <span>No bloom files are in this archive yet. Add one above to create a swappable bloom preset.</span>
+          </label>
+        )}
+        <label>
+          Depth Of Field
+          <div className="actionRow">
+            <button className="inlineAction" type="button" onClick={() => onCreateDof('main')}>
+              Create Main DOF
+            </button>
+            <button className="inlineAction" type="button" onClick={() => onCreateDof('demo')}>
+              Create Intro DOF
+            </button>
+          </div>
+        </label>
+        {resources.dofFiles.map((file) => (
+          <label key={file.path}>
+            {file.label}
+            <div className="postEffectEditor">
+              <input
+                type="number"
+                min="0"
+                max="65535"
+                value={file.data.flags}
+                title="Flags"
+                aria-label={`${file.path} flags`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, flags: Math.max(0, Math.min(0xffff, Math.trunc(next))) });
+                }}
+              />
+              <select value={file.data.drawMode} onChange={(event) => onChangeDofFile(file.path, { ...file.data, drawMode: Number(event.currentTarget.value) })}>
+                {dofDrawModeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <select value={file.data.blurDrawAmount} onChange={(event) => onChangeDofFile(file.path, { ...file.data, blurDrawAmount: Number(event.currentTarget.value) })}>
+                {dofDrawAmountOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="number"
+                min="0"
+                max="255"
+                value={file.data.depthCurveType}
+                title="Curve Type"
+                aria-label={`${file.path} curve type`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, depthCurveType: Math.max(0, Math.min(0xff, Math.trunc(next))) });
+                }}
+              />
+              <input
+                type="number"
+                min="0"
+                max="255"
+                value={file.data.blurAlpha[0]}
+                title="Inverse Alpha"
+                aria-label={`${file.path} inverse alpha`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, blurAlpha: [clampByte(next), file.data.blurAlpha[1]] });
+                }}
+              />
+              <input
+                type="number"
+                min="0"
+                max="255"
+                value={file.data.blurAlpha[1]}
+                title="Alpha"
+                aria-label={`${file.path} alpha`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, blurAlpha: [file.data.blurAlpha[0], clampByte(next)] });
+                }}
+              />
+              <input
+                type="number"
+                step="0.01"
+                value={Number.isFinite(file.data.focusCenter) ? Number(file.data.focusCenter.toFixed(3)) : 0}
+                title="Focus Distance"
+                aria-label={`${file.path} focus distance`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, focusCenter: next });
+                }}
+              />
+              <input
+                type="number"
+                step="0.01"
+                value={Number.isFinite(file.data.focusRange) ? Number(file.data.focusRange.toFixed(3)) : 0}
+                title="Focus Range"
+                aria-label={`${file.path} focus range`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, focusRange: next });
+                }}
+              />
+              <input
+                type="number"
+                step="0.01"
+                value={Number.isFinite(file.data.blurRadius) ? Number(file.data.blurRadius.toFixed(3)) : 0}
+                title="Blur Radius"
+                aria-label={`${file.path} blur radius`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, blurRadius: next });
+                }}
+              />
+              <input
+                type="number"
+                step="0.01"
+                value={Number.isFinite(file.data.indTexTransSScroll) ? Number(file.data.indTexTransSScroll.toFixed(3)) : 0}
+                title="Scroll S"
+                aria-label={`${file.path} scroll s`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, indTexTransSScroll: next });
+                }}
+              />
+              <input
+                type="number"
+                step="0.01"
+                value={Number.isFinite(file.data.indTexTransTScroll) ? Number(file.data.indTexTransTScroll.toFixed(3)) : 0}
+                title="Scroll T"
+                aria-label={`${file.path} scroll t`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, indTexTransTScroll: next });
+                }}
+              />
+              <input
+                type="number"
+                step="0.01"
+                value={Number.isFinite(file.data.indTexIndScaleS) ? Number(file.data.indTexIndScaleS.toFixed(3)) : 0}
+                title="Indirect Scale S"
+                aria-label={`${file.path} indirect scale s`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, indTexIndScaleS: next });
+                }}
+              />
+              <input
+                type="number"
+                step="0.01"
+                value={Number.isFinite(file.data.indTexIndScaleT) ? Number(file.data.indTexIndScaleT.toFixed(3)) : 0}
+                title="Indirect Scale T"
+                aria-label={`${file.path} indirect scale t`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, indTexIndScaleT: next });
+                }}
+              />
+              <input
+                type="number"
+                step="0.01"
+                value={Number.isFinite(file.data.indTexScaleS) ? Number(file.data.indTexScaleS.toFixed(3)) : 0}
+                title="Texture Scale S"
+                aria-label={`${file.path} texture scale s`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, indTexScaleS: next });
+                }}
+              />
+              <input
+                type="number"
+                step="0.01"
+                value={Number.isFinite(file.data.indTexScaleT) ? Number(file.data.indTexScaleT.toFixed(3)) : 0}
+                title="Texture Scale T"
+                aria-label={`${file.path} texture scale t`}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, indTexScaleT: next });
+                }}
+              />
+            </div>
+            <span>Focus plane, blur strength, and warp-scroll controls for {file.path.split('/').pop()}.</span>
+          </label>
+        ))}
+        {resources.dofFiles.length === 0 && (
+          <label>
+            DOF
+            <span>No depth-of-field files are in this archive yet. Create the main or intro file above when you need one.</span>
+          </label>
+        )}
+        {resources.blight ? (
+          <>
+            <label>
+              Lighting Base
+              <div className="postEffectEditor">
+                <RgbaColorField
+                  value={resources.blight.ambientBlackColor}
+                  onChange={(ambientBlackColor) => onChangeBlight({ ...resources.blight!, ambientBlackColor })}
+                />
+              </div>
+              <span>Global ambient-black color from `posteffect.blight`.</span>
+            </label>
+            {resources.blight.ambientLights.map((ambient, index) => (
+              <label key={`ambient-light-${index}`}>
+                Ambient Light {index}
+                <div className="postEffectEditor">
+                  <RgbaColorField
+                    value={ambient}
+                    onChange={(nextAmbient) => {
+                      const ambientLights = resources.blight!.ambientLights.map((value, ambientIndex) => (ambientIndex === index ? nextAmbient : value));
+                      onChangeBlight({ ...resources.blight!, ambientLights });
+                    }}
+                  />
+                </div>
+                <span>Ambient light color linked by BLIGHT light objects and KCL light IDs.</span>
+              </label>
+            ))}
+            {resources.blight.lightObjects.slice(0, 8).map((light, index) => (
+              <label key={`light-object-${index}`}>
+                Light Object {index}
+                <div className="postEffectEditor">
+                  <select
+                    value={light.lightType}
+                    onChange={(event) => {
+                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, lightType: Number(event.currentTarget.value) } : entry));
+                      onChangeBlight({ ...resources.blight!, lightObjects });
+                    }}
+                  >
+                    {lightTypeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={light.coordinateSystem}
+                    onChange={(event) => {
+                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, coordinateSystem: Number(event.currentTarget.value) } : entry));
+                      onChangeBlight({ ...resources.blight!, lightObjects });
+                    }}
+                  >
+                    {lightCoordinateOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    min="0"
+                    max="65535"
+                    value={light.flags}
+                    title="Flags"
+                    aria-label={`BLIGHT light ${index} flags`}
+                    onChange={(event) => {
+                      const next = Number(event.currentTarget.value);
+                      if (!Number.isFinite(next)) return;
+                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, flags: Math.max(0, Math.min(0xffff, Math.trunc(next))) } : entry));
+                      onChangeBlight({ ...resources.blight!, lightObjects });
+                    }}
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    max="15"
+                    value={light.ambientLightIndex}
+                    title="Ambient Link"
+                    aria-label={`BLIGHT light ${index} ambient link`}
+                    onChange={(event) => {
+                      const next = Number(event.currentTarget.value);
+                      if (!Number.isFinite(next)) return;
+                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, ambientLightIndex: Math.max(0, Math.min(15, Math.trunc(next))) } : entry));
+                      onChangeBlight({ ...resources.blight!, lightObjects });
+                    }}
+                  />
+                  <select
+                    value={light.spotFunction}
+                    onChange={(event) => {
+                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, spotFunction: Number(event.currentTarget.value) } : entry));
+                      onChangeBlight({ ...resources.blight!, lightObjects });
+                    }}
+                  >
+                    {lightSpotFunctionOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={light.distAttnFunction}
+                    onChange={(event) => {
+                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, distAttnFunction: Number(event.currentTarget.value) } : entry));
+                      onChangeBlight({ ...resources.blight!, lightObjects });
+                    }}
+                  >
+                    {lightDistanceOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={Number.isFinite(light.intensity) ? Number(light.intensity.toFixed(3)) : 0}
+                    title="Intensity"
+                    aria-label={`BLIGHT light ${index} intensity`}
+                    onChange={(event) => {
+                      const next = Number(event.currentTarget.value);
+                      if (!Number.isFinite(next)) return;
+                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, intensity: next } : entry));
+                      onChangeBlight({ ...resources.blight!, lightObjects });
+                    }}
+                  />
+                  <RgbaColorField
+                    value={light.color}
+                    onChange={(color) => {
+                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, color } : entry));
+                      onChangeBlight({ ...resources.blight!, lightObjects });
+                    }}
+                  />
+                  <RgbaColorField
+                    value={light.specColor}
+                    onChange={(specColor) => {
+                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, specColor } : entry));
+                      onChangeBlight({ ...resources.blight!, lightObjects });
+                    }}
+                  />
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={Number.isFinite(light.spotCutoff) ? Number(light.spotCutoff.toFixed(3)) : 0}
+                    title="Cutoff"
+                    aria-label={`BLIGHT light ${index} cutoff`}
+                    onChange={(event) => {
+                      const next = Number(event.currentTarget.value);
+                      if (!Number.isFinite(next)) return;
+                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, spotCutoff: next } : entry));
+                      onChangeBlight({ ...resources.blight!, lightObjects });
+                    }}
+                  />
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={Number.isFinite(light.refDist) ? Number(light.refDist.toFixed(3)) : 0}
+                    title="Reference Distance"
+                    aria-label={`BLIGHT light ${index} reference distance`}
+                    onChange={(event) => {
+                      const next = Number(event.currentTarget.value);
+                      if (!Number.isFinite(next)) return;
+                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, refDist: next } : entry));
+                      onChangeBlight({ ...resources.blight!, lightObjects });
+                    }}
+                  />
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={Number.isFinite(light.refBrightness) ? Number(light.refBrightness.toFixed(3)) : 0}
+                    title="Reference Brightness"
+                    aria-label={`BLIGHT light ${index} reference brightness`}
+                    onChange={(event) => {
+                      const next = Number(event.currentTarget.value);
+                      if (!Number.isFinite(next)) return;
+                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, refBrightness: next } : entry));
+                      onChangeBlight({ ...resources.blight!, lightObjects });
+                    }}
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    max="15"
+                    value={light.linkedLightIndex}
+                    title="Vector Shift Link"
+                    aria-label={`BLIGHT light ${index} vector shift link`}
+                    onChange={(event) => {
+                      const next = Number(event.currentTarget.value);
+                      if (!Number.isFinite(next)) return;
+                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, linkedLightIndex: Math.max(0, Math.min(15, Math.trunc(next))) } : entry));
+                      onChangeBlight({ ...resources.blight!, lightObjects });
+                    }}
+                  />
+                </div>
+                <span>Core lighting setup for KCL light IDs 0 through 7: type, ambient link, color, intensity, and attenuation.</span>
+              </label>
+            ))}
+          </>
+        ) : (
+          <label>
+            Lighting
+            <button className="inlineAction" type="button" onClick={onCreateBlight}>
+              Create Lighting File
+            </button>
+          </label>
+        )}
+      </div>
+    </>
   );
 }
 

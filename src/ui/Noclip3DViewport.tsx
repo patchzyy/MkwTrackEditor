@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent } from 'react';
+import { useEffect, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { Eye, EyeOff, Move3D, RotateCcw, Scale3D } from 'lucide-react';
 import { mat4, vec3, vec4 } from 'gl-matrix';
 import ArrayBufferSlice from '../../vendor/noclip.website/src/ArrayBufferSlice';
@@ -19,10 +19,12 @@ interface Noclip3DViewportProps {
   track: TrackDocument | null;
   selectedId: string | null;
   selectedIds: string[];
+  fillBetweenPreviewPositions?: Vec3[];
   smokeCommonUrl?: string | null;
   tool: TransformTool;
   viewMode: ViewMode;
   collisionVisible: boolean;
+  topRightOverlay?: ReactNode;
   getEntityLabel?: (entity: KmpEntity) => string;
   onSelect: (id: string | null, options?: { additive?: boolean }) => void;
   onSelectMany?: (ids: string[], options?: { additive?: boolean }) => void;
@@ -65,6 +67,8 @@ interface SceneOverlayAxis {
   axis: GizmoAxis;
   a: Vec3;
   b: Vec3;
+  hovered: boolean;
+  active: boolean;
 }
 
 interface SceneOverlayPlane {
@@ -74,6 +78,15 @@ interface SceneOverlayPlane {
   b: Vec3;
   c: Vec3;
   d: Vec3;
+  hovered: boolean;
+  active: boolean;
+}
+
+interface SceneOverlayCenterHandle {
+  ownerId: string;
+  position: Vec3;
+  hovered: boolean;
+  active: boolean;
 }
 
 interface SceneOverlayCheckpointEndpoint {
@@ -113,14 +126,21 @@ interface SceneOverlayStartSlot {
   ownerId: string;
   slotIndex: number;
   position: Vec3;
+  rotation: Vec3;
   selected: boolean;
   hovered: boolean;
+}
+
+interface SceneOverlayFillBetweenPreview {
+  position: Vec3;
+  index: number;
 }
 
 interface SceneOverlayData {
   tool: TransformTool;
   points: SceneOverlayPoint[];
   lines: SceneOverlayLine[];
+  centerHandle: SceneOverlayCenterHandle | null;
   axes: SceneOverlayAxis[];
   planes: SceneOverlayPlane[];
   checkpointEndpoints: SceneOverlayCheckpointEndpoint[];
@@ -128,6 +148,7 @@ interface SceneOverlayData {
   checkpointWalls: SceneOverlayCheckpointWall[];
   areaVolumes: SceneOverlayAreaVolume[];
   startSlots: SceneOverlayStartSlot[];
+  fillBetweenPreview: SceneOverlayFillBetweenPreview[];
 }
 
 type SceneOverlayPick =
@@ -136,6 +157,18 @@ type SceneOverlayPick =
   | { kind: 'plane'; id: string; plane: GizmoPlane }
   | { kind: 'axis'; id: string; axis: GizmoAxis }
   | { kind: 'checkpointEndpoint'; id: string; side: 'left' | 'right' };
+
+type GizmoHandleKey =
+  | { kind: 'center'; id: string }
+  | { kind: 'plane'; id: string; plane: GizmoPlane }
+  | { kind: 'axis'; id: string; axis: GizmoAxis };
+
+interface EntityTransformPreview {
+  id: string;
+  position: Vec3;
+  rotation?: Vec3;
+  scale?: Vec3;
+}
 
 interface CameraFrame {
   eye: vec3;
@@ -236,6 +269,14 @@ interface CameraLookDragState {
   pointerId: number;
 }
 
+interface PendingEntityDragState {
+  id: string;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  additive: boolean;
+}
+
 interface MarqueeSelectionState {
   additive: boolean;
   startX: number;
@@ -253,6 +294,8 @@ type RouteVisibilityKey = 'ENPT' | 'ITPT' | 'CKPT' | 'POTI_OBJECT' | 'POTI_CAMER
 type DofMode = 'full' | 'reduced' | 'off';
 
 const MKW_RENDER_SCALE = 0.1;
+const ENTITY_DRAG_START_THRESHOLD_PX = 4;
+const CAMERA_MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyQ', 'KeyE', 'PageUp', 'PageDown', 'Space', 'KeyC', 'ControlLeft', 'ControlRight'] as const;
 const startSlotPixelCenterX = 59;
 const startSlotWidePixelWidth = 50;
 const startSlotWidePixelDepth = 256;
@@ -271,6 +314,10 @@ const startSlotPixelOffsets = [
   { x: 67.5, y: 251.5 },
   { x: 99.5, y: 270.5 },
 ] as const;
+
+function isAdditiveSelectionModifier(event: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }): boolean {
+  return event.shiftKey || event.ctrlKey || event.metaKey;
+}
 
 function getTrackViewBounds(track: TrackDocument): TrackViewBounds | null {
   const min = vec3.fromValues(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
@@ -326,10 +373,12 @@ export function Noclip3DViewport({
   track,
   selectedId,
   selectedIds,
+  fillBetweenPreviewPositions = [],
   smokeCommonUrl = null,
   tool,
   viewMode,
   collisionVisible,
+  topRightOverlay,
   getEntityLabel = describeEntity,
   onSelect,
   onSelectMany,
@@ -370,7 +419,11 @@ export function Noclip3DViewport({
   const toolRef = useRef<TransformTool>(tool);
   const viewModeRef = useRef<ViewMode>(viewMode);
   const hoveredIdRef = useRef<string | null>(null);
+  const hoveredHandleRef = useRef<GizmoHandleKey | null>(null);
+  const activeHandleRef = useRef<GizmoHandleKey | null>(null);
+  const overlayCameraPositionRef = useRef<Vec3 | null>(null);
   const draggingEntityRef = useRef<ActiveDragState | null>(null);
+  const pendingEntityDragRef = useRef<PendingEntityDragState | null>(null);
   const cameraLookDragRef = useRef<CameraLookDragState | null>(null);
   const [status, setStatus] = useState('Drop a Mario Kart Wii .szs track anywhere in the editor');
   const [viewerReady, setViewerReady] = useState(false);
@@ -379,6 +432,8 @@ export function Noclip3DViewport({
   const [smokeSelectedGobjSnapped, setSmokeSelectedGobjSnapped] = useState<'pending' | 'yes' | 'no'>('pending');
   const [smokeMouseLookWorked, setSmokeMouseLookWorked] = useState<'pending' | 'yes' | 'no'>('pending');
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [hoveredHandle, setHoveredHandle] = useState<GizmoHandleKey | null>(null);
+  const [previewTransform, setPreviewTransform] = useState<EntityTransformPreview | null>(null);
   const [routePanelOpen, setRoutePanelOpen] = useState(false);
   const [dofMode, setDofMode] = useState<DofMode>('full');
   const [routeVisibility, setRouteVisibility] = useState<Record<RouteVisibilityKey, boolean>>({
@@ -405,6 +460,7 @@ export function Noclip3DViewport({
   toolRef.current = tool;
   viewModeRef.current = viewMode;
   hoveredIdRef.current = hoveredId;
+  hoveredHandleRef.current = hoveredHandle;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -424,8 +480,18 @@ export function Noclip3DViewport({
       const resizeObserver = new ResizeObserver(() => resizeToDisplay());
       resizeObserver.observe(viewport);
       resizeToDisplay();
+      setViewportCameraLookActive(false);
       const tick = (time: number) => {
+        const restoreSuppressedKeys = withSuppressedCameraMovementKeys(result.viewer!);
         result.viewer!.update({ time, webXRContext: null });
+        restoreSuppressedKeys();
+        const cameraPosition = getViewerCameraPosition(result.viewer);
+        if (selectedIdRef.current && hasCameraPositionChanged(cameraPosition, overlayCameraPositionRef.current)) {
+          overlayCameraPositionRef.current = cameraPosition;
+          syncSceneOverlay(trackRef.current, selectedIdRef.current);
+        } else if (!selectedIdRef.current) {
+          overlayCameraPositionRef.current = cameraPosition;
+        }
         if (smokeMode && smokeViewportSampleRef.current !== 'nonblank' && smokeProbeFrameRef.current++ % 12 === 0) {
           const sample = sampleViewportState(canvas);
           if (sample && sample !== smokeViewportSampleRef.current) {
@@ -460,6 +526,7 @@ export function Noclip3DViewport({
 
     return () => {
       cancelled = true;
+      setViewportCameraLookActive(false);
       cleanupResize?.();
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
       const viewer = viewerRef.current;
@@ -500,6 +567,7 @@ export function Noclip3DViewport({
         lastClientY: event.clientY,
         pointerId: event.pointerId,
       };
+      setViewportCameraLookActive(true);
       if (viewerRef.current) viewerRef.current.inputManager.buttons = event.buttons;
       try {
         canvas.requestPointerLock?.();
@@ -591,7 +659,7 @@ export function Noclip3DViewport({
         viewer.setScene(scene);
         syncSceneOverlay(sceneTrack, selectedIdRef.current);
         applyViewMode(sceneTrack, true);
-        setStatus(`${sceneTrack.fileName} rendered with noclip Mario Kart Wii renderer`);
+        setStatus(`${sceneTrack.fileName} Sigma`);
       } catch (error) {
         setStatus(error instanceof Error ? error.message : String(error));
       }
@@ -621,7 +689,7 @@ export function Noclip3DViewport({
 
   useEffect(() => {
     syncSceneOverlay(track, selectedId);
-  }, [track?.kmp, track?.kcl, selectedId, selectedIds, hoveredId, collisionVisible, tool, routeVisibility, viewMode]);
+  }, [fillBetweenPreviewPositions, previewTransform, track?.kmp, track?.kcl, selectedId, selectedIds, hoveredId, hoveredHandle, collisionVisible, tool, routeVisibility, viewMode]);
 
   useEffect(() => {
     const trackValue = trackRef.current;
@@ -805,6 +873,58 @@ export function Noclip3DViewport({
     return { position: unscaled, source: 'plane' };
   }
 
+  function setViewportCameraLookActive(active: boolean) {
+    if (typeof document === 'undefined') return;
+    document.documentElement.dataset.viewportCameraLook = active ? 'active' : 'inactive';
+  }
+
+  function setHoveredGizmoHandle(next: GizmoHandleKey | null) {
+    if (gizmoHandleEquals(hoveredHandleRef.current, next)) return;
+    hoveredHandleRef.current = next;
+    setHoveredHandle(next);
+  }
+
+  function setActiveGizmoHandle(next: GizmoHandleKey | null) {
+    activeHandleRef.current = next;
+  }
+
+  function setDragPreview(next: EntityTransformPreview | null) {
+    setPreviewTransform((current) => {
+      if (!current && !next) return current;
+      if (current && next && current.id === next.id) {
+        const samePosition =
+          current.position.x === next.position.x &&
+          current.position.y === next.position.y &&
+          current.position.z === next.position.z;
+        const sameRotation =
+          current.rotation?.x === next.rotation?.x &&
+          current.rotation?.y === next.rotation?.y &&
+          current.rotation?.z === next.rotation?.z;
+        const sameScale =
+          current.scale?.x === next.scale?.x &&
+          current.scale?.y === next.scale?.y &&
+          current.scale?.z === next.scale?.z;
+        if (samePosition && sameRotation && sameScale) return current;
+      }
+      return next;
+    });
+  }
+
+  function withSuppressedCameraMovementKeys(viewer: Viewer) {
+    if (cameraLookDragRef.current) return () => {};
+    const suppressed = new Map<string, boolean>();
+    for (const key of CAMERA_MOVE_KEYS) {
+      const value = viewer.inputManager.keysDown.get(key);
+      if (value !== undefined) {
+        suppressed.set(key, value);
+        viewer.inputManager.keysDown.delete(key);
+      }
+    }
+    return () => {
+      for (const [key, value] of suppressed) viewer.inputManager.keysDown.set(key, value);
+    };
+  }
+
   function startEntityDrag(entity: KmpEntity, clientX: number, clientY: number) {
     onSelect(entity.id);
     onInteractionStart?.();
@@ -827,6 +947,7 @@ export function Noclip3DViewport({
     if (tool === 'translate') {
       const next = placeFromScreen(clientX, clientY, entity.position.y, snapToFeatures);
       if (next) {
+        setDragPreview({ id: entity.id, position: next, rotation: entity.rotation, scale: entity.scale });
         syncRenderedGobjTransform(entity, next, entity.rotation, entity.scale);
         onMoveEntity(entity, next);
       }
@@ -835,6 +956,7 @@ export function Noclip3DViewport({
     if (tool === 'rotate' && drag.rotation && entity.rotation) {
       const delta = clientX - drag.startX;
       const rotation = { ...drag.rotation, y: drag.rotation.y + delta };
+      setDragPreview({ id: entity.id, position: entity.position, rotation, scale: entity.scale });
       syncRenderedGobjTransform(entity, entity.position, rotation, entity.scale);
       onRotateEntity?.(entity, rotation);
       return;
@@ -842,6 +964,7 @@ export function Noclip3DViewport({
     if (tool === 'scale' && drag.scale && entity.scale) {
       const factor = Math.max(0.05, 1 + (drag.startY - clientY) / 140);
       const scale = { x: drag.scale.x * factor, y: drag.scale.y * factor, z: drag.scale.z * factor };
+      setDragPreview({ id: entity.id, position: entity.position, rotation: entity.rotation, scale });
       syncRenderedGobjTransform(entity, entity.position, entity.rotation, scale);
       onScaleEntity?.(entity, scale);
     }
@@ -850,12 +973,14 @@ export function Noclip3DViewport({
   function handleCanvasPointerDown(event: PointerEvent<HTMLCanvasElement>) {
     if (event.button === 2) return;
     if (event.button !== 0 || draggingEntityRef.current) return;
+    const additiveSelection = isAdditiveSelectionModifier(event);
     const scene = sceneRef.current as SceneGfx & {
       pickEditorHandle?: (normalizedX: number, normalizedY: number) => SceneOverlayPick | null;
     } | null;
     const scenePick = pickSceneHandle(scene, event.clientX, event.clientY, event.currentTarget);
+    const pickedHandle = pickToGizmoHandle(scenePick);
     const entity = pickEntityFromPick(scenePick) ?? pickEntityFromScreenPosition(event.clientX, event.clientY);
-    if (event.shiftKey && !scenePick && !entity) {
+    if (additiveSelection && !scenePick && !entity) {
       event.preventDefault();
       event.stopPropagation();
       const nextMarquee = { additive: true, startX: event.clientX, startY: event.clientY, currentX: event.clientX, currentY: event.clientY };
@@ -864,6 +989,7 @@ export function Noclip3DViewport({
       event.currentTarget.setPointerCapture(event.pointerId);
       return;
     }
+    if (additiveSelection && scenePick && scenePick.kind !== 'point') return;
     if (event.shiftKey) return;
     if (scenePick?.kind === 'center') {
       const drag = entity && viewerRef.current ? createCenterGizmoDragState(entity, toolRef.current, event.clientX, event.clientY, event.currentTarget, viewerRef.current) : null;
@@ -872,6 +998,9 @@ export function Noclip3DViewport({
       event.stopPropagation();
       onSelect(entity.id);
       onInteractionStart?.();
+      setActiveGizmoHandle(pickedHandle);
+      setHoveredGizmoHandle(pickedHandle);
+      setDragPreview({ id: entity.id, position: entity.position, rotation: entity.rotation, scale: entity.scale });
       draggingEntityRef.current = drag;
       event.currentTarget.setPointerCapture(event.pointerId);
       return;
@@ -883,6 +1012,9 @@ export function Noclip3DViewport({
       event.stopPropagation();
       onSelect(entity.id);
       onInteractionStart?.();
+      setActiveGizmoHandle(pickedHandle);
+      setHoveredGizmoHandle(pickedHandle);
+      setDragPreview({ id: entity.id, position: entity.position, rotation: entity.rotation, scale: entity.scale });
       draggingEntityRef.current = drag;
       event.currentTarget.setPointerCapture(event.pointerId);
       return;
@@ -894,6 +1026,9 @@ export function Noclip3DViewport({
       event.stopPropagation();
       onSelect(entity.id);
       onInteractionStart?.();
+      setActiveGizmoHandle(pickedHandle);
+      setHoveredGizmoHandle(pickedHandle);
+      setDragPreview({ id: entity.id, position: entity.position, rotation: entity.rotation, scale: entity.scale });
       draggingEntityRef.current = drag;
       event.currentTarget.setPointerCapture(event.pointerId);
       return;
@@ -911,7 +1046,7 @@ export function Noclip3DViewport({
     if (!entity) return;
     event.preventDefault();
     event.stopPropagation();
-    startEntityDrag(entity, event.clientX, event.clientY);
+    pendingEntityDragRef.current = { id: entity.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, additive: additiveSelection };
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
@@ -921,6 +1056,21 @@ export function Noclip3DViewport({
       const nextMarquee = { ...marqueeSelectionRef.current, currentX: event.clientX, currentY: event.clientY };
       marqueeSelectionRef.current = nextMarquee;
       setMarqueeSelection(nextMarquee);
+      return;
+    }
+    const pendingEntityDrag = pendingEntityDragRef.current;
+    if (pendingEntityDrag && event.pointerId === pendingEntityDrag.pointerId) {
+      const entity = trackRef.current?.kmp?.entities.find((candidate) => candidate.id === pendingEntityDrag.id);
+      if (!entity) {
+        pendingEntityDragRef.current = null;
+        return;
+      }
+      const moved = Math.hypot(event.clientX - pendingEntityDrag.startX, event.clientY - pendingEntityDrag.startY);
+      if (moved >= ENTITY_DRAG_START_THRESHOLD_PX) {
+        pendingEntityDragRef.current = null;
+        startEntityDrag(entity, pendingEntityDrag.startX, pendingEntityDrag.startY);
+        updateActiveDrag(event.clientX, event.clientY, event.shiftKey);
+      }
       return;
     }
     if (draggingEntityRef.current) {
@@ -939,13 +1089,22 @@ export function Noclip3DViewport({
       completeMarqueeSelection(event?.currentTarget ?? canvasRef.current);
       return;
     }
+    const pendingEntityDrag = pendingEntityDragRef.current;
+    if (pendingEntityDrag && (!event || event.pointerId === pendingEntityDrag.pointerId)) {
+      pendingEntityDragRef.current = null;
+      suppressNextClickRef.current = true;
+      onSelect(pendingEntityDrag.id, { additive: pendingEntityDrag.additive });
+    }
     const hadDrag = draggingEntityRef.current !== null;
     draggingEntityRef.current = null;
+    setActiveGizmoHandle(null);
+    setDragPreview(null);
     if (hadDrag) onInteractionEnd?.();
   }
 
   function handleCanvasPointerLeave() {
     if (marqueeSelectionRef.current) return;
+    setHoveredGizmoHandle(null);
     if (hoveredIdRef.current !== null) setHoveredId(null);
   }
 
@@ -959,8 +1118,9 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
     if (!hit) return;
     const angle = ringAngleForHit(hit, drag.center, drag.angleBasisX, drag.angleBasisY);
     if (angle === null) return;
-    const deltaDegrees = normalizeAngle(angle - drag.startAngle) * (180 / Math.PI);
+    const deltaDegrees = -normalizeAngle(angle - drag.startAngle) * (180 / Math.PI);
     const rotation = addAxisDelta(drag.rotation, drag.axis, deltaDegrees);
+    setDragPreview({ id: entity.id, position: entity.position, rotation, scale: entity.scale });
     syncRenderedGobjTransform(entity, entity.position, rotation, entity.scale);
     onRotateEntity?.(entity, rotation);
     return;
@@ -974,6 +1134,7 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
       z: drag.position.z + (hit.z - drag.startHit.z) / MKW_RENDER_SCALE,
     };
     if (snapToFeatures) position = snapDraggedPositionToCollision(position);
+    setDragPreview({ id: entity.id, position, rotation: entity.rotation, scale: entity.scale });
     syncRenderedGobjTransform(entity, position, entity.rotation, entity.scale);
     onMoveEntity(entity, position);
     return;
@@ -989,6 +1150,7 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
       y: drag.scale.y * factor,
       z: drag.scale.z * factor,
     };
+    setDragPreview({ id: entity.id, position: entity.position, rotation: entity.rotation, scale });
     syncRenderedGobjTransform(entity, entity.position, entity.rotation, scale);
     onScaleEntity?.(entity, scale);
     return;
@@ -1011,6 +1173,7 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
         : drag.plane === 'xz'
           ? { x: drag.scale.x * factorU, y: drag.scale.y, z: drag.scale.z * factorV }
           : { x: drag.scale.x, y: drag.scale.y * factorU, z: drag.scale.z * factorV };
+    setDragPreview({ id: entity.id, position: entity.position, rotation: entity.rotation, scale });
     syncRenderedGobjTransform(entity, entity.position, entity.rotation, scale);
     onScaleEntity?.(entity, scale);
     return;
@@ -1021,6 +1184,7 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
   if (toolRef.current === 'translate') {
     let position = addAxisDelta(drag.position, drag.axis, worldDelta);
     if (snapToFeatures) position = snapDraggedPositionToCollision(position);
+    setDragPreview({ id: entity.id, position, rotation: entity.rotation, scale: entity.scale });
     syncRenderedGobjTransform(entity, position, entity.rotation, entity.scale);
     onMoveEntity(entity, position);
     return;
@@ -1028,6 +1192,7 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
   if (toolRef.current === 'scale' && drag.scale) {
     const factor = Math.max(0.05, 1 + worldDelta / 350);
     const scale = multiplyAxis(drag.scale, drag.axis, factor);
+    setDragPreview({ id: entity.id, position: entity.position, rotation: entity.rotation, scale });
     syncRenderedGobjTransform(entity, entity.position, entity.rotation, scale);
     onScaleEntity?.(entity, scale);
   }
@@ -1077,7 +1242,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     } | null;
     const scenePick = pickSceneHandle(scene, event.clientX, event.clientY, canvas);
     const picked = pickEntityFromPick(scenePick) ?? pickEntityFromScreenPosition(event.clientX, event.clientY);
-    onSelect(picked?.id ?? null, { additive: event.shiftKey });
+    onSelect(picked?.id ?? null, { additive: isAdditiveSelectionModifier(event) });
   }
 
   function handleCanvasContextMenu(event: MouseEvent<HTMLCanvasElement>) {
@@ -1090,6 +1255,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     if (canvas?.hasPointerCapture?.(drag.pointerId)) canvas.releasePointerCapture(drag.pointerId);
     viewerRef.current?.inputManager.onGrabReleased();
     cameraLookDragRef.current = null;
+    setViewportCameraLookActive(false);
     if (canvas && document.pointerLockElement === canvas && document.exitPointerLock) document.exitPointerLock();
   }
 
@@ -1143,12 +1309,17 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     const scene = sceneRef.current as SceneGfx & {
       setEditorOverlayData?: (data: SceneOverlayData) => void;
     } | null;
+    overlayCameraPositionRef.current = getViewerCameraPosition(viewerRef.current);
     scene?.setEditorOverlayData?.(
       buildSceneOverlayData(
         nextTrack,
         nextSelectedId,
         selectedIdsRef.current,
+        fillBetweenPreviewPositions,
+        previewTransform,
         hoveredIdRef.current,
+        hoveredHandleRef.current,
+        activeHandleRef.current,
         collisionVisibleRef.current,
         toolRef.current,
         routeVisibility,
@@ -1163,6 +1334,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
       pickEditorHandle?: (normalizedX: number, normalizedY: number) => SceneOverlayPick | null;
     } | null;
     const scenePick = pickSceneHandle(scene, clientX, clientY, canvas);
+    setHoveredGizmoHandle(pickToGizmoHandle(scenePick));
     const hovered = pickEntityFromPick(scenePick) ?? pickEntityFromScreenPosition(clientX, clientY);
     const nextHoveredId = hovered?.id ?? null;
     if (nextHoveredId !== hoveredIdRef.current) setHoveredId(nextHoveredId);
@@ -1222,66 +1394,69 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
       <div className="viewportToolbar">
         <ToolBadge tool={tool} />
       </div>
-      <div className="routeVisibilityHud">
-        <button
-          type="button"
-          className="iconButton routeVisibilityButton"
-          onClick={() => setRoutePanelOpen((value) => !value)}
-          aria-label={routePanelOpen ? 'Hide route visibility' : 'Show route visibility'}
-          title={routePanelOpen ? 'Hide route visibility' : 'Show route visibility'}
-        >
-          {routeItems.some((item) => routeVisibility[item.key] === false) ? <EyeOff size={16} /> : <Eye size={16} />}
-        </button>
-        {routePanelOpen && (
-          <div className="routeVisibilityPanel">
-            <strong>Visibility</strong>
-            {routeItems.length === 0 ? (
-              <span className="routeVisibilityEmpty">No routes in the loaded track.</span>
-            ) : (
-              routeItems.map((item) => (
-                <label key={item.key} className="routeVisibilityRow">
-                  <input
-                    type="checkbox"
-                    checked={routeVisibility[item.key] ?? true}
-                    onChange={() =>
-                      setRouteVisibility((current) => ({
-                        ...current,
-                        [item.key]: !(current[item.key] ?? true),
-                      }))
-                    }
-                  />
-                  <span>{item.label}</span>
-                </label>
-              ))
-            )}
-            <div className="routePanelSection">
-              <strong>Depth Of Field</strong>
-              <div className="routeModeButtons">
-                <button
-                  type="button"
-                  className={dofMode === 'full' ? 'routeModeButton active' : 'routeModeButton'}
-                  onClick={() => setDofMode('full')}
-                >
-                  Full
-                </button>
-                <button
-                  type="button"
-                  className={dofMode === 'reduced' ? 'routeModeButton active' : 'routeModeButton'}
-                  onClick={() => setDofMode('reduced')}
-                >
-                  Reduced
-                </button>
-                <button
-                  type="button"
-                  className={dofMode === 'off' ? 'routeModeButton active' : 'routeModeButton'}
-                  onClick={() => setDofMode('off')}
-                >
-                  Off
-                </button>
+      <div className="viewportTopRightStack">
+        <div className="routeVisibilityHud">
+          <button
+            type="button"
+            className="iconButton routeVisibilityButton"
+            onClick={() => setRoutePanelOpen((value) => !value)}
+            aria-label={routePanelOpen ? 'Hide route visibility' : 'Show route visibility'}
+            title={routePanelOpen ? 'Hide route visibility' : 'Show route visibility'}
+          >
+            {routeItems.some((item) => routeVisibility[item.key] === false) ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
+          {routePanelOpen && (
+            <div className="routeVisibilityPanel">
+              <strong>Visibility</strong>
+              {routeItems.length === 0 ? (
+                <span className="routeVisibilityEmpty">No routes in the loaded track.</span>
+              ) : (
+                routeItems.map((item) => (
+                  <label key={item.key} className="routeVisibilityRow">
+                    <input
+                      type="checkbox"
+                      checked={routeVisibility[item.key] ?? true}
+                      onChange={() =>
+                        setRouteVisibility((current) => ({
+                          ...current,
+                          [item.key]: !(current[item.key] ?? true),
+                        }))
+                      }
+                    />
+                    <span>{item.label}</span>
+                  </label>
+                ))
+              )}
+              <div className="routePanelSection">
+                <strong>Depth Of Field</strong>
+                <div className="routeModeButtons">
+                  <button
+                    type="button"
+                    className={dofMode === 'full' ? 'routeModeButton active' : 'routeModeButton'}
+                    onClick={() => setDofMode('full')}
+                  >
+                    Full
+                  </button>
+                  <button
+                    type="button"
+                    className={dofMode === 'reduced' ? 'routeModeButton active' : 'routeModeButton'}
+                    onClick={() => setDofMode('reduced')}
+                  >
+                    Reduced
+                  </button>
+                  <button
+                    type="button"
+                    className={dofMode === 'off' ? 'routeModeButton active' : 'routeModeButton'}
+                    onClick={() => setDofMode('off')}
+                  >
+                    Off
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
+        {topRightOverlay}
       </div>
       <canvas
         ref={canvasRef}
@@ -1344,14 +1519,18 @@ function buildSceneOverlayData(
   track: TrackDocument | null,
   selectedId: string | null,
   selectedIds: string[],
+  fillBetweenPreviewPositions: Vec3[],
+  previewTransform: EntityTransformPreview | null,
   hoveredId: string | null,
+  hoveredHandle: GizmoHandleKey | null,
+  activeHandle: GizmoHandleKey | null,
   collisionVisible: boolean,
   tool: TransformTool,
   routeVisibility: Record<string, boolean>,
   viewMode: ViewMode,
   cameraPosition: Vec3 | null,
 ): SceneOverlayData {
-  if (!track?.kmp) return { tool, points: [], lines: [], axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [], startSlots: [] };
+  if (!track?.kmp) return { tool, points: [], lines: [], centerHandle: null, axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [], startSlots: [], fillBetweenPreview: [] };
   const showCollision = collisionVisible || viewMode === 'dev';
   const selectedSet = new Set(selectedIds);
   if (selectedId) selectedSet.add(selectedId);
@@ -1359,12 +1538,18 @@ function buildSceneOverlayData(
   const forcedVisibleObjectRoutes = getForcedVisibleObjectRoutes(track.kmp, selectedSet, routeUsage);
   const visibleEntities = getVisibleEntitiesForRouteFilter(track.kmp.entities, routeVisibility, track.kmp, routeUsage, forcedVisibleObjectRoutes);
   const invalidIds = collectInvalidEntityIds(track);
+  const selectedPreview = previewTransform && previewTransform.id === selectedId ? previewTransform : null;
+  const selectedPosition = selectedPreview?.position ?? (selectedId ? track.kmp.entities.find((entity) => entity.id === selectedId)?.position : null);
+
+  const applyPreviewPosition = (entity: KmpEntity): Vec3 => (
+    previewTransform && previewTransform.id === entity.id ? previewTransform.position : entity.position
+  );
 
   const points = visibleEntities
     .map((entity) => ({
       id: entity.id,
       section: String(entity.section),
-      position: entity.position,
+      position: applyPreviewPosition(entity),
       markerText:
         entity.section === 'POTI' &&
         entity.routePoint &&
@@ -1387,14 +1572,14 @@ function buildSceneOverlayData(
         const a = graphPoints[pointIndex];
         const b = graphPoints[pointIndex + 1];
         if (!a || !b) continue;
-        lines.push({ id: `${routeKey}-seq-${pointIndex}`, routeKey, section: graph.pointSection, a: a.position, b: b.position });
+        lines.push({ id: `${routeKey}-seq-${pointIndex}`, routeKey, section: graph.pointSection, a: applyPreviewPosition(a), b: applyPreviewPosition(b) });
       }
       for (const nextGroupIndex of group.nextGroups) {
         const a = graphPoints[group.startIndex + group.pointCount - 1];
         const nextGroup = graph.groups.find((candidate) => candidate.index === nextGroupIndex);
         const b = nextGroup ? graphPoints[nextGroup.startIndex] : null;
         if (!a || !b) continue;
-        lines.push({ id: `${routeKey}-next-${nextGroupIndex}`, routeKey, section: graph.pointSection, a: a.position, b: b.position });
+        lines.push({ id: `${routeKey}-next-${nextGroupIndex}`, routeKey, section: graph.pointSection, a: applyPreviewPosition(a), b: applyPreviewPosition(b) });
       }
     }
   }
@@ -1422,6 +1607,7 @@ function buildSceneOverlayData(
     });
   }
 
+  let centerHandle: SceneOverlayCenterHandle | null = null;
   const axes: SceneOverlayAxis[] = [];
   const planes: SceneOverlayPlane[] = [];
   const checkpointEndpoints: SceneOverlayCheckpointEndpoint[] = [];
@@ -1449,6 +1635,7 @@ function buildSceneOverlayData(
           }))
       : [];
   const startSlots = buildRaceStartSlots(track.kmp, visibleEntities, selectedSet, hoveredId);
+  const fillBetweenPreview = fillBetweenPreviewPositions.map((position, index) => ({ position, index }));
   const areaVolumes: SceneOverlayAreaVolume[] = visibleEntities
     .filter((entity): entity is KmpEntity & { section: 'AREA'; area: NonNullable<KmpEntity['area']>; rotation: Vec3; scale: Vec3 } => (
       entity.section === 'AREA' &&
@@ -1460,47 +1647,80 @@ function buildSceneOverlayData(
     .map((entity) => ({
       id: entity.id,
       shape: entity.area.shape,
-      position: entity.position,
-      rotation: entity.rotation,
-      scale: entity.scale,
+      position: previewTransform && previewTransform.id === entity.id ? previewTransform.position : entity.position,
+      rotation: previewTransform?.id === entity.id && previewTransform.rotation ? previewTransform.rotation : entity.rotation,
+      scale: previewTransform?.id === entity.id && previewTransform.scale ? previewTransform.scale : entity.scale,
       selected: selectedSet.has(entity.id),
       hovered: entity.id === hoveredId && entity.id !== selectedId,
       invalid: invalidIds.has(entity.id),
     }));
   const selectedHiddenByRouteFilter = !!selected && !isEntityVisibleForRouteFilter(selected, routeVisibility, track.kmp, routeUsage, forcedVisibleObjectRoutes);
-  if (selected && !selectedHiddenByRouteFilter) {
+  if (selected && selectedPosition && !selectedHiddenByRouteFilter) {
     const length = getGizmoLength(selected, cameraPosition);
     const planeSize = length * 0.28;
+    centerHandle = {
+      ownerId: selected.id,
+      position: selectedPosition,
+      hovered: gizmoHandleEquals(hoveredHandle, { kind: 'center', id: selected.id }),
+      active: gizmoHandleEquals(activeHandle, { kind: 'center', id: selected.id }),
+    };
     axes.push(
-      { ownerId: selected.id, axis: 'x', a: selected.position, b: { x: selected.position.x + length, y: selected.position.y, z: selected.position.z } },
-      { ownerId: selected.id, axis: 'y', a: selected.position, b: { x: selected.position.x, y: selected.position.y + length, z: selected.position.z } },
-      { ownerId: selected.id, axis: 'z', a: selected.position, b: { x: selected.position.x, y: selected.position.y, z: selected.position.z + length } },
+      {
+        ownerId: selected.id,
+        axis: 'x',
+        a: selectedPosition,
+        b: { x: selectedPosition.x + length, y: selectedPosition.y, z: selectedPosition.z },
+        hovered: gizmoHandleEquals(hoveredHandle, { kind: 'axis', id: selected.id, axis: 'x' }),
+        active: gizmoHandleEquals(activeHandle, { kind: 'axis', id: selected.id, axis: 'x' }),
+      },
+      {
+        ownerId: selected.id,
+        axis: 'y',
+        a: selectedPosition,
+        b: { x: selectedPosition.x, y: selectedPosition.y + length, z: selectedPosition.z },
+        hovered: gizmoHandleEquals(hoveredHandle, { kind: 'axis', id: selected.id, axis: 'y' }),
+        active: gizmoHandleEquals(activeHandle, { kind: 'axis', id: selected.id, axis: 'y' }),
+      },
+      {
+        ownerId: selected.id,
+        axis: 'z',
+        a: selectedPosition,
+        b: { x: selectedPosition.x, y: selectedPosition.y, z: selectedPosition.z + length },
+        hovered: gizmoHandleEquals(hoveredHandle, { kind: 'axis', id: selected.id, axis: 'z' }),
+        active: gizmoHandleEquals(activeHandle, { kind: 'axis', id: selected.id, axis: 'z' }),
+      },
     );
     if (tool === 'translate' || tool === 'scale') {
       planes.push(
         {
           ownerId: selected.id,
           plane: 'xy',
-          a: selected.position,
-          b: { x: selected.position.x + planeSize, y: selected.position.y, z: selected.position.z },
-          c: { x: selected.position.x + planeSize, y: selected.position.y + planeSize, z: selected.position.z },
-          d: { x: selected.position.x, y: selected.position.y + planeSize, z: selected.position.z },
+          a: selectedPosition,
+          b: { x: selectedPosition.x + planeSize, y: selectedPosition.y, z: selectedPosition.z },
+          c: { x: selectedPosition.x + planeSize, y: selectedPosition.y + planeSize, z: selectedPosition.z },
+          d: { x: selectedPosition.x, y: selectedPosition.y + planeSize, z: selectedPosition.z },
+          hovered: gizmoHandleEquals(hoveredHandle, { kind: 'plane', id: selected.id, plane: 'xy' }),
+          active: gizmoHandleEquals(activeHandle, { kind: 'plane', id: selected.id, plane: 'xy' }),
         },
         {
           ownerId: selected.id,
           plane: 'xz',
-          a: selected.position,
-          b: { x: selected.position.x + planeSize, y: selected.position.y, z: selected.position.z },
-          c: { x: selected.position.x + planeSize, y: selected.position.y, z: selected.position.z + planeSize },
-          d: { x: selected.position.x, y: selected.position.y, z: selected.position.z + planeSize },
+          a: selectedPosition,
+          b: { x: selectedPosition.x + planeSize, y: selectedPosition.y, z: selectedPosition.z },
+          c: { x: selectedPosition.x + planeSize, y: selectedPosition.y, z: selectedPosition.z + planeSize },
+          d: { x: selectedPosition.x, y: selectedPosition.y, z: selectedPosition.z + planeSize },
+          hovered: gizmoHandleEquals(hoveredHandle, { kind: 'plane', id: selected.id, plane: 'xz' }),
+          active: gizmoHandleEquals(activeHandle, { kind: 'plane', id: selected.id, plane: 'xz' }),
         },
         {
           ownerId: selected.id,
           plane: 'yz',
-          a: selected.position,
-          b: { x: selected.position.x, y: selected.position.y + planeSize, z: selected.position.z },
-          c: { x: selected.position.x, y: selected.position.y + planeSize, z: selected.position.z + planeSize },
-          d: { x: selected.position.x, y: selected.position.y, z: selected.position.z + planeSize },
+          a: selectedPosition,
+          b: { x: selectedPosition.x, y: selectedPosition.y + planeSize, z: selectedPosition.z },
+          c: { x: selectedPosition.x, y: selectedPosition.y + planeSize, z: selectedPosition.z + planeSize },
+          d: { x: selectedPosition.x, y: selectedPosition.y, z: selectedPosition.z + planeSize },
+          hovered: gizmoHandleEquals(hoveredHandle, { kind: 'plane', id: selected.id, plane: 'yz' }),
+          active: gizmoHandleEquals(activeHandle, { kind: 'plane', id: selected.id, plane: 'yz' }),
         },
       );
     }
@@ -1512,7 +1732,7 @@ function buildSceneOverlayData(
     }
   }
 
-  return { tool, points, lines, axes, planes, checkpointEndpoints, collisionTriangles, checkpointWalls, areaVolumes, startSlots };
+  return { tool, points, lines, centerHandle, axes, planes, checkpointEndpoints, collisionTriangles, checkpointWalls, areaVolumes, startSlots, fillBetweenPreview };
 }
 
 function buildRaceStartSlots(
@@ -1540,6 +1760,7 @@ function buildRaceStartSlots(
       ownerId: startEntity.id,
       slotIndex,
       position: transformLocalOffset(startEntity.position, startEntity.rotation, localX, 0, localZ),
+      rotation: startEntity.rotation,
       selected: selectedSet.has(startEntity.id),
       hovered: hoveredId === startEntity.id && !selectedSet.has(startEntity.id),
     });
@@ -1955,6 +2176,22 @@ function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
+function pickToGizmoHandle(pick: SceneOverlayPick | null): GizmoHandleKey | null {
+  if (!pick || pick.kind === 'point' || pick.kind === 'checkpointEndpoint') return null;
+  if (pick.kind === 'center') return { kind: 'center', id: pick.id };
+  if (pick.kind === 'plane') return { kind: 'plane', id: pick.id, plane: pick.plane };
+  return { kind: 'axis', id: pick.id, axis: pick.axis };
+}
+
+function gizmoHandleEquals(a: GizmoHandleKey | null, b: GizmoHandleKey | null): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.kind !== b.kind || a.id !== b.id) return false;
+  if (a.kind === 'center') return true;
+  if (a.kind === 'plane' && b.kind === 'plane') return a.plane === b.plane;
+  if (a.kind === 'axis' && b.kind === 'axis') return a.axis === b.axis;
+  return false;
+}
+
 function pickRadius(entity: KmpEntity): number {
   if (entity.section === 'GOBJ') return Math.max(260, Math.min(1800, Math.max(entity.scale?.x ?? 1, entity.scale?.y ?? 1, entity.scale?.z ?? 1) * 0.65));
   if (entity.section === 'CKPT') return 520;
@@ -1963,14 +2200,15 @@ function pickRadius(entity: KmpEntity): number {
 }
 
 function getGizmoLength(entity: KmpEntity, cameraPosition: Vec3 | null): number {
-  const scaleLength = entity.scale ? Math.max(entity.scale.x, entity.scale.y, entity.scale.z) * 1.4 : 0;
-  const baseLength = Math.max(250, Math.min(1500, scaleLength || 500));
+  const scaleLength = entity.scale ? Math.max(entity.scale.x, entity.scale.y, entity.scale.z) * 1.1 : 0;
+  const baseLength = Math.max(180, Math.min(900, scaleLength || 260));
   if (!cameraPosition) return baseLength;
   const dx = entity.position.x - cameraPosition.x;
   const dy = entity.position.y - cameraPosition.y;
   const dz = entity.position.z - cameraPosition.z;
-  const distanceLength = Math.hypot(dx, dy, dz) * 0.14;
-  return Math.max(250, Math.min(2600, Math.max(baseLength, distanceLength)));
+  const distance = Math.hypot(dx, dy, dz);
+  const distanceLength = Math.max(170, distance * 0.08);
+  return Math.max(180, Math.min(1800, Math.max(baseLength, distanceLength)));
 }
 
 function getViewerCameraPosition(viewer: Viewer | null): Vec3 | null {
@@ -1981,6 +2219,11 @@ function getViewerCameraPosition(viewer: Viewer | null): Vec3 | null {
     y: world[13] / MKW_RENDER_SCALE,
     z: world[14] / MKW_RENDER_SCALE,
   };
+}
+
+function hasCameraPositionChanged(next: Vec3 | null, previous: Vec3 | null): boolean {
+  if (!next || !previous) return true;
+  return Math.hypot(next.x - previous.x, next.y - previous.y, next.z - previous.z) >= 1;
 }
 
 function addAxisDelta(vector: Vec3, axis: GizmoAxis, delta: number): Vec3 {

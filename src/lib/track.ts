@@ -83,6 +83,19 @@ export function replaceCourseKmp(track: TrackDocument, data: Uint8Array): TrackD
   };
 }
 
+export function replaceArchiveFile(track: TrackDocument, path: string, data: Uint8Array): TrackDocument {
+  const normalizedPath = path.replace(/\\/g, '/');
+  const existing = track.archiveEntries.some((entry) => entry.type === 'file' && entry.path.toLowerCase() === normalizedPath.toLowerCase());
+  return {
+    ...track,
+    archiveEntries: existing
+      ? track.archiveEntries.map((entry) =>
+          entry.type === 'file' && entry.path.toLowerCase() === normalizedPath.toLowerCase() ? { ...entry, path: normalizedPath, data } : entry,
+        )
+      : [...track.archiveEntries, { type: 'file', path: normalizedPath, data }],
+  };
+}
+
 export interface ExportTrackOptions {
   common?: CommonResourceArchive | null;
 }
