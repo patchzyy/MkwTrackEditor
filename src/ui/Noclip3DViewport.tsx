@@ -217,7 +217,7 @@ interface RouteVisibilityItem {
   label: string;
 }
 
-type RouteVisibilityKey = 'ENPT' | 'ITPT' | 'CKPT' | 'POTI_OBJECT' | 'POTI_CAMERA';
+type RouteVisibilityKey = 'ENPT' | 'ITPT' | 'CKPT' | 'POTI_OBJECT' | 'POTI_CAMERA' | 'JGPT' | 'AREA' | 'CAME';
 type DofMode = 'full' | 'reduced' | 'off';
 
 const MKW_RENDER_SCALE = 0.1;
@@ -336,6 +336,9 @@ export function Noclip3DViewport({
     CKPT: true,
     POTI_OBJECT: true,
     POTI_CAMERA: true,
+    JGPT: true,
+    AREA: true,
+    CAME: true,
   });
   const [marqueeSelection, setMarqueeSelection] = useState<MarqueeSelectionState | null>(null);
   const marqueeSelectionRef = useRef<MarqueeSelectionState | null>(null);
@@ -590,10 +593,17 @@ export function Noclip3DViewport({
   useEffect(() => {
     setRouteVisibility((current) => {
       const next: Record<string, boolean> = {};
-      let changed = Object.keys(current).length !== routeItems.length;
+      const currentKeys = Object.keys(current);
+      let changed = currentKeys.length !== routeItems.length;
       for (const item of routeItems) {
         next[item.key] = current[item.key] ?? true;
         if (next[item.key] !== current[item.key]) changed = true;
+      }
+      for (const key of currentKeys) {
+        if (!routeItems.some((item) => item.key === key)) {
+          changed = true;
+          break;
+        }
       }
       return changed ? next : current;
     });
@@ -1051,8 +1061,9 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     const viewer = viewerRef.current;
     const canvas = canvasRef.current;
     if (!track?.kmp || !viewer || !canvas) return null;
+    const routeUsage = getPotiRouteUsage(track.kmp);
     return pickEntityFromScreen(
-      getVisibleEntitiesForRouteFilter(track.kmp.entities, routeVisibility),
+      getVisibleEntitiesForRouteFilter(track.kmp.entities, routeVisibility, track.kmp, routeUsage),
       clientX,
       clientY,
       canvas,
@@ -1170,7 +1181,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
         </button>
         {routePanelOpen && (
           <div className="routeVisibilityPanel">
-            <strong>Routes</strong>
+            <strong>Visibility</strong>
             {routeItems.length === 0 ? (
               <span className="routeVisibilityEmpty">No routes in the loaded track.</span>
             ) : (
@@ -1421,6 +1432,9 @@ function isEntityVisibleForRouteFilter(
   if (entity.section === 'ENPT') return routeVisibility.ENPT !== false;
   if (entity.section === 'ITPT') return routeVisibility.ITPT !== false;
   if (entity.section === 'CKPT') return routeVisibility.CKPT !== false;
+  if (entity.section === 'JGPT') return routeVisibility.JGPT !== false;
+  if (entity.section === 'AREA') return routeVisibility.AREA !== false;
+  if (entity.section === 'CAME') return routeVisibility.CAME !== false;
   if (entity.section === 'POTI' && entity.routePoint) return isPotiRouteVisible(entity.routePoint.routeIndex, routeVisibility, routeUsage ?? getPotiRouteUsage(kmp));
   return true;
 }
@@ -1452,6 +1466,9 @@ function getRouteVisibilityItems(track: TrackDocument): RouteVisibilityItem[] {
   if (track.kmp.pathGraphs.some((graph) => graph.pointSection === 'CKPT')) items.push({ key: 'CKPT', label: 'Checkpoint Routes' });
   if (track.kmp.routes.length > 0 && (routeUsage.objectRoutes.size > 0 || routeUsage.unusedRoutes.size > 0)) items.push({ key: 'POTI_OBJECT', label: 'Object Routes' });
   if (track.kmp.routes.length > 0 && routeUsage.cameraRoutes.size > 0) items.push({ key: 'POTI_CAMERA', label: 'Camera Routes' });
+  if (track.kmp.entities.some((entity) => entity.section === 'JGPT')) items.push({ key: 'JGPT', label: 'Respawn Points' });
+  if (track.kmp.entities.some((entity) => entity.section === 'AREA')) items.push({ key: 'AREA', label: 'Area Triggers' });
+  if (track.kmp.entities.some((entity) => entity.section === 'CAME')) items.push({ key: 'CAME', label: 'Cameras' });
   return items;
 }
 

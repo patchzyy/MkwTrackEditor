@@ -31,8 +31,8 @@ export async function parseNoclipBrresSummary(data: Uint8Array): Promise<NoclipB
       animations: { srt0: [], pat0: [], clr0: [], chr0: [], vis0: [], scn0: [] },
     };
   }
-  const texturePreviewDataUrl = await createTexturePreviewDataUrl(rres.tex0, GXTexture);
   const modelPreviewDataUrl = createModelPreviewDataUrl(rres.mdl0);
+  const texturePreviewDataUrl = await createTexturePreviewDataUrl(rres.tex0, GXTexture);
   return {
     models: rres.mdl0.map((model: any) => ({
       name: model.name,
@@ -46,7 +46,7 @@ export async function parseNoclipBrresSummary(data: Uint8Array): Promise<NoclipB
       height: texture.height,
       format: String(texture.format),
     })),
-    previewDataUrl: texturePreviewDataUrl ?? modelPreviewDataUrl,
+    previewDataUrl: modelPreviewDataUrl ?? texturePreviewDataUrl,
     animations: {
       srt0: rres.srt0.map((animation: any) => animation.name),
       pat0: rres.pat0.map((animation: any) => animation.name),
@@ -64,10 +64,16 @@ interface ProjectedVertex {
   z: number;
 }
 
+interface ModelTriangle {
+  a: { x: number; y: number; z: number };
+  b: { x: number; y: number; z: number };
+  c: { x: number; y: number; z: number };
+}
+
 function createModelPreviewDataUrl(models: any[]): string | undefined {
   if (typeof document === 'undefined') return undefined;
-  const vertices = collectModelVertices(models);
-  if (vertices.length < 3) return undefined;
+  const triangles = collectModelTriangles(models);
+  if (triangles.length === 0) return undefined;
 
   const canvas = document.createElement('canvas');
   canvas.width = 96;
@@ -75,8 +81,16 @@ function createModelPreviewDataUrl(models: any[]): string | undefined {
   const ctx = canvas.getContext('2d');
   if (!ctx) return undefined;
 
-  const projected = projectVertices(vertices);
-  const bounds = projected.reduce(
+  const projectedTriangles = triangles
+    .map((triangle) => ({
+      world: triangle,
+      projected: projectVertices([triangle.a, triangle.b, triangle.c]),
+    }))
+    .filter((triangle) => triangle.projected.length === 3);
+  if (projectedTriangles.length === 0) return undefined;
+
+  const projectedVertices = projectedTriangles.flatMap((triangle) => triangle.projected);
+  const bounds = projectedVertices.reduce(
     (acc, point) => ({
       minX: Math.min(acc.minX, point.x),
       minY: Math.min(acc.minY, point.y),
@@ -97,52 +111,42 @@ function createModelPreviewDataUrl(models: any[]): string | undefined {
   });
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  const gradient = ctx.createLinearGradient(0, 12, 0, 84);
-  gradient.addColorStop(0, '#c6f7f2');
-  gradient.addColorStop(1, '#4f9a90');
-  ctx.fillStyle = gradient;
-  ctx.strokeStyle = 'rgba(6, 13, 18, 0.72)';
-  ctx.lineWidth = 1.4;
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
+  const light = normalize3({ x: -0.45, y: 0.7, z: 0.55 });
+  const drawTriangles = projectedTriangles
+    .map((triangle) => {
+      const [a, b, c] = triangle.projected;
+      const area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+      if (Math.abs(area) < 0.0001) return null;
+      const normal = normalize3(cross3(sub3(triangle.world.b, triangle.world.a), sub3(triangle.world.c, triangle.world.a)));
+      const diffuse = Math.max(0.18, dot3(normal, light));
+      const depth = (a.z + b.z + c.z) / 3;
+      return {
+        points: [toCanvas(a), toCanvas(b), toCanvas(c)],
+        depth,
+        diffuse,
+      };
+    })
+    .filter((triangle): triangle is NonNullable<typeof triangle> => triangle !== null)
+    .sort((a, b) => a.depth - b.depth);
 
-  const triangles = [];
-  for (let i = 0; i + 2 < projected.length; i += 3) {
-    const a = projected[i];
-    const b = projected[i + 1];
-    const c = projected[i + 2];
-    const depth = (a.z + b.z + c.z) / 3;
-    const area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-    if (Math.abs(area) < 0.0001) continue;
-    triangles.push({ points: [toCanvas(a), toCanvas(b), toCanvas(c)], depth });
-  }
-  triangles.sort((a, b) => a.depth - b.depth);
-  const step = Math.max(1, Math.ceil(triangles.length / 260));
-  for (let i = 0; i < triangles.length; i += step) {
-    const triangle = triangles[i];
+  const step = Math.max(1, Math.ceil(drawTriangles.length / 320));
+  for (let i = 0; i < drawTriangles.length; i += step) {
+    const triangle = drawTriangles[i];
+    const fill = 72 + Math.round(triangle.diffuse * 148);
+    ctx.fillStyle = `rgb(${fill}, ${Math.min(255, fill + 22)}, ${Math.min(255, fill + 34)})`;
     ctx.beginPath();
     ctx.moveTo(triangle.points[0].x, triangle.points[0].y);
     ctx.lineTo(triangle.points[1].x, triangle.points[1].y);
     ctx.lineTo(triangle.points[2].x, triangle.points[2].y);
     ctx.closePath();
     ctx.fill();
-    ctx.stroke();
-  }
-
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
-  ctx.lineWidth = 1;
-  for (let i = 0; i < projected.length; i += Math.max(3, step * 3)) {
-    const point = toCanvas(projected[i]);
-    ctx.beginPath();
-    ctx.arc(point.x, point.y, 0.75, 0, Math.PI * 2);
-    ctx.stroke();
   }
 
   return canvas.toDataURL('image/png');
 }
 
-function collectModelVertices(models: any[]): Array<{ x: number; y: number; z: number }> {
-  const vertices: Array<{ x: number; y: number; z: number }> = [];
+function collectModelTriangles(models: any[]): ModelTriangle[] {
+  const triangles: ModelTriangle[] = [];
   for (const model of models) {
     for (const shape of model.shapes ?? []) {
       const layout = shape.loadedVertexLayout;
@@ -159,11 +163,17 @@ function collectModelVertices(models: any[]): Array<{ x: number; y: number; z: n
         const x = view.getFloat32(base, true);
         const y = view.getFloat32(base + 4, true);
         const z = view.getFloat32(base + 8, true);
-        if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) vertices.push({ x, y, z });
+        if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
+          const vertex = { x, y, z };
+          const slot = i % 3;
+          if (slot === 0) triangles.push({ a: vertex, b: vertex, c: vertex });
+          else if (slot === 1) triangles[triangles.length - 1].b = vertex;
+          else triangles[triangles.length - 1].c = vertex;
+        }
       }
     }
   }
-  return vertices;
+  return triangles.filter((triangle) => triangle.a !== triangle.b && triangle.b !== triangle.c);
 }
 
 function projectVertices(vertices: Array<{ x: number; y: number; z: number }>): ProjectedVertex[] {
@@ -210,4 +220,25 @@ async function createTexturePreviewDataUrl(textures: any[], GXTexture: any): Pro
   } catch {
     return undefined;
   }
+}
+
+function sub3(a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) {
+  return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+}
+
+function cross3(a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) {
+  return {
+    x: a.y * b.z - a.z * b.y,
+    y: a.z * b.x - a.x * b.z,
+    z: a.x * b.y - a.y * b.x,
+  };
+}
+
+function dot3(a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+function normalize3(v: { x: number; y: number; z: number }) {
+  const length = Math.hypot(v.x, v.y, v.z) || 1;
+  return { x: v.x / length, y: v.y / length, z: v.z / length };
 }
