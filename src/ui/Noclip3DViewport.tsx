@@ -46,6 +46,7 @@ interface SceneOverlayPoint {
   id: string;
   section: string;
   position: Vec3;
+  markerText?: string;
   selected: boolean;
   hovered: boolean;
   invalid: boolean;
@@ -88,6 +89,26 @@ interface SceneOverlayCollisionTriangle {
   typeIndex: number;
 }
 
+interface SceneOverlayCheckpointWall {
+  id: string;
+  left: Vec3;
+  right: Vec3;
+  topY: number;
+  selected: boolean;
+  invalid: boolean;
+}
+
+interface SceneOverlayAreaVolume {
+  id: string;
+  shape: number;
+  position: Vec3;
+  rotation: Vec3;
+  scale: Vec3;
+  selected: boolean;
+  hovered: boolean;
+  invalid: boolean;
+}
+
 interface SceneOverlayData {
   tool: TransformTool;
   points: SceneOverlayPoint[];
@@ -96,6 +117,8 @@ interface SceneOverlayData {
   planes: SceneOverlayPlane[];
   checkpointEndpoints: SceneOverlayCheckpointEndpoint[];
   collisionTriangles: SceneOverlayCollisionTriangle[];
+  checkpointWalls: SceneOverlayCheckpointWall[];
+  areaVolumes: SceneOverlayAreaVolume[];
 }
 
 type SceneOverlayPick =
@@ -1165,9 +1188,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     <section className="viewport" onDragOver={(event) => event.preventDefault()} onDrop={handleDrop}>
       <div ref={uiContainerRef} className="noclipUiHost" />
       <div className="viewportToolbar">
-        <span className="rendererBadge">noclip Mario Kart Wii renderer</span>
         <ToolBadge tool={tool} />
-        <span>WASD fly · drag with mouse look · hold Shift to snap to collision edges and corners</span>
       </div>
       <div className="routeVisibilityHud">
         <button
@@ -1298,22 +1319,28 @@ function buildSceneOverlayData(
   viewMode: ViewMode,
   cameraPosition: Vec3 | null,
 ): SceneOverlayData {
-  if (!track?.kmp) return { tool, points: [], lines: [], axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [] };
+  if (!track?.kmp) return { tool, points: [], lines: [], axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [] };
   const showCollision = collisionVisible || viewMode === 'dev';
   const selectedSet = new Set(selectedIds);
   const routeUsage = getPotiRouteUsage(track.kmp);
   const visibleEntities = getVisibleEntitiesForRouteFilter(track.kmp.entities, routeVisibility, track.kmp, routeUsage);
+  const invalidIds = collectInvalidEntityIds(track);
 
   const points = visibleEntities
     .map((entity) => ({
       id: entity.id,
       section: String(entity.section),
       position: entity.position,
+      markerText:
+        entity.section === 'POTI' &&
+        entity.routePoint &&
+        getPotiRouteVisibilityKey(entity.routePoint.routeIndex, routeUsage) === 'POTI_OBJECT'
+          ? String(entity.routePoint.routeIndex)
+          : undefined,
       selected: selectedSet.has(entity.id),
       hovered: entity.id === hoveredId && entity.id !== selectedId,
       invalid: false,
     }));
-  const invalidIds = collectInvalidEntityIds(track);
   for (const point of points) point.invalid = invalidIds.has(point.id);
 
   const lines: SceneOverlayLine[] = [];
@@ -1374,6 +1401,37 @@ function buildSceneOverlayData(
         }))
       : [];
   const selected = selectedId ? track.kmp.entities.find((entity) => entity.id === selectedId) ?? null : null;
+  const checkpointWalls =
+    selected?.section === 'CKPT'
+      ? visibleEntities
+          .filter((entity): entity is KmpEntity & { section: 'CKPT'; checkpoint: NonNullable<KmpEntity['checkpoint']> } => entity.section === 'CKPT' && !!entity.checkpoint)
+          .map((entity) => ({
+            id: entity.id,
+            left: entity.checkpoint.left,
+            right: entity.checkpoint.right,
+            topY: getCheckpointWallTopY(track),
+            selected: entity.id === selected.id,
+            invalid: invalidIds.has(entity.id),
+          }))
+      : [];
+  const areaVolumes: SceneOverlayAreaVolume[] = visibleEntities
+    .filter((entity): entity is KmpEntity & { section: 'AREA'; area: NonNullable<KmpEntity['area']>; rotation: Vec3; scale: Vec3 } => (
+      entity.section === 'AREA' &&
+      !!entity.area &&
+      !!entity.rotation &&
+      !!entity.scale &&
+      selectedSet.has(entity.id)
+    ))
+    .map((entity) => ({
+      id: entity.id,
+      shape: entity.area.shape,
+      position: entity.position,
+      rotation: entity.rotation,
+      scale: entity.scale,
+      selected: selectedSet.has(entity.id),
+      hovered: entity.id === hoveredId && entity.id !== selectedId,
+      invalid: invalidIds.has(entity.id),
+    }));
   const selectedHiddenByRouteFilter = !!selected && !isEntityVisibleForRouteFilter(selected, routeVisibility, track.kmp, routeUsage);
   if (selected && !selectedHiddenByRouteFilter) {
     const length = getGizmoLength(selected, cameraPosition);
@@ -1419,7 +1477,19 @@ function buildSceneOverlayData(
     }
   }
 
-  return { tool, points, lines, axes, planes, checkpointEndpoints, collisionTriangles };
+  return { tool, points, lines, axes, planes, checkpointEndpoints, collisionTriangles, checkpointWalls, areaVolumes };
+}
+
+function getCheckpointWallTopY(track: TrackDocument): number {
+  let maxY = 0;
+  for (const triangle of track.kcl?.triangles ?? []) {
+    maxY = Math.max(maxY, triangle.a.y, triangle.b.y, triangle.c.y);
+  }
+  for (const entity of track.kmp?.entities ?? []) {
+    maxY = Math.max(maxY, entity.position.y);
+    if (entity.checkpoint) maxY = Math.max(maxY, entity.checkpoint.left.y, entity.checkpoint.right.y);
+  }
+  return Math.max(4000, maxY + 2000);
 }
 
 function isEntityVisibleForRouteFilter(
