@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent } from 'react';
-import { Move3D, RotateCcw, Scale3D } from 'lucide-react';
+import { Eye, EyeOff, Move3D, RotateCcw, Scale3D } from 'lucide-react';
 import { mat4, vec3, vec4 } from 'gl-matrix';
 import ArrayBufferSlice from '../../vendor/noclip.website/src/ArrayBufferSlice';
 import { FPSCameraController } from '../../vendor/noclip.website/src/Camera';
@@ -44,6 +44,7 @@ interface SceneOverlayPoint {
 interface SceneOverlayLine {
   id: string;
   section: string;
+  routeKey?: string;
   a: Vec3;
   b: Vec3;
 }
@@ -139,6 +140,13 @@ interface CameraLookDragState {
   lastClientY: number;
 }
 
+interface RouteVisibilityItem {
+  key: string;
+  label: string;
+}
+
+type RouteVisibilityKey = 'ENPT' | 'ITPT' | 'CKPT' | 'POTI';
+
 const MKW_RENDER_SCALE = 0.1;
 function getInitialCameraFrame(track: TrackDocument): CameraFrame {
   const min = vec3.fromValues(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
@@ -227,8 +235,17 @@ export function Noclip3DViewport({
   const [smokeViewportSample, setSmokeViewportSample] = useState<'pending' | 'blank' | 'nonblank'>('pending');
   const [smokeSelectedGobjRendered, setSmokeSelectedGobjRendered] = useState<'pending' | 'yes' | 'no'>('pending');
   const [smokeSelectedGobjSnapped, setSmokeSelectedGobjSnapped] = useState<'pending' | 'yes' | 'no'>('pending');
+  const [routePanelOpen, setRoutePanelOpen] = useState(false);
+  const [routeVisibility, setRouteVisibility] = useState<Record<RouteVisibilityKey, boolean>>({
+    ENPT: true,
+    ITPT: true,
+    CKPT: true,
+    POTI: true,
+  });
   const selected = track?.kmp?.entities.find((entity) => entity.id === selectedId) ?? null;
   const sceneKey = track ? getSceneKey(track) : null;
+  const gobjSignature = track ? getGobjSignature(track) : 'nogobj';
+  const routeItems = track ? getRouteVisibilityItems(track) : [];
   trackRef.current = track;
   collisionVisibleRef.current = collisionVisible;
   selectedIdRef.current = selectedId;
@@ -431,8 +448,32 @@ export function Noclip3DViewport({
   }, [track?.kmp?.entities]);
 
   useEffect(() => {
+    const viewer = viewerRef.current;
+    const scene = sceneRef.current as SceneGfx & {
+      rebuildEditorGobjs?: (device: unknown, kmpBuffer: ArrayBufferSlice) => void;
+    } | null;
+    if (!viewer || !scene?.rebuildEditorGobjs || !track?.kmp) return;
+    scene.rebuildEditorGobjs(
+      viewer.gfxDevice,
+      new ArrayBufferSlice(track.kmp.original.buffer, track.kmp.original.byteOffset, track.kmp.original.byteLength),
+    );
+  }, [gobjSignature, track?.kmp]);
+
+  useEffect(() => {
     syncSceneOverlay(track, selectedId);
-  }, [track?.kmp, track?.kcl, selectedId, collisionVisible, tool]);
+  }, [track?.kmp, track?.kcl, selectedId, collisionVisible, tool, routeVisibility]);
+
+  useEffect(() => {
+    setRouteVisibility((current) => {
+      const next: Record<string, boolean> = {};
+      let changed = Object.keys(current).length !== routeItems.length;
+      for (const item of routeItems) {
+        next[item.key] = current[item.key] ?? true;
+        if (next[item.key] !== current[item.key]) changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [routeItems]);
 
   useEffect(() => {
     if (!smokeMode || smokeAddObjectId === null || smokePlacementDoneRef.current || !onAddObject) return;
@@ -661,7 +702,7 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
     const scene = sceneRef.current as SceneGfx & {
       setEditorOverlayData?: (data: SceneOverlayData) => void;
     } | null;
-    scene?.setEditorOverlayData?.(buildSceneOverlayData(nextTrack, nextSelectedId, collisionVisibleRef.current, toolRef.current));
+    scene?.setEditorOverlayData?.(buildSceneOverlayData(nextTrack, nextSelectedId, collisionVisibleRef.current, toolRef.current, routeVisibility));
   }
 
   return (
@@ -671,6 +712,41 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
         <span className="rendererBadge">noclip Mario Kart Wii renderer</span>
         <ToolBadge tool={tool} />
         <span>WASD fly · drag with mouse look · BRRES/GX/TEV scene</span>
+      </div>
+      <div className="routeVisibilityHud">
+        <button
+          type="button"
+          className="iconButton routeVisibilityButton"
+          onClick={() => setRoutePanelOpen((value) => !value)}
+          aria-label={routePanelOpen ? 'Hide route visibility' : 'Show route visibility'}
+          title={routePanelOpen ? 'Hide route visibility' : 'Show route visibility'}
+        >
+          {routeItems.some((item) => routeVisibility[item.key as RouteVisibilityKey] === false) ? <EyeOff size={16} /> : <Eye size={16} />}
+        </button>
+        {routePanelOpen && (
+          <div className="routeVisibilityPanel">
+            <strong>Routes</strong>
+            {routeItems.length === 0 ? (
+              <span className="routeVisibilityEmpty">No routes in the loaded track.</span>
+            ) : (
+              routeItems.map((item) => (
+                <label key={item.key} className="routeVisibilityRow">
+                  <input
+                    type="checkbox"
+                    checked={routeVisibility[item.key as RouteVisibilityKey] ?? true}
+                    onChange={() =>
+                      setRouteVisibility((current) => ({
+                        ...current,
+                        [item.key]: !(current[item.key as RouteVisibilityKey] ?? true),
+                      }))
+                    }
+                  />
+                  <span>{item.label}</span>
+                </label>
+              ))
+            )}
+          </div>
+        )}
       </div>
       <canvas
         ref={canvasRef}
@@ -690,28 +766,55 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
 }
 
 function getSceneKey(track: TrackDocument): string {
-  const base = track.sourceId ?? `${track.fileName}:${track.brresFiles.join('|')}:${track.kcl?.triangles.length ?? 0}`;
-  const gobjSignature =
+  return track.sourceId ?? `${track.fileName}:${track.brresFiles.join('|')}:${track.kcl?.triangles.length ?? 0}`;
+}
+
+function getGobjSignature(track: TrackDocument): string {
+  return (
     track.kmp?.entities
       .filter((entity) => entity.section === 'GOBJ')
       .map((entity) =>
         [
           entity.index,
           entity.objectId ?? -1,
+          entity.position.x,
+          entity.position.y,
+          entity.position.z,
+          entity.rotation?.x ?? 0,
+          entity.rotation?.y ?? 0,
+          entity.rotation?.z ?? 0,
+          entity.scale?.x ?? 1,
+          entity.scale?.y ?? 1,
+          entity.scale?.z ?? 1,
           entity.routeIndex ?? -1,
           entity.presenceFlags ?? -1,
           ...(entity.objectSettings ?? []),
         ].join(':'),
       )
-      .join('|') ?? 'nogobj';
-  return `${base}:gobj:${gobjSignature}`;
+      .join('|') ?? 'nogobj'
+  );
 }
 
-function buildSceneOverlayData(track: TrackDocument | null, selectedId: string | null, collisionVisible: boolean, tool: TransformTool): SceneOverlayData {
+function buildSceneOverlayData(
+  track: TrackDocument | null,
+  selectedId: string | null,
+  collisionVisible: boolean,
+  tool: TransformTool,
+  routeVisibility: Record<string, boolean>,
+): SceneOverlayData {
   if (!track?.kmp) return { tool, points: [], lines: [], axes: [], checkpointEndpoints: [], collisionTriangles: [] };
 
   const points = track.kmp.entities
-    .filter((entity) => entity.section !== 'STGI')
+    .filter(
+      (entity) =>
+        entity.section !== 'STGI' &&
+        !(
+          (entity.section === 'ENPT' && routeVisibility.ENPT === false) ||
+          (entity.section === 'ITPT' && routeVisibility.ITPT === false) ||
+          (entity.section === 'CKPT' && routeVisibility.CKPT === false) ||
+          (entity.section === 'POTI' && routeVisibility.POTI === false)
+        ),
+    )
     .map((entity) => ({
       id: entity.id,
       section: String(entity.section),
@@ -721,18 +824,32 @@ function buildSceneOverlayData(track: TrackDocument | null, selectedId: string |
 
   const lines: SceneOverlayLine[] = [];
   for (const graph of track.kmp.pathGraphs) {
+    if (routeVisibility[graph.pointSection] === false) continue;
     const graphPoints = track.kmp.entities.filter((entity) => entity.section === graph.pointSection);
-    graph.edges.forEach((edge, index) => {
-      const a = graphPoints[edge.from];
-      const b = graphPoints[edge.to];
-      if (!a || !b) return;
-      lines.push({ id: `${graph.pointSection}-${index}`, section: graph.pointSection, a: a.position, b: b.position });
-    });
+    for (const group of graph.groups) {
+      const routeKey = graph.pointSection;
+      for (let pointIndex = group.startIndex; pointIndex < group.startIndex + group.pointCount - 1; pointIndex++) {
+        const a = graphPoints[pointIndex];
+        const b = graphPoints[pointIndex + 1];
+        if (!a || !b) continue;
+        lines.push({ id: `${routeKey}-seq-${pointIndex}`, routeKey, section: graph.pointSection, a: a.position, b: b.position });
+      }
+      for (const nextGroupIndex of group.nextGroups) {
+        const a = graphPoints[group.startIndex + group.pointCount - 1];
+        const nextGroup = graph.groups.find((candidate) => candidate.index === nextGroupIndex);
+        const b = nextGroup ? graphPoints[nextGroup.startIndex] : null;
+        if (!a || !b) continue;
+        lines.push({ id: `${routeKey}-next-${nextGroupIndex}`, routeKey, section: graph.pointSection, a: a.position, b: b.position });
+      }
+    }
   }
   for (const route of track.kmp.routes) {
+    const routeKey = 'POTI';
+    if (routeVisibility[routeKey] === false) continue;
     for (let i = 0; i < route.points.length - 1; i++) {
       lines.push({
-        id: `POTI-${route.index}-${i}`,
+        id: `${routeKey}-${i}`,
+        routeKey,
         section: 'POTI',
         a: route.points[i].position,
         b: route.points[i + 1].position,
@@ -740,8 +857,10 @@ function buildSceneOverlayData(track: TrackDocument | null, selectedId: string |
     }
   }
   for (const entity of track.kmp.entities.filter((candidate) => candidate.section === 'CKPT' && candidate.checkpoint)) {
+    if (routeVisibility.CKPT === false) continue;
     lines.push({
       id: `CKPT-span-${entity.id}`,
+      routeKey: 'CKPT',
       section: 'CKPT',
       a: entity.checkpoint!.left,
       b: entity.checkpoint!.right,
@@ -760,7 +879,13 @@ function buildSceneOverlayData(track: TrackDocument | null, selectedId: string |
         }))
       : [];
   const selected = selectedId ? track.kmp.entities.find((entity) => entity.id === selectedId) ?? null : null;
-  if (selected) {
+  const selectedHiddenByRouteFilter =
+    !!selected &&
+    ((selected.section === 'ENPT' && routeVisibility.ENPT === false) ||
+      (selected.section === 'ITPT' && routeVisibility.ITPT === false) ||
+      (selected.section === 'CKPT' && routeVisibility.CKPT === false) ||
+      (selected.section === 'POTI' && routeVisibility.POTI === false));
+  if (selected && !selectedHiddenByRouteFilter) {
     const length = getGizmoLength(selected);
     axes.push(
       { ownerId: selected.id, axis: 'x', a: selected.position, b: { x: selected.position.x + length, y: selected.position.y, z: selected.position.z } },
@@ -776,6 +901,16 @@ function buildSceneOverlayData(track: TrackDocument | null, selectedId: string |
   }
 
   return { tool, points, lines, axes, checkpointEndpoints, collisionTriangles };
+}
+
+function getRouteVisibilityItems(track: TrackDocument): RouteVisibilityItem[] {
+  if (!track.kmp) return [];
+  const items: RouteVisibilityItem[] = [];
+  if (track.kmp.pathGraphs.some((graph) => graph.pointSection === 'ENPT')) items.push({ key: 'ENPT', label: 'Enemy Routes' });
+  if (track.kmp.pathGraphs.some((graph) => graph.pointSection === 'ITPT')) items.push({ key: 'ITPT', label: 'Item Routes' });
+  if (track.kmp.pathGraphs.some((graph) => graph.pointSection === 'CKPT')) items.push({ key: 'CKPT', label: 'Checkpoint Routes' });
+  if (track.kmp.routes.length > 0) items.push({ key: 'POTI', label: 'Object Routes' });
+  return items;
 }
 
 function createGizmoDragState(

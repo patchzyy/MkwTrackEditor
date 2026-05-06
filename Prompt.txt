@@ -171,3 +171,32 @@ Non-goals:
 - Do not ship the finished editor with fake projected viewport handles as the core interaction model.
 - Do not start with export before basic accurate loading/rendering works.
 - Do not build a landing page; build the actual editor.
+
+
+Added requirements:
+1. Go through all the tracks here G:\Games\Wii\mkwii-europe\Race\Course and extract all their useful assets like props ect and put them in a small database so they can be used by tracks, accessable through the content browser
+2. The final version should be easy to use, commonly used things like itemboxes should be easily accessable and their properties in the inspector should be nice to edit
+3. Every object with logic from the base game should have a nice inspector tab specified for that object and be easy to use and set up, drag and drop ready 
+4. Drag and dropping items should raycast against KCL, same for moving items.
+5. there should be a better gizmo
+6. there should be a easy toggle between normal view and dev view, which only renders the KCL as a solid mesh, add top down only view and ortho view
+7. holding a button must add support to snap object to edges and vertecies/points
+8. Full undo/redo stack for all editing actions:
+Object placement/removal
+Transform changes
+Path/node edits
+Property changes in inspector
+Must be fast and reliable (no partial corruption of KMP state)
+
+If you skip this, the editor will feel unusable almost immediately.
+
+9. Selection & editing ergonomics
+Multi-select support (shift/drag selection)
+Duplicate (copy/paste) objects and nodes
+Delete and batch-edit multiple elements
+Clear visual highlighting for:
+selected
+hovered
+invalid/broken elements
+
+10. make sure the user is not spammed with technical details, the user should not NEED to know the technical details of the game, we should handle that for them! 
