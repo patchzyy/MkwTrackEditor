@@ -70,6 +70,7 @@ export interface KmpEntity {
   battleFinish?: {
     id: number;
   };
+  ktptPlayerIndex?: number;
   stage?: {
     lapCount: number;
     polePosition: number;
@@ -327,6 +328,7 @@ function parseSectionEntries(
         soundData: reader.u16(rawOffset + 0x1a),
       };
     }
+    if (section === 'KTPT' && recordSize >= 0x1a) entity.ktptPlayerIndex = reader.i16(rawOffset + 0x18);
     if (section === 'CNPT' && recordSize >= 0x1c) {
       entity.cannon = {
         id: reader.u16(rawOffset + 0x18),

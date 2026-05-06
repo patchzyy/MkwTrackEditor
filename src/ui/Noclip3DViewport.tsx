@@ -10,7 +10,7 @@ import type { Destroyable, SceneContext } from '../../vendor/noclip.website/src/
 import { InitErrorCode, initializeViewerWebGL2, resizeCanvas, type SceneGfx, type Viewer } from '../../vendor/noclip.website/src/viewer';
 import { createSceneFromU8Buffer } from '../../vendor/noclip.website/src/rres/scenes';
 import { buildU8 } from '../lib/u8';
-import type { AppendableKmpSection, KmpEntity, Vec3 } from '../lib/kmp';
+import type { AppendableKmpSection, KmpDocument, KmpEntity, Vec3 } from '../lib/kmp';
 import { raycastDown, raycastMesh, snapPointToTriangleFeature } from '../lib/kcl';
 import type { TrackDocument } from '../lib/track';
 import { describeEntity } from '../lib/track';
@@ -109,6 +109,14 @@ interface SceneOverlayAreaVolume {
   invalid: boolean;
 }
 
+interface SceneOverlayStartSlot {
+  ownerId: string;
+  slotIndex: number;
+  position: Vec3;
+  selected: boolean;
+  hovered: boolean;
+}
+
 interface SceneOverlayData {
   tool: TransformTool;
   points: SceneOverlayPoint[];
@@ -119,6 +127,7 @@ interface SceneOverlayData {
   collisionTriangles: SceneOverlayCollisionTriangle[];
   checkpointWalls: SceneOverlayCheckpointWall[];
   areaVolumes: SceneOverlayAreaVolume[];
+  startSlots: SceneOverlayStartSlot[];
 }
 
 type SceneOverlayPick =
@@ -244,6 +253,24 @@ type RouteVisibilityKey = 'ENPT' | 'ITPT' | 'CKPT' | 'POTI_OBJECT' | 'POTI_CAMER
 type DofMode = 'full' | 'reduced' | 'off';
 
 const MKW_RENDER_SCALE = 0.1;
+const startSlotPixelCenterX = 59;
+const startSlotWidePixelWidth = 50;
+const startSlotWidePixelDepth = 256;
+const startSlotNarrowPixelDepth = 229;
+const startSlotPixelOffsets = [
+  { x: 19.5, y: 14.5 },
+  { x: 51.5, y: 32.5 },
+  { x: 83.5, y: 50.5 },
+  { x: 35.5, y: 88.5 },
+  { x: 67.5, y: 106.5 },
+  { x: 99.5, y: 125.5 },
+  { x: 19.5, y: 159.5 },
+  { x: 51.5, y: 177.5 },
+  { x: 83.5, y: 195.5 },
+  { x: 35.5, y: 233.5 },
+  { x: 67.5, y: 251.5 },
+  { x: 99.5, y: 270.5 },
+] as const;
 
 function getTrackViewBounds(track: TrackDocument): TrackViewBounds | null {
   const min = vec3.fromValues(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
@@ -1324,7 +1351,7 @@ function buildSceneOverlayData(
   viewMode: ViewMode,
   cameraPosition: Vec3 | null,
 ): SceneOverlayData {
-  if (!track?.kmp) return { tool, points: [], lines: [], axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [] };
+  if (!track?.kmp) return { tool, points: [], lines: [], axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [], startSlots: [] };
   const showCollision = collisionVisible || viewMode === 'dev';
   const selectedSet = new Set(selectedIds);
   if (selectedId) selectedSet.add(selectedId);
@@ -1421,6 +1448,7 @@ function buildSceneOverlayData(
             invalid: invalidIds.has(entity.id),
           }))
       : [];
+  const startSlots = buildRaceStartSlots(track.kmp, visibleEntities, selectedSet, hoveredId);
   const areaVolumes: SceneOverlayAreaVolume[] = visibleEntities
     .filter((entity): entity is KmpEntity & { section: 'AREA'; area: NonNullable<KmpEntity['area']>; rotation: Vec3; scale: Vec3 } => (
       entity.section === 'AREA' &&
@@ -1484,7 +1512,55 @@ function buildSceneOverlayData(
     }
   }
 
-  return { tool, points, lines, axes, planes, checkpointEndpoints, collisionTriangles, checkpointWalls, areaVolumes };
+  return { tool, points, lines, axes, planes, checkpointEndpoints, collisionTriangles, checkpointWalls, areaVolumes, startSlots };
+}
+
+function buildRaceStartSlots(
+  kmp: KmpDocument,
+  visibleEntities: readonly KmpEntity[],
+  selectedSet: ReadonlySet<string>,
+  hoveredId: string | null,
+): SceneOverlayStartSlot[] {
+  const ktptEntities = kmp.entities.filter((entity): entity is KmpEntity & { section: 'KTPT'; rotation: Vec3 } => entity.section === 'KTPT' && !!entity.rotation);
+  if (ktptEntities.length === 0) return [];
+  const hasBattlePlayerAssignments = ktptEntities.filter((entity) => (entity.ktptPlayerIndex ?? -1) >= 0).length >= 12;
+  if (hasBattlePlayerAssignments) return [];
+  const startEntity = ktptEntities[0] ?? visibleEntities.find((entity) => isRaceStartPointEntity(entity)) ?? null;
+  if (!startEntity?.rotation) return [];
+  const poleRight = kmp.entities.find((entity) => entity.section === 'STGI')?.stage?.polePosition === 1;
+  const narrow = kmp.entities.find((entity) => entity.section === 'STGI')?.stage?.driverDistance === 1;
+  const lengthScale = narrow ? 4800 / startSlotNarrowPixelDepth : 5300 / startSlotWidePixelDepth;
+  const widthScale = 1000 / startSlotWidePixelWidth;
+  const slots: SceneOverlayStartSlot[] = [];
+  for (let slotIndex = 0; slotIndex < startSlotPixelOffsets.length; slotIndex++) {
+    const slot = startSlotPixelOffsets[slotIndex];
+    const localX = (slot.x - startSlotPixelCenterX) * widthScale * (poleRight ? -1 : 1);
+    const localZ = -((slot.y - startSlotPixelOffsets[0].y) * lengthScale);
+    slots.push({
+      ownerId: startEntity.id,
+      slotIndex,
+      position: transformLocalOffset(startEntity.position, startEntity.rotation, localX, 0, localZ),
+      selected: selectedSet.has(startEntity.id),
+      hovered: hoveredId === startEntity.id && !selectedSet.has(startEntity.id),
+    });
+  }
+  return slots;
+}
+
+function isRaceStartPointEntity(entity: KmpEntity): entity is KmpEntity & { section: 'KTPT'; rotation: Vec3 } {
+  return entity.section === 'KTPT' && !!entity.rotation && (entity.ktptPlayerIndex === undefined || entity.ktptPlayerIndex < 0);
+}
+
+function transformLocalOffset(origin: Vec3, rotation: Vec3, x: number, y: number, z: number): Vec3 {
+  const matrix = mat4.create();
+  const point = vec4.fromValues(x, y, z, 1);
+  mat4.identity(matrix);
+  mat4.translate(matrix, matrix, [origin.x, origin.y, origin.z]);
+  mat4.rotateX(matrix, matrix, rotation.x * Math.PI / 180);
+  mat4.rotateY(matrix, matrix, rotation.y * Math.PI / 180);
+  mat4.rotateZ(matrix, matrix, rotation.z * Math.PI / 180);
+  vec4.transformMat4(point, point, matrix);
+  return { x: point[0], y: point[1], z: point[2] };
 }
 
 function getCheckpointWallTopY(track: TrackDocument): number {
