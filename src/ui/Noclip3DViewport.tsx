@@ -324,6 +324,7 @@ export function Noclip3DViewport({
           return Number.isFinite(parsed) ? parsed : null;
         })()
       : null;
+  const viewportRef = useRef<HTMLElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const uiContainerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<Viewer | null>(null);
@@ -380,7 +381,8 @@ export function Noclip3DViewport({
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const viewport = viewportRef.current;
+    if (!canvas || !viewport) return;
     let cancelled = false;
 
     async function bootViewer() {
@@ -393,7 +395,7 @@ export function Noclip3DViewport({
       viewerRef.current = result.viewer;
       setViewerReady(true);
       const resizeObserver = new ResizeObserver(() => resizeToDisplay());
-      resizeObserver.observe(canvas);
+      resizeObserver.observe(viewport);
       resizeToDisplay();
       const tick = (time: number) => {
         result.viewer!.update({ time, webXRContext: null });
@@ -425,7 +427,7 @@ export function Noclip3DViewport({
     });
 
     function resizeToDisplay() {
-      const rect = canvas.getBoundingClientRect();
+      const rect = viewport.getBoundingClientRect();
       resizeCanvas(canvas, Math.max(1, Math.floor(rect.width)), Math.max(1, Math.floor(rect.height)), window.devicePixelRatio || 1);
     }
 
@@ -599,8 +601,11 @@ export function Noclip3DViewport({
     const hoveredEntity = hoveredIdRef.current
       ? trackValue?.kmp?.entities.find((entity) => entity.id === hoveredIdRef.current) ?? null
       : null;
-    if (hoveredEntity && !isEntityVisibleForRouteFilter(hoveredEntity, routeVisibility, trackValue?.kmp ?? null)) setHoveredId(null);
-  }, [routeVisibility, track?.kmp]);
+    if (!hoveredEntity) return;
+    const routeUsage = getPotiRouteUsage(trackValue?.kmp ?? null);
+    const forcedVisibleObjectRoutes = getForcedVisibleObjectRoutes(trackValue?.kmp ?? null, selectedIdsRef.current, routeUsage);
+    if (!isEntityVisibleForRouteFilter(hoveredEntity, routeVisibility, trackValue?.kmp ?? null, routeUsage, forcedVisibleObjectRoutes)) setHoveredId(null);
+  }, [routeVisibility, track?.kmp, selectedIds]);
 
   useEffect(() => {
     applyViewMode(track, false);
@@ -1185,7 +1190,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
   }
 
   return (
-    <section className="viewport" onDragOver={(event) => event.preventDefault()} onDrop={handleDrop}>
+    <section ref={viewportRef} className="viewport" onDragOver={(event) => event.preventDefault()} onDrop={handleDrop}>
       <div ref={uiContainerRef} className="noclipUiHost" />
       <div className="viewportToolbar">
         <ToolBadge tool={tool} />
@@ -1322,8 +1327,10 @@ function buildSceneOverlayData(
   if (!track?.kmp) return { tool, points: [], lines: [], axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [] };
   const showCollision = collisionVisible || viewMode === 'dev';
   const selectedSet = new Set(selectedIds);
+  if (selectedId) selectedSet.add(selectedId);
   const routeUsage = getPotiRouteUsage(track.kmp);
-  const visibleEntities = getVisibleEntitiesForRouteFilter(track.kmp.entities, routeVisibility, track.kmp, routeUsage);
+  const forcedVisibleObjectRoutes = getForcedVisibleObjectRoutes(track.kmp, selectedSet, routeUsage);
+  const visibleEntities = getVisibleEntitiesForRouteFilter(track.kmp.entities, routeVisibility, track.kmp, routeUsage, forcedVisibleObjectRoutes);
   const invalidIds = collectInvalidEntityIds(track);
 
   const points = visibleEntities
@@ -1366,7 +1373,7 @@ function buildSceneOverlayData(
   }
   for (const route of track.kmp.routes) {
     const routeKey = getPotiRouteVisibilityKey(route.index, routeUsage);
-    if (!isPotiRouteVisible(route.index, routeVisibility, routeUsage)) continue;
+    if (!isPotiRouteVisible(route.index, routeVisibility, routeUsage, forcedVisibleObjectRoutes)) continue;
     for (let i = 0; i < route.points.length - 1; i++) {
       lines.push({
         id: `POTI-${route.index}-${i}`,
@@ -1432,7 +1439,7 @@ function buildSceneOverlayData(
       hovered: entity.id === hoveredId && entity.id !== selectedId,
       invalid: invalidIds.has(entity.id),
     }));
-  const selectedHiddenByRouteFilter = !!selected && !isEntityVisibleForRouteFilter(selected, routeVisibility, track.kmp, routeUsage);
+  const selectedHiddenByRouteFilter = !!selected && !isEntityVisibleForRouteFilter(selected, routeVisibility, track.kmp, routeUsage, forcedVisibleObjectRoutes);
   if (selected && !selectedHiddenByRouteFilter) {
     const length = getGizmoLength(selected, cameraPosition);
     const planeSize = length * 0.28;
@@ -1497,6 +1504,7 @@ function isEntityVisibleForRouteFilter(
   routeVisibility: Record<string, boolean>,
   kmp: KmpDocument | null,
   routeUsage?: PotiRouteUsage,
+  forcedVisibleObjectRoutes?: ReadonlySet<number>,
 ): boolean {
   if (entity.section === 'STGI') return false;
   if (entity.section === 'ENPT') return routeVisibility.ENPT !== false;
@@ -1505,7 +1513,9 @@ function isEntityVisibleForRouteFilter(
   if (entity.section === 'JGPT') return routeVisibility.JGPT !== false;
   if (entity.section === 'AREA') return routeVisibility.AREA !== false;
   if (entity.section === 'CAME') return routeVisibility.CAME !== false;
-  if (entity.section === 'POTI' && entity.routePoint) return isPotiRouteVisible(entity.routePoint.routeIndex, routeVisibility, routeUsage ?? getPotiRouteUsage(kmp));
+  if (entity.section === 'POTI' && entity.routePoint) {
+    return isPotiRouteVisible(entity.routePoint.routeIndex, routeVisibility, routeUsage ?? getPotiRouteUsage(kmp), forcedVisibleObjectRoutes);
+  }
   return true;
 }
 
@@ -1514,8 +1524,9 @@ function getVisibleEntitiesForRouteFilter(
   routeVisibility: Record<string, boolean>,
   kmp: KmpDocument | null,
   routeUsage?: PotiRouteUsage,
+  forcedVisibleObjectRoutes?: ReadonlySet<number>,
 ): KmpEntity[] {
-  return entities.filter((entity) => isEntityVisibleForRouteFilter(entity, routeVisibility, kmp, routeUsage));
+  return entities.filter((entity) => isEntityVisibleForRouteFilter(entity, routeVisibility, kmp, routeUsage, forcedVisibleObjectRoutes));
 }
 
 function supportsMouseLook(viewMode: ViewMode): boolean {
@@ -1568,7 +1579,34 @@ function getPotiRouteVisibilityKey(routeIndex: number, routeUsage: PotiRouteUsag
   return 'POTI_OBJECT';
 }
 
-function isPotiRouteVisible(routeIndex: number, routeVisibility: Record<string, boolean>, routeUsage: PotiRouteUsage): boolean {
+function getForcedVisibleObjectRoutes(
+  kmp: KmpDocument | null,
+  selectedIds: Iterable<string>,
+  routeUsage: PotiRouteUsage,
+): Set<number> {
+  const forcedRoutes = new Set<number>();
+  if (!kmp) return forcedRoutes;
+  for (const id of selectedIds) {
+    const entity = kmp.entities.find((candidate) => candidate.id === id);
+    if (!entity) continue;
+    if (entity.section === 'GOBJ' && entity.routeIndex !== undefined && entity.routeIndex !== 0xffff) {
+      if (getPotiRouteVisibilityKey(entity.routeIndex, routeUsage) === 'POTI_OBJECT') forcedRoutes.add(entity.routeIndex);
+      continue;
+    }
+    if (entity.section === 'POTI' && entity.routePoint) {
+      if (getPotiRouteVisibilityKey(entity.routePoint.routeIndex, routeUsage) === 'POTI_OBJECT') forcedRoutes.add(entity.routePoint.routeIndex);
+    }
+  }
+  return forcedRoutes;
+}
+
+function isPotiRouteVisible(
+  routeIndex: number,
+  routeVisibility: Record<string, boolean>,
+  routeUsage: PotiRouteUsage,
+  forcedVisibleObjectRoutes?: ReadonlySet<number>,
+): boolean {
+  if (forcedVisibleObjectRoutes?.has(routeIndex)) return true;
   const objectVisible = routeVisibility.POTI_OBJECT !== false;
   const cameraVisible = routeVisibility.POTI_CAMERA !== false;
   const usedByObject = routeUsage.objectRoutes.has(routeIndex) || routeUsage.unusedRoutes.has(routeIndex);

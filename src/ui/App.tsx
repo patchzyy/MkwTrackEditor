@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Box, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ClipboardPaste, Copy, Database, Download, Eye, FolderOpen, Move3D, PanelRightClose, PanelRightOpen, Redo2, RotateCcw, Scale3D, TriangleAlert, Undo2 } from 'lucide-react';
 import {
   appendKmpArea,
@@ -134,6 +134,14 @@ const areaShapeOptions = [
   { value: 0, label: 'Box' },
   { value: 1, label: 'Cylinder' },
 ];
+const areaEnvironmentEffectOptions = [
+  { value: 0, label: 'EnvKareha' },
+  { value: 1, label: 'EnvKarehaUp' },
+];
+const areaGroupIdOptions = Array.from({ length: 16 }, (_, value) => ({
+  value,
+  label: `Group ${value}`,
+}));
 const cannonEffectOptions = [
   { value: 0, label: 'Fast, Straight Line' },
   { value: 1, label: 'Curved' },
@@ -223,6 +231,208 @@ const cataquackColorOptions = [
   { value: 2, label: 'Violet' },
   { value: 3, label: 'Green' },
 ];
+
+interface AreaInspectorOption {
+  value: number;
+  label: string;
+}
+
+interface AreaFogPreset {
+  index: number;
+  fogType: number;
+  startZ: number;
+  endZ: number;
+  color: [number, number, number];
+  fadeSpeed: number;
+}
+
+interface AreaBloomPreset {
+  index: number;
+  thresholdAmount: number;
+  tintColor: [number, number, number];
+  blur0Radius: number;
+  blur0Intensity: number;
+  blur1Radius: number;
+  blur1Intensity: number;
+}
+
+interface AreaInspectorResources {
+  fogPresets: AreaFogPreset[];
+  bloomPresets: AreaBloomPreset[];
+}
+
+interface AreaInspectorConfig {
+  cameraLabel?: string;
+  routeLabel?: string;
+  enemyLabel?: string;
+  setting1Label?: string;
+  setting2Label?: string;
+  setting1Options?: AreaInspectorOption[];
+  notes?: string[];
+}
+
+const emptyAreaInspectorResources: AreaInspectorResources = { fogPresets: [], bloomPresets: [] };
+
+function getAreaInspectorResources(track: TrackDocument | null): AreaInspectorResources {
+  if (!track) return emptyAreaInspectorResources;
+  const fogEntry = track.archiveEntries.find((entry) => entry.type === 'file' && entry.path.toLowerCase().endsWith('posteffect.bfg'));
+  const fogPresets = fogEntry?.data ? parseAreaFogPresets(fogEntry.data) : [];
+  const bloomPresets = track.archiveEntries
+    .filter((entry) => entry.type === 'file' && /posteffect\/posteffect\.bblm\d*$/i.test(entry.path))
+    .map((entry) => {
+      const match = entry.path.match(/posteffect\.bblm(\d*)$/i);
+      const suffix = match?.[1] ?? '';
+      const index = suffix === '' ? 0 : Number(suffix);
+      return entry.data && Number.isFinite(index) ? parseAreaBloomPreset(entry.data, index) : null;
+    })
+    .filter((preset): preset is AreaBloomPreset => preset !== null)
+    .sort((a, b) => a.index - b.index);
+  return { fogPresets, bloomPresets };
+}
+
+function parseAreaFogPresets(data: Uint8Array): AreaFogPreset[] {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const entrySize = 0x1c;
+  const count = Math.min(4, Math.floor(data.byteLength / entrySize));
+  const out: AreaFogPreset[] = [];
+  for (let index = 0; index < count; index++) {
+    const base = index * entrySize;
+    out.push({
+      index,
+      fogType: view.getInt32(base, false),
+      startZ: view.getFloat32(base + 0x04, false),
+      endZ: view.getFloat32(base + 0x08, false),
+      color: [view.getUint8(base + 0x0c), view.getUint8(base + 0x0d), view.getUint8(base + 0x0e)],
+      fadeSpeed: view.getFloat32(base + 0x14, false),
+    });
+  }
+  return out;
+}
+
+function parseAreaBloomPreset(data: Uint8Array, index: number): AreaBloomPreset | null {
+  if (data.byteLength < 0xa4 || readAscii(data, 0, 4) !== 'PBLM') return null;
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  return {
+    index,
+    thresholdAmount: view.getFloat32(0x10, false),
+    tintColor: [view.getUint8(0x18), view.getUint8(0x19), view.getUint8(0x1a)],
+    blur0Radius: view.getFloat32(0x20, false),
+    blur0Intensity: view.getFloat32(0x24, false),
+    blur1Radius: view.getFloat32(0x40, false),
+    blur1Intensity: view.getFloat32(0x44, false),
+  };
+}
+
+function readAscii(data: Uint8Array, offset: number, length: number): string {
+  return String.fromCharCode(...data.slice(offset, offset + length));
+}
+
+function getFogTypeLabel(fogType: number): string {
+  switch (fogType) {
+    case 0: return 'None';
+    case 1: return 'Persp Linear';
+    case 2: return 'Persp Exp';
+    case 3: return 'Persp Exp2';
+    case 4: return 'Persp InvExp';
+    case 5: return 'Persp InvExp2';
+    case 6: return 'Ortho Linear';
+    case 7: return 'Ortho Exp';
+    case 8: return 'Ortho Exp2';
+    case 9: return 'Ortho InvExp';
+    case 10: return 'Ortho InvExp2';
+    default: return `Type ${fogType}`;
+  }
+}
+
+function formatCompactFloat(value: number): string {
+  return Number.isFinite(value) ? Number(value.toFixed(Math.abs(value) >= 10 ? 1 : 2)).toString() : '0';
+}
+
+function getAreaInspectorConfig(type: number, resources: AreaInspectorResources): AreaInspectorConfig {
+  switch (type) {
+    case 0:
+      return {
+        cameraLabel: 'Area Camera',
+        notes: ['Activates the linked camera while the player is inside this AREA. Higher priority wins when multiple camera AREAs overlap.'],
+      };
+    case 1:
+      return {
+        setting1Label: 'Environment Variant',
+        setting1Options: areaEnvironmentEffectOptions,
+        notes: ['Overrides the local environment effect. Nintendo uses this to force EnvKareha or EnvKarehaUp in specific regions.'],
+      };
+    case 2:
+      return {
+        setting1Label: 'Fog Preset',
+        setting1Options: resources.fogPresets.map((preset) => ({
+          value: preset.index,
+          label: `Preset ${preset.index} - ${getFogTypeLabel(preset.fogType)} - RGB ${preset.color.join('/')} - Z ${formatCompactFloat(preset.startZ)} to ${formatCompactFloat(preset.endZ)}`,
+        })),
+        notes: [
+          'Swaps to a posteffect.bfg fog entry while inside this AREA.',
+          resources.fogPresets.length > 0
+            ? 'The picker below comes from the loaded track archive.'
+            : 'No posteffect.bfg was found in the loaded track archive, so this stays as a raw index.',
+        ],
+      };
+    case 3:
+      return {
+        routeLabel: 'Moving Terrain Route',
+        setting1Label: 'Accel / Decel Amplifier',
+        setting2Label: 'Water Speed',
+        notes: ['Used by moving terrain. The route matters for moving-water setups, and these two settings are especially relevant for the 0x0002 KCL variant.'],
+      };
+    case 4:
+      return {
+        enemyLabel: 'Destination Enemy Point',
+        notes: ['Used with Force Recalculation collision. This AREA redirects CPUs, and the AREA position and rotation are also part of the setup.'],
+      };
+    case 5:
+      return {
+        notes: ['Controls minimap behavior such as culling, visibility, and special cropped-mission-style usage. The raw parameters are not documented well enough for a high-level editor yet.'],
+      };
+    case 6:
+      return {
+        setting1Label: 'Bloom / Blur Preset',
+        setting2Label: 'Transition Frames',
+        setting1Options: resources.bloomPresets.map((preset) => ({
+          value: preset.index,
+          label: `Preset ${preset.index} - Tint ${preset.tintColor.join('/')} - Threshold ${formatCompactFloat(preset.thresholdAmount)} - Blur ${formatCompactFloat(preset.blur0Radius)}/${formatCompactFloat(preset.blur1Radius)}`,
+        })),
+        notes: [
+          'Swaps the active posteffect.bblm file while inside this AREA.',
+          resources.bloomPresets.length > 0
+            ? 'Transition time is measured in frames.'
+            : 'No posteffect.bblm files were found in the loaded track archive, so this stays as a raw index.',
+        ],
+      };
+    case 7:
+      return {
+        notes: ['Defines a region where flying Boos can appear. There are no extra numeric parameters for the vanilla behavior.'],
+      };
+    case 8:
+      return {
+        setting1Label: 'Group ID',
+        setting1Options: areaGroupIdOptions,
+        notes: ['Groups objects together. Type 9 can unload matching type 8 groups that share the same group ID.'],
+      };
+    case 9:
+      return {
+        setting1Label: 'Group ID',
+        setting1Options: areaGroupIdOptions,
+        notes: ['Unloads objects from type 8 AREAs that use the same group ID while the player is inside this AREA.'],
+      };
+    case 10:
+      return {
+        setting1Label: 'Checkpoint Start',
+        setting2Label: 'Checkpoint End',
+        notes: ['Adds a fall boundary without changing KCL. In vanilla this is mainly used for tournaments and custom conditional OOB patches.'],
+      };
+    default:
+      return {};
+  }
+}
+
 const pylonColorOptions = [
   { value: 0, label: 'Red' },
   { value: 1, label: 'Blue' },
@@ -334,6 +544,16 @@ type BrowserFolder =
   | { id: BrowserFolderId; label: string; detail: string; kind: 'brres'; items: string[] };
 
 export function App() {
+  const CONTENT_BROWSER_COLLAPSED_HEIGHT = 46;
+  const CONTENT_BROWSER_DEFAULT_HEIGHT = 248;
+  const CONTENT_BROWSER_MIN_HEIGHT = 140;
+  const WORKSPACE_MIN_HEIGHT = 160;
+  const PLACE_ASSETS_COLLAPSED_WIDTH = 52;
+  const PLACE_ASSETS_DEFAULT_WIDTH = 220;
+  const PLACE_ASSETS_MIN_WIDTH = 160;
+  const INSPECTOR_DEFAULT_WIDTH = 320;
+  const INSPECTOR_MIN_WIDTH = 220;
+  const WORKSPACE_MIN_VIEWPORT_WIDTH = 320;
   const smokeTrackUrl = useMemo(() => (typeof window === 'undefined' ? null : new URL(window.location.href).searchParams.get('smokeTrack')), []);
   const smokeCallbackUrl = useMemo(() => (typeof window === 'undefined' ? null : new URL(window.location.href).searchParams.get('smokeCallback')), []);
   const smokeCommonUrl = useMemo(() => (typeof window === 'undefined' ? null : new URL(window.location.href).searchParams.get('smokeCommon')), []);
@@ -346,10 +566,15 @@ export function App() {
   const [tool, setTool] = useState<TransformTool>('translate');
   const [viewMode, setViewMode] = useState<ViewMode>('normal');
   const [browserOpen, setBrowserOpen] = useState(true);
+  const [browserHeight, setBrowserHeight] = useState(CONTENT_BROWSER_DEFAULT_HEIGHT);
+  const [browserResizing, setBrowserResizing] = useState(false);
   const [placeAssetsOpen, setPlaceAssetsOpen] = useState(true);
+  const [placeAssetsWidth, setPlaceAssetsWidth] = useState(PLACE_ASSETS_DEFAULT_WIDTH);
   const [browserFolder, setBrowserFolder] = useState<BrowserFolderId>('featured');
   const [browserQuery, setBrowserQuery] = useState('');
   const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [inspectorWidth, setInspectorWidth] = useState(INSPECTOR_DEFAULT_WIDTH);
+  const [sidebarResizing, setSidebarResizing] = useState<'placeAssets' | 'inspector' | null>(null);
   const [collisionVisible, setCollisionVisible] = useState(false);
   const [status, setStatus] = useState('No track loaded');
   const [commonArchive, setCommonArchive] = useState<CommonResourceArchive | null>(null);
@@ -361,6 +586,11 @@ export function App() {
   const [smokeUndoRedoWorked, setSmokeUndoRedoWorked] = useState<'pending' | 'yes' | 'no'>('pending');
   const [batchOffset, setBatchOffset] = useState<Vec3>({ x: 0, y: 0, z: 0 });
   const [batchObjectId, setBatchObjectId] = useState<number | null>(null);
+  const appShellRef = useRef<HTMLElement | null>(null);
+  const topBarRef = useRef<HTMLElement | null>(null);
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
+  const browserResizeRef = useRef<{ startY: number; startHeight: number } | null>(null);
+  const sidebarResizeRef = useRef<{ side: 'placeAssets' | 'inspector'; startX: number; startWidth: number } | null>(null);
   const trackStateRef = useRef<TrackDocument | null>(track);
   const selectedIdStateRef = useRef<string | null>(selectedId);
   const selectedIdsStateRef = useRef<string[]>(selectedIds);
@@ -383,6 +613,7 @@ export function App() {
   const cameraHeader = useMemo(() => (track?.kmp ? getKmpCameraHeader(track.kmp) : null), [track]);
   const referenceCounts = useMemo(() => getReferenceCounts(track?.kmp ?? null), [track?.kmp]);
   const validation = useMemo(() => (track ? validateTrack(track, { common: commonArchive }) : []), [track, commonArchive]);
+  const areaInspectorResources = useMemo(() => getAreaInspectorResources(track), [track]);
   const selectedObjectProfile = useMemo(() => (selected?.section === 'GOBJ' ? getObjectInspectorProfile(selected, objFlow) : null), [objFlow, selected]);
   const validationCounts = useMemo(() => {
     const errorCount = validation.filter((item) => item.level === 'error').length;
@@ -468,12 +699,128 @@ export function App() {
   }, [browserFolder, browserFolders]);
 
   useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const resize = browserResizeRef.current;
+      const shell = appShellRef.current;
+      if (!resize || !shell) return;
+      const topBarHeight = topBarRef.current?.getBoundingClientRect().height ?? 48;
+      const maxHeight = Math.max(
+        CONTENT_BROWSER_MIN_HEIGHT,
+        Math.floor(shell.getBoundingClientRect().height - topBarHeight - WORKSPACE_MIN_HEIGHT),
+      );
+      const nextHeight = Math.max(
+        CONTENT_BROWSER_MIN_HEIGHT,
+        Math.min(maxHeight, Math.round(resize.startHeight + (resize.startY - event.clientY))),
+      );
+      setBrowserOpen(true);
+      setBrowserHeight(nextHeight);
+    };
+
+    const stopResize = () => {
+      if (!browserResizeRef.current) return;
+      browserResizeRef.current = null;
+      setBrowserResizing(false);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', stopResize);
+    window.addEventListener('pointercancel', stopResize);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', stopResize);
+      window.removeEventListener('pointercancel', stopResize);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const resize = sidebarResizeRef.current;
+      const workspace = workspaceRef.current;
+      if (!resize || !workspace) return;
+      const availableWidth = workspace.getBoundingClientRect().width;
+      const otherWidth = resize.side === 'placeAssets'
+        ? (inspectorOpen ? inspectorWidth : 0)
+        : (placeAssetsOpen ? placeAssetsWidth : PLACE_ASSETS_COLLAPSED_WIDTH);
+      const maxWidth = Math.max(
+        resize.side === 'placeAssets' ? PLACE_ASSETS_MIN_WIDTH : INSPECTOR_MIN_WIDTH,
+        Math.floor(availableWidth - otherWidth - WORKSPACE_MIN_VIEWPORT_WIDTH),
+      );
+      const rawWidth = resize.side === 'placeAssets'
+        ? resize.startWidth + (event.clientX - resize.startX)
+        : resize.startWidth + (resize.startX - event.clientX);
+      const nextWidth = Math.max(
+        resize.side === 'placeAssets' ? PLACE_ASSETS_MIN_WIDTH : INSPECTOR_MIN_WIDTH,
+        Math.min(maxWidth, Math.round(rawWidth)),
+      );
+      if (resize.side === 'placeAssets') {
+        setPlaceAssetsOpen(true);
+        setPlaceAssetsWidth(nextWidth);
+      } else {
+        setInspectorOpen(true);
+        setInspectorWidth(nextWidth);
+      }
+    };
+
+    const stopResize = () => {
+      if (!sidebarResizeRef.current) return;
+      sidebarResizeRef.current = null;
+      setSidebarResizing(null);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', stopResize);
+    window.addEventListener('pointercancel', stopResize);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', stopResize);
+      window.removeEventListener('pointercancel', stopResize);
+    };
+  }, [inspectorOpen, inspectorWidth, placeAssetsOpen, placeAssetsWidth]);
+
+  useEffect(() => {
+    if (!browserResizing && !sidebarResizing) return;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = browserResizing ? 'ns-resize' : 'ew-resize';
+    document.body.style.userSelect = 'none';
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+    };
+  }, [browserResizing, sidebarResizing]);
+
+  useEffect(() => {
     if (canBatchReplaceObjects) {
       setBatchObjectId(selectedEntities[0]?.objectId ?? null);
     } else {
       setBatchObjectId(null);
     }
   }, [canBatchReplaceObjects, selectedEntities]);
+
+  function beginBrowserResize(event: React.PointerEvent<HTMLElement>) {
+    browserResizeRef.current = {
+      startY: event.clientY,
+      startHeight: browserOpen ? browserHeight : CONTENT_BROWSER_COLLAPSED_HEIGHT,
+    };
+    setBrowserOpen(true);
+    setBrowserResizing(true);
+  }
+
+  function beginSidebarResize(side: 'placeAssets' | 'inspector', event: React.PointerEvent<HTMLElement>) {
+    sidebarResizeRef.current = {
+      side,
+      startX: event.clientX,
+      startWidth: side === 'placeAssets' ? placeAssetsWidth : inspectorWidth,
+    };
+    if (side === 'placeAssets') setPlaceAssetsOpen(true);
+    else setInspectorOpen(true);
+    setSidebarResizing(side);
+  }
+
+  const workspaceStyle: CSSProperties = {
+    ['--place-assets-width' as '--place-assets-width']: `${placeAssetsOpen ? placeAssetsWidth : PLACE_ASSETS_COLLAPSED_WIDTH}px`,
+    ['--inspector-width' as '--inspector-width']: `${inspectorOpen ? inspectorWidth : 0}px`,
+  };
 
   function syncHistoryState() {
     setHistoryState({
@@ -1387,6 +1734,7 @@ export function App() {
 
   return (
     <main
+      ref={appShellRef}
       className="appShell"
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
@@ -1394,7 +1742,7 @@ export function App() {
         void openFiles(event.dataTransfer.files);
       }}
     >
-      <header className="topBar">
+      <header ref={topBarRef} className="topBar">
         <div className="brand">
           <Box size={18} />
           <strong>MKW Track Editor</strong>
@@ -1474,8 +1822,13 @@ export function App() {
         <span className="status">{status}</span>
       </header>
 
-      <div className={`${inspectorOpen ? 'workspace' : 'workspace inspectorCollapsed'}${placeAssetsOpen ? '' : ' placeAssetsCollapsed'}`}>
+      <div
+        ref={workspaceRef}
+        className={`${inspectorOpen ? 'workspace' : 'workspace inspectorCollapsed'}${placeAssetsOpen ? '' : ' placeAssetsCollapsed'}`}
+        style={workspaceStyle}
+      >
         <aside className="placeAssetsPanel">
+          {placeAssetsOpen && <div className="sidebarResizeHandle sidebarResizeHandleRight" onPointerDown={(event) => beginSidebarResize('placeAssets', event)} />}
           <div className="panelHeader placeAssetsHeader">
             <div>
               <h2>Place Assets</h2>
@@ -1537,6 +1890,7 @@ export function App() {
           onInteractionEnd={endEditSession}
         />
         <aside className="inspector">
+          {inspectorOpen && <div className="sidebarResizeHandle sidebarResizeHandleLeft" onPointerDown={(event) => beginSidebarResize('inspector', event)} />}
           <div className="panelHeader">
             <h2>Inspector</h2>
             <button className="iconButton" type="button" onClick={() => setInspectorOpen(false)} title="Hide inspector" aria-label="Hide inspector">
@@ -1564,6 +1918,7 @@ export function App() {
               pathInfo={selectedPathInfo}
               cameraHeader={cameraHeader}
               referenceCounts={referenceCounts}
+              areaInspectorResources={areaInspectorResources}
               objectProfile={selectedObjectProfile}
               objectOptions={objectOptions}
               objectVariantOptions={selectedObjectVariantOptions}
@@ -1647,7 +2002,17 @@ export function App() {
         </aside>
       </div>
 
-      <section className={browserOpen ? 'contentBrowser' : 'contentBrowser collapsed'}>
+      <section
+        className={`${browserOpen ? 'contentBrowser' : 'contentBrowser collapsed'}${browserResizing ? ' resizing' : ''}`}
+        style={{ height: `${browserOpen ? browserHeight : CONTENT_BROWSER_COLLAPSED_HEIGHT}px` }}
+      >
+        <div
+          className="contentBrowserResizeHandle"
+          onPointerDown={beginBrowserResize}
+          role="separator"
+          aria-label="Resize content browser"
+          aria-orientation="horizontal"
+        />
         <button className="collapseButton" onClick={() => setBrowserOpen((value) => !value)} aria-label={browserOpen ? 'Collapse content browser' : 'Expand content browser'}>
           {browserOpen ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
         </button>
@@ -2072,6 +2437,7 @@ function Inspector({
   pathInfo,
   cameraHeader,
   referenceCounts,
+  areaInspectorResources,
   objectProfile,
   objectOptions,
   objectVariantOptions,
@@ -2118,6 +2484,7 @@ function Inspector({
   pathInfo: PathInfo | null;
   cameraHeader: ReturnType<typeof getKmpCameraHeader> | null;
   referenceCounts: ReferenceCounts;
+  areaInspectorResources: AreaInspectorResources;
   objectProfile: ObjectInspectorProfile | null;
   objectOptions: ObjectOption[];
   objectVariantOptions: ObjectOption[];
@@ -2159,7 +2526,7 @@ function Inspector({
   onChangeObjectSetting: (settingIndex: number, value: number) => void;
   onChangePresenceFlags: (value: number) => void;
 }) {
-  const areaInspectorLabels = entity.area ? getAreaInspectorLabels(entity.area.type) : null;
+  const areaInspectorLabels = entity.area ? getAreaInspectorConfig(entity.area.type, areaInspectorResources) : null;
   const objectPresenceBaseFlags = entity.presenceFlags !== undefined ? entity.presenceFlags & ~0x0007 : 0;
   const objectPresencePlayerFlags = entity.presenceFlags !== undefined ? entity.presenceFlags & 0x0007 : 0;
   const objectHasExtraPresenceBits = entity.presenceFlags !== undefined && objectPresenceBaseFlags !== 0;
@@ -2426,6 +2793,12 @@ function Inspector({
               }}
             />
           </label>
+          {areaInspectorLabels?.notes?.map((note, index) => (
+            <label key={`area-note-${entity.area!.type}-${index}`}>
+              {index === 0 ? 'Behavior' : 'Note'}
+              <span>{note}</span>
+            </label>
+          ))}
           {(areaInspectorLabels?.cameraLabel || entity.area.cameraIndex !== 0xff) && (
             <label>
               {areaInspectorLabels?.cameraLabel ?? 'Camera'}
@@ -2468,16 +2841,25 @@ function Inspector({
           {(areaInspectorLabels?.setting1Label || entity.area.setting1 !== 0) && (
             <label>
               {areaInspectorLabels?.setting1Label ?? 'Setting 1'}
-              <input
-                type="number"
-                min="0"
-                max="65535"
-                value={entity.area.setting1}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeAreaField('setting1', Math.max(0, Math.min(0xffff, Math.trunc(next))));
-                }}
-              />
+              {areaInspectorLabels?.setting1Options?.length ? (
+                <NumberOptionSelect
+                  label={areaInspectorLabels.setting1Label ?? 'Setting 1'}
+                  value={entity.area.setting1}
+                  options={areaInspectorLabels.setting1Options}
+                  onChange={(next) => onChangeAreaField('setting1', next)}
+                />
+              ) : (
+                <input
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.area.setting1}
+                  onChange={(event) => {
+                    const next = Number(event.currentTarget.value);
+                    if (Number.isFinite(next)) onChangeAreaField('setting1', Math.max(0, Math.min(0xffff, Math.trunc(next))));
+                  }}
+                />
+              )}
             </label>
           )}
           {(areaInspectorLabels?.setting2Label || entity.area.setting2 !== 0) && (
@@ -5287,6 +5669,35 @@ function ReferenceSelect({
   );
 }
 
+function NumberOptionSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  options: AreaInspectorOption[];
+  onChange: (value: number) => void;
+}) {
+  return (
+    <select
+      className="referenceSelect"
+      aria-label={label}
+      title={label}
+      value={String(value)}
+      onChange={(event) => onChange(Number(event.currentTarget.value))}
+    >
+      {!options.some((option) => option.value === value) && <option value={value}>Custom #{value}</option>}
+      {options.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function ObjectIdSelect({ value, options, onChange }: { value: number; options: ObjectOption[]; onChange: (value: number) => void }) {
   const [query, setQuery] = useState('');
   const trimmed = query.trim().toLowerCase();
@@ -6138,32 +6549,6 @@ function presentValidationIssue(message: string): { summary: string; detail?: st
   if (message.includes('slot-restricted objects')) return { summary: 'This track uses objects that only work on certain vanilla slots.', detail: message };
   if (message.includes('begoman_spike must be the first placed game object')) return { summary: 'A Topman hazard is ordered incorrectly.', detail: message };
   return { summary: message };
-}
-
-function getAreaInspectorLabels(type: number) {
-  switch (type) {
-    case 0:
-      return { cameraLabel: 'Camera' };
-    case 1:
-      return { setting1Label: 'Environment Object' };
-    case 2:
-      return { setting1Label: 'BFG Entry', setting2Label: 'Setting 2' };
-    case 3:
-      return { routeLabel: 'Water Route', setting1Label: 'Acceleration', setting2Label: 'Route Speed' };
-    case 4:
-      return { enemyLabel: 'Enemy Point' };
-    case 5:
-      return { setting1Label: 'Setting 1', setting2Label: 'Setting 2' };
-    case 6:
-      return { setting1Label: 'BBLM File', setting2Label: 'Fade Time' };
-    case 8:
-    case 9:
-      return { setting1Label: 'Group ID' };
-    case 10:
-      return { setting1Label: 'Start Index', setting2Label: 'End Index' };
-    default:
-      return {};
-  }
 }
 
 function getKnownObjectName(objectId: number | undefined): string | null {

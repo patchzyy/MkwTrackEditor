@@ -121,20 +121,9 @@ input {
 
 .workspace {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) 320px;
+  grid-template-columns: var(--place-assets-width, 220px) minmax(0, 1fr) var(--inspector-width, 320px);
   min-height: 0;
-}
-
-.workspace.inspectorCollapsed {
-  grid-template-columns: 220px minmax(0, 1fr) 0;
-}
-
-.workspace.placeAssetsCollapsed {
-  grid-template-columns: 52px minmax(0, 1fr) 320px;
-}
-
-.workspace.placeAssetsCollapsed.inspectorCollapsed {
-  grid-template-columns: 52px minmax(0, 1fr) 0;
+  overflow: hidden;
 }
 
 .workspace.inspectorCollapsed .inspector {
@@ -145,12 +134,15 @@ input {
 }
 
 .placeAssetsPanel {
+  position: relative;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 0;
   border-right: 1px solid #272d37;
   background: #141920;
+  overflow: hidden;
 }
 
 .placeAssetsHeader {
@@ -166,6 +158,7 @@ input {
 }
 
 .placeAssetsBody {
+  flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
   padding: 0 10px 10px;
@@ -396,11 +389,52 @@ input {
 }
 
 .inspector {
+  position: relative;
   min-width: 0;
+  min-height: 0;
   overflow: auto;
   padding: 14px;
   border-left: 1px solid #272d37;
   background: #151a21;
+}
+
+.sidebarResizeHandle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: ew-resize;
+  z-index: 4;
+}
+
+.sidebarResizeHandle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(95, 214, 255, 0.18);
+  transition: background 120ms ease;
+}
+
+.sidebarResizeHandle:hover::before {
+  background: rgba(95, 214, 255, 0.72);
+}
+
+.sidebarResizeHandleRight {
+  right: 0;
+}
+
+.sidebarResizeHandleRight::before {
+  right: 0;
+}
+
+.sidebarResizeHandleLeft {
+  left: 0;
+}
+
+.sidebarResizeHandleLeft::before {
+  left: 0;
 }
 
 .inspector h2,
@@ -653,8 +687,38 @@ input {
   transition: height 150ms ease;
 }
 
+.contentBrowser.resizing {
+  transition: none;
+}
+
 .contentBrowser.collapsed {
   height: 46px;
+}
+
+.contentBrowserResizeHandle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 10px;
+  cursor: ns-resize;
+  z-index: 4;
+}
+
+.contentBrowserResizeHandle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: rgba(95, 214, 255, 0.18);
+  transition: background 120ms ease;
+}
+
+.contentBrowserResizeHandle:hover::before,
+.contentBrowser.resizing .contentBrowserResizeHandle::before {
+  background: rgba(95, 214, 255, 0.72);
 }
 
 .collapseButton {
@@ -975,6 +1039,10 @@ input {
   .inspector {
     border-top: 1px solid #272d37;
     border-left: 0;
+  }
+
+  .sidebarResizeHandle {
+    display: none;
   }
 
   .brand {
