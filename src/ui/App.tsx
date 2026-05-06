@@ -56,6 +56,7 @@ import { getObjFlowResourceNames, mergeCommonResourceEntries, parseCommonResourc
 import { parseNoclipBrresSummary, type NoclipBrresSummary } from '../lib/noclipBrres';
 import { describeEntity, exportTrack, loadTrackBytes, loadTrackFile, replaceCourseKmp, validateExportBytes, validateTrack, type TrackDocument } from '../lib/track';
 import { parseU8 } from '../lib/u8';
+import { comparePlaceableCourseAssetPriority, dedupePlaceableCourseAssetsForBrowser } from './browserAssetDedupe';
 import { Noclip3DViewport, type TransformTool, type ViewMode } from './Noclip3DViewport';
 import objectNamesById from '../generated/mkwObjectNames.json';
 
@@ -77,13 +78,28 @@ const featuredObjectIds = [0x65, 0x191, 0x192, 0x194, 0x148, 0xe5, 0xce, 0x197, 
 
 const bundledCourseObjectResourceNames = new Set(['castle_tree1.brres', 'castle_tree2.brres', 'choropu.brres', 'kinoko_lift1.brres', 'kuribo.brres', 'npc_mii_a.brres', 'pakkun_f.brres', 'pendulum.brres']);
 const guidanceOnlyObjectProfileNotes: Record<string, string> = {
+  'Ambient Sound': 'This object does not use extra object settings here. Its setup comes from placement plus the Sound Range path below.',
+  'Arena Finish Line': 'This object does not use extra object settings here. Its setup comes from exact placement across the arena section where laps or mission completions should count.',
+  'Audience Flash': 'This object does not use complex route or collision setup here. Its main job is to support crowd presentation around the trick or ambience zone it belongs to.',
   Boo: 'This object does not use extra object settings here. Its main setup comes from placement, scale, and any linked area behavior.',
+  'Burning Entry Effect': 'This object does not use extra object settings here. Its setup comes from the matching burning fall-boundary collision and the surrounding visuals, not from per-object numbers.',
   'Crowd Sound': 'This object does not use extra object settings here. Its main setup comes from placement plus the Sound Range path below.',
+  'Frozen Water Effect': 'This object does not use extra object settings here. Its setup comes from icy water fall boundaries and the target slot, not from the object position itself.',
   'Half-Pipe Trigger': 'This object does not use extra object settings here. Its setup comes from exact placement against the course wall and the surrounding geometry.',
+  'Invisible Barrier': 'This object does not use extra object settings here. Its setup comes from scale and placement so the invisible volume blocks only the space you intend.',
   'Jump Pad': 'This object does not use extra object settings here. Its setup comes from placement, rotation, and the takeoff and landing space you build around it.',
+  'Leaf Effect': 'This object does not use extra object settings here. Its setup comes from placing the effect where players actually intersect the intended foliage zone.',
+  'Lens Flare': 'This object does not use extra object settings here. Its setup comes from placement relative to the sun or bright focal point it should visually reinforce.',
+  'Launch Star': 'This object does not use extra object settings here. Its setup comes from placement, facing, and the surrounding launch geometry that sells the jump in play.',
+  'Moving Terrain Helper': 'This object usually works with moving-terrain collision or slot-specific setup instead of a POTI route. Check the KCL, slot behavior, and surrounding geometry before binding a path.',
+  'Moving Aurora': 'This object does not use extra object settings here. Its setup comes from placement within the Rainbow Road setpiece and respecting its fixed transform limits.',
   'Pipe Hazard': 'This object does not use extra object settings here. Its setup comes from placement, scale, and the space you leave around it for readable avoidance.',
+  'Snow Effect': 'This object does not use extra object settings here. Its setup comes from slot behavior and the surrounding snow presentation rather than local object values.',
+  'Sea Surface': 'This object does not use extra object settings here. Its setup comes from scale, placement, and the matching slot or surrounding water logic.',
   'Pylon Obstacle': 'This object does not use extra object settings here. Its setup comes from placement, spacing, and the line choice it creates.',
   'Rolling Ball': 'This object does not use extra object settings here. Its behavior is driven by mission logic and the related CPU setup, not per-object fields in this inspector.',
+  'Toad Factory Alarm': 'This object does not use extra object settings here. Its setup comes from placement near the related machinery or hazard timing you want to emphasize.',
+  'Waterfall Effect': 'This object does not use extra object settings here. Its setup comes from placing the effect along the intended waterfall or flow volume so the particles support the scene.',
 };
 const enemyRouteSetting1Options = [
   { value: 0, label: 'None' },
@@ -447,9 +463,29 @@ const topmanBehaviorOptions = [
   { value: 1, label: 'Coward' },
   { value: 2, label: 'Aggressive' },
 ];
+const coinModeOptions = [
+  { value: 0, label: 'Battle' },
+  { value: 1, label: 'Tournament / Mission' },
+];
+const directItemOptions = [
+  { value: 0, label: 'Green Shell' },
+  { value: 1, label: 'Red Shell' },
+  { value: 2, label: 'Banana' },
+  { value: 3, label: 'Mushroom' },
+  { value: 4, label: 'Star' },
+];
 const beltCurveStartSideOptions = [
   { value: 0, label: 'Fast Side Starts On Right' },
   { value: 1, label: 'Fast Side Starts On Left' },
+];
+const audienceFlashWaluigiOptions = [
+  { value: 0, label: 'Flash Waluigi A' },
+  { value: 1, label: 'Flash Waluigi B' },
+  { value: 2, label: 'Flash Waluigi C' },
+];
+const audienceFlashSkateOptions = [
+  { value: 0, label: 'Flash Skate A' },
+  { value: 1, label: 'Flash Skate B' },
 ];
 const gobjPresenceModeOptions = [
   { mask: 0x01, label: '1P / Time Trial' },
@@ -661,15 +697,12 @@ export function App() {
   }, [objFlow, commonArchive]);
   const browserFolders = useMemo<BrowserFolder[]>(() => {
     const objects = (realObjectCatalog.length ? realObjectCatalog : objectCatalog).filter((object, index, list) => index === list.findIndex((candidate) => catalogId(candidate) === catalogId(object)));
-    const placeableCourseAssets =
+    const placeableCourseAssets = dedupePlaceableCourseAssetsForBrowser(
       courseAssetDb?.assets
         .filter((asset) => asset.kind === 'object' || asset.kind === 'sharedObject')
-        .map((asset) => mapCourseAssetToPlaceable(asset, objFlow))
-        .sort((a, b) => {
-          const placeableScore = Number(b.objectId !== null) - Number(a.objectId !== null);
-          const sharedScore = Number(b.source === 'sharedObjectDir') - Number(a.source === 'sharedObjectDir');
-          return placeableScore || sharedScore || a.baseName.localeCompare(b.baseName) || a.trackLabel.localeCompare(b.trackLabel);
-        }) ?? [];
+        .map((asset) => mapCourseAssetToPlaceable(asset, objFlow)) ?? [],
+      new Set(objects.map((object) => catalogId(object))),
+    ).sort((a, b) => comparePlaceableCourseAssetPriority(a, b));
     const featured = objects.filter((object) => isFeaturedObject(object)).slice(0, 18);
     const enemies = [...objects.filter((object) => classifyObjectFolder(object) === 'enemies'), ...placeableCourseAssets.filter((asset) => classifyObjectFolder(asset) === 'enemies')].slice(0, 72);
     const nature = [...objects.filter((object) => classifyObjectFolder(object) === 'nature'), ...placeableCourseAssets.filter((asset) => classifyObjectFolder(asset) === 'nature')].slice(0, 72);
@@ -3132,6 +3165,680 @@ function Inspector({
                 <span>{describePresenceFlags(entity.presenceFlags)}</span>
                 {objectHasExtraPresenceBits && <span>Keeps extra presence bits above 0x0007 for compatibility.</span>}
               </div>
+            </label>
+          )}
+          {objectProfile.title === 'Rising Water' && entity.objectSettings && (
+            <>
+              <label>
+                Rising Speed (Odd Stages)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="-32768"
+                  max="32767"
+                  value={toSigned16(entity.objectSettings[0])}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, toUnsigned16(value));
+                  }}
+                />
+              </label>
+              <label>
+                Stage 5 Target Height
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="-32768"
+                  max="32767"
+                  value={toSigned16(entity.objectSettings[1])}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, toUnsigned16(value));
+                  }}
+                />
+              </label>
+              <label>
+                Stage 1 Target Height
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="-32768"
+                  max="32767"
+                  value={toSigned16(entity.objectSettings[2])}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, toUnsigned16(value));
+                  }}
+                />
+              </label>
+              <label>
+                Stage 2 Frame Count
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[3]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(3, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Stage 3 Target Height
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="-32768"
+                  max="32767"
+                  value={toSigned16(entity.objectSettings[4])}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(4, toUnsigned16(value));
+                  }}
+                />
+              </label>
+              <label>
+                Stage 4 Frame Count
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[5]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(5, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Rising Speed (Even Stages)
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="-32768"
+                  max="32767"
+                  value={toSigned16(entity.objectSettings[6])}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(6, toUnsigned16(value));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Splash Trigger' && entity.objectSettings && (
+            <label>
+              Group Y KCL Index
+              <input
+                className="routeInput"
+                type="number"
+                min="0"
+                max="65535"
+                value={entity.objectSettings[0]}
+                onChange={(event) => {
+                  const value = Number(event.currentTarget.value);
+                  if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                }}
+              />
+            </label>
+          )}
+          {objectProfile.title === 'Enemy Route Controller' && entity.objectSettings && (
+            <>
+              <label>
+                Entry Flag
+                <select value={entity.objectSettings[0]} onChange={(event) => onChangeObjectSetting(0, Number(event.currentTarget.value))}>
+                  <option value={0}>Do Not Enter</option>
+                  <option value={1}>Enter</option>
+                </select>
+              </label>
+              <label>
+                Time To Next Controller
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Controller ID
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Next Controller ID
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[3]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(3, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                ENPH Section Override
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="-32768"
+                  max="32767"
+                  value={toSigned16(entity.objectSettings[7])}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(7, toUnsigned16(value));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Topman Manager' && entity.objectSettings && (
+            <>
+              <label>
+                Manager ID
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Topmen Controlled
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                First Topman ID
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Behavior
+                <select value={entity.objectSettings[3]} onChange={(event) => onChangeObjectSetting(3, Number(event.currentTarget.value))}>
+                  {!topmanBehaviorOptions.some((option) => option.value === entity.objectSettings[3]) && (
+                    <option value={entity.objectSettings[3]}>Custom #{entity.objectSettings[3]}</option>
+                  )}
+                  {topmanBehaviorOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Cumulative Topmen Count
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[4]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(4, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Pole Collision Controller' && entity.objectSettings && (
+            <label>
+              Wall KCL Variant
+              <input
+                className="routeInput"
+                type="number"
+                min="0"
+                max="65535"
+                value={entity.objectSettings[0]}
+                onChange={(event) => {
+                  const value = Number(event.currentTarget.value);
+                  if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                }}
+              />
+            </label>
+          )}
+          {objectProfile.title === 'Coin Pickup' && entity.objectSettings && (
+            <>
+              <label>
+                Mode
+                <select value={entity.objectSettings[0]} onChange={(event) => onChangeObjectSetting(0, Number(event.currentTarget.value))}>
+                  {coinModeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Start / Respawn Place
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Spawn Behavior
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Direct Item Spawn' && entity.objectSettings && (
+            <label>
+              Item Type
+              <select value={entity.objectSettings[0]} onChange={(event) => onChangeObjectSetting(0, Number(event.currentTarget.value))}>
+                {!directItemOptions.some((option) => option.value === entity.objectSettings[0]) && (
+                  <option value={entity.objectSettings[0]}>Custom #{entity.objectSettings[0]}</option>
+                )}
+                {directItemOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {objectProfile.title === 'Moving Wall' && entity.objectSettings && (
+            <>
+              <label>
+                Start Pause
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                End Pause
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Move Speed
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Travel Distance
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[3]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(3, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Initial Delay
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[4]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(4, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Falling Block' && entity.objectSettings && (
+            <>
+              <label>
+                Countdown Fall Time
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Extra Delay
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Pianta Spectator' && entity.objectSettings && (
+            <>
+              <label>
+                Clap And Face Player
+                <select value={entity.objectSettings[1]} onChange={(event) => onChangeObjectSetting(1, Number(event.currentTarget.value))}>
+                  <option value={0}>Disabled</option>
+                  <option value={1}>Enabled</option>
+                </select>
+              </label>
+              <label>
+                Face Player Distance
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Clap Animation Distance
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[3]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(3, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Fireworks' && entity.objectSettings && (
+            <label>
+              Pop Delay
+              <input
+                className="routeInput"
+                type="number"
+                min="0"
+                max="65535"
+                value={entity.objectSettings[0]}
+                onChange={(event) => {
+                  const value = Number(event.currentTarget.value);
+                  if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                }}
+              />
+            </label>
+          )}
+          {objectProfile.title === 'Steam Effect' && entity.objectSettings && (
+            <>
+              <label>
+                Start Delay
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Burst Length
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Time Between Bursts
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[3]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(3, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Bowser Statue' && entity.objectSettings && (
+            <>
+              <label>
+                Activation Distance
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Fire Behavior
+                <select value={entity.objectSettings[1]} onChange={(event) => onChangeObjectSetting(1, Number(event.currentTarget.value))}>
+                  <option value={0}>Decoration</option>
+                  <option value={1}>Obstacle</option>
+                </select>
+              </label>
+              <label>
+                Start Delay
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[2]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(2, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Audience Flash' && entity.objectSettings && entity.objectId === 0x2d2 && (
+            <label>
+              Flash Variant
+              <select value={entity.objectSettings[0]} onChange={(event) => onChangeObjectSetting(0, Number(event.currentTarget.value))}>
+                {audienceFlashWaluigiOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {objectProfile.title === 'Audience Flash' && entity.objectSettings && entity.objectId === 0x2d4 && (
+            <label>
+              Flash Variant
+              <select value={entity.objectSettings[0]} onChange={(event) => onChangeObjectSetting(0, Number(event.currentTarget.value))}>
+                {audienceFlashSkateOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {objectProfile.title === 'Lava Bubble' && entity.objectSettings && (
+            <>
+              <label>
+                Start Speed
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Flip Horizontally
+                <select value={entity.objectSettings[1]} onChange={(event) => onChangeObjectSetting(1, Number(event.currentTarget.value))}>
+                  <option value={0}>Disabled</option>
+                  <option value={1}>Enabled</option>
+                </select>
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Flying Flock' && entity.objectSettings && (
+            <>
+              <label>
+                Speed
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[0]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+              <label>
+                Flock Count
+                <input
+                  className="routeInput"
+                  type="number"
+                  min="0"
+                  max="65535"
+                  value={entity.objectSettings[1]}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    if (Number.isFinite(value)) onChangeObjectSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                  }}
+                />
+              </label>
+            </>
+          )}
+          {objectProfile.title === 'Route Boat' && entity.objectSettings && (
+            <label>
+              Start Speed
+              <input
+                className="routeInput"
+                type="number"
+                min="0"
+                max="65535"
+                value={entity.objectSettings[0]}
+                onChange={(event) => {
+                  const value = Number(event.currentTarget.value);
+                  if (Number.isFinite(value)) onChangeObjectSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
+                }}
+              />
             </label>
           )}
           {objectProfile.title === 'Item Box' && entity.objectSettings && (
@@ -6005,6 +6712,218 @@ function getObjectInspectorProfile(entity: KmpEntity, objFlow: CommonResourceArc
   const flow = objFlow?.byId.get(entity.objectId);
   const sourceText = [flow?.name ?? '', flow?.resources ?? '', fallbackObjectName(entity.objectId)].join(' ').toLowerCase();
 
+  if (/(^|\s)(airblock)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Invisible Barrier',
+      summary: 'Invisible blocking volume. Use it when you need to stop glides, jumps, or out-of-bounds movement without adding visible geometry to the course.',
+      tips: ['Scale it to the minimum volume that solves the problem so the invisible wall stays predictable.', 'Check the barrier from gameplay camera angles and from top view so it does not accidentally block a fair recovery line.'],
+    };
+  }
+  if (/(^|\s)(psea)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Sea Surface',
+      summary: 'Large water surface object. Use it to support the surrounding beach or shoreline presentation without relying on the course model alone.',
+      tips: ['Scale and place it so the visible water line matches the nearby coast and horizon.', 'Check the section from the racing line and from free camera so the water plane does not clip obvious terrain edges.'],
+    };
+  }
+  if (/(^|\s)(venice_nami)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Rising Water',
+      summary: 'Multi-stage rising and falling water controller. Set the stage heights and timings first, then verify the full cycle against the collision and respawn flow.',
+      tips: ['Treat the placed Y position as the baseline; all target heights are relative to that origin.', 'If players can touch this water, pair it with the proper splash object so respawns and effects stay stable.'],
+      cautions: ['This is a staged tide controller, not a generic decorative plane. Check the full cycle in motion before treating the setup as finished.'],
+    };
+  }
+  if (/(^|\s)(pocha|pochayogan|pochamori)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Splash Trigger',
+      summary: 'Collision-driven splash effect. Use it to connect water, lava, or leaf-splash collision to the correct effect region without placing visual clutter on the racing line.',
+      tips: ['Match the Group Y KCL Index below to the collision group that should trigger the splash.', 'The object position itself matters far less than the matching KCL and group index, so verify the collision first.'],
+    };
+  }
+  if (/(^|\s)(lensfx)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Lens Flare',
+      summary: 'Sun-facing flare helper. Use it to reinforce a bright light source like the sun without baking the whole effect into the course model.',
+      tips: ['Place it near the matching sun or bright focal point instead of scattering it loosely through the skybox.', 'Check the effect from the main racing line so the flare supports the scene instead of distracting from the route.'],
+    };
+  }
+  if (/(^|\s)(entry)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Burning Entry Effect',
+      summary: 'Fall-boundary fire effect helper. Use it when a burning out-of-bounds zone should wrap the player in the proper visual effect.',
+      tips: ['Pair it with the correct burning fall-boundary collision instead of treating it like a standalone hazard.', 'Check the target slot and surrounding presentation so the fire effect fits the course theme.'],
+    };
+  }
+  if (/(^|\s)(coin)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Coin Pickup',
+      summary: 'Battle or mission coin pickup. Use it to define where coins appear, when they respawn, and how they behave in Coin Runners or tournament-style setups.',
+      tips: ['Use the mode and spawn fields below consistently across a set of coins so their appearance timing feels deliberate.', 'Check coin placement from gameplay view; battle pickups need to be obvious without cluttering the arena.'],
+      cautions: ['Some coins intentionally spawn later, so verify your start/respawn logic in context instead of assuming every placed coin appears immediately.'],
+    };
+  }
+  if (/(^|\s)(itemdirect)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Direct Item Spawn',
+      summary: 'Tournament-style placed item spawner. Use it when a specific item should exist directly on the track instead of coming from an item box.',
+      tips: ['Keep the item type count small and readable so players can understand why an item is placed there.', 'Do not spam these across a track; the vanilla game is known to break online if too many are used.'],
+      cautions: ['These do not appear in Time Trials, so avoid making them critical to a route that should still make sense there.', 'Vanilla online play is unsafe beyond 10 placed ItemDirect objects.'],
+    };
+  }
+  if (/(^|\s)(wlwallgc|cara1)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Moving Wall',
+      summary: 'Constant-speed back-and-forth mover. Use it for horizontal blockers, moving walls, or similar scripted motion that pauses cleanly at each end.',
+      tips: ['The motion direction comes from object rotation, so set the facing first before tuning timing values.', 'Verify the full back-and-forth cycle in scene view; these objects pause at each end instead of moving as a sine wave.'],
+    };
+  }
+  if (/(^|\s)(obakeblocksfcc|obakeblock2sfcc|obakeblock3sfcc)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Falling Block',
+      summary: 'Ghost Valley falling block. Use it when you need touch-triggered or timed block drops that still read clearly from the racing line.',
+      tips: ['On slot 5.3 the Y rotation affects fall direction instead of the visual block rotation, so verify both gameplay and visuals together.', 'If you use timed falling behavior, tune the countdown timing as a group so nearby blocks feel coordinated rather than random.'],
+      cautions: ['These blocks are slot-sensitive; outside the intended slot they can lose solidity or special behavior.', 'Large block counts are possible, but only if the target slot and fall logic are set up carefully.'],
+    };
+  }
+  if (/(^|\s)(eline_control)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Enemy Route Controller',
+      summary: 'CPU route controller object. Use it to chain enemy-line behavior changes instead of forcing every CPU path edit directly into ENPT and ENPH alone.',
+      tips: ['Treat Controller ID 0 as the chain terminator and make sure each next-controller link points where you expect.', 'Verify the linked ENPH section and controller timing together, because the controller chain and enemy path graph interact.'],
+      cautions: ['This is easy to misconfigure silently. Check the full controller chain in sequence instead of editing one controller in isolation.'],
+    };
+  }
+  if (/(^|\s)(begoman_manager)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Topman Manager',
+      summary: 'Galaxy Colosseum Topman wave controller. Use it to define which Topmen belong to each manager and how later waves unlock after the earlier ones are defeated.',
+      tips: ['Keep manager IDs and first-controlled Topman IDs organized before tuning the behavior fields.', 'Check the target slot early; this object is slot-restricted and does not behave like a generic obstacle spawner.'],
+      cautions: ['Wave order comes from the manager chain, so mismatched IDs or counts can make later groups fail to appear as intended.'],
+    };
+  }
+  if (/(^|\s)(ice)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Frozen Water Effect',
+      summary: 'Respawn ice-effect helper. Use it to enable the frozen-water presentation for icy fall boundaries on the proper slot.',
+      tips: ['This effect is global once enabled, so focus on the target slot and boundary setup rather than the object position.', 'Use it only when the track really has icy water behavior; otherwise it adds confusion without gameplay value.'],
+    };
+  }
+  if (/(^|\s)(startline2d)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Arena Finish Line',
+      summary: '2D finish-line helper for arena-style laps or mission-style goals. Place it exactly where the completion line should register.',
+      tips: ['Line it up from top view so the counted crossing spans the intended width of the arena path.', 'Check the player approach and lap flow so the line reads clearly instead of feeling arbitrary.'],
+    };
+  }
+  if (/(^|\s)(dummypole)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Pole Collision Controller',
+      summary: 'Solidity helper for pole-style obstacles. Use it when the visible pole needs the correct wall collision variant to match the intended hit behavior.',
+      tips: ['Treat the Wall KCL Variant below as the key field; this object mainly exists to define collision behavior for the pole it supports.', 'Check the supported visual pole and nearby wall space together so the resulting collision is readable in motion.'],
+    };
+  }
+  if (/(^|\s)(monte_a)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Pianta Spectator',
+      summary: 'Single Pianta crowd actor. Use it to add trackside life, then tune when it turns to face the player and when it starts clapping.',
+      tips: ['Keep the rotation and clap distances close to the actual player route so the reaction reads intentionally.', 'These work best off the main racing surface, supporting a nearby setpiece instead of cluttering the line.'],
+    };
+  }
+  if (/(^|\s)(hanabi)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Fireworks',
+      summary: 'Cutscene firework helper. Use it to support intro or celebration presentation on tracks that rely on a GP-only firework cue.',
+      tips: ['Set the pop timing against the intro camera sequence instead of tuning it blind from free camera.', 'Treat this as presentation timing, not gameplay collision or route logic.'],
+    };
+  }
+  if (/(^|\s)(leaf_effect)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Leaf Effect',
+      summary: 'Leaf-drive effect helper. Use it when players should kick up leaves while driving or flying through a foliage-heavy section.',
+      tips: ['Place it where the player can actually intersect the foliage zone instead of treating it as a distant decoration.', 'Check the slot and surrounding scene effects so the leaf burst reads cleanly and does not get lost in other particles.'],
+    };
+  }
+  if (/(^|\s)(starring)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Launch Star',
+      summary: 'Rainbow Road launch-star helper. Use it when the course geometry and presentation are designed around a dramatic launch transition.',
+      tips: ['Align it with the intended player approach and landing arc before treating the setup as finished.', 'Check the surrounding visuals so the launch star reads as a deliberate focal point rather than a loose prop.'],
+    };
+  }
+  if (/(^|\s)(steam)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Steam Effect',
+      summary: 'Toad’s Factory steam burst effect. Use it to add readable hazard atmosphere around machinery with a clear delay and pulse rhythm.',
+      tips: ['Tune delay, burst length, and repeat spacing together instead of editing them one at a time.', 'Keep the effect near the machine or lane it is supposed to sell so the particle timing makes visual sense.'],
+    };
+  }
+  if (/(^|\s)(alarm)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Toad Factory Alarm',
+      summary: 'Factory alarm effect helper. Use it as presentation support for moving machinery, hazard timing, or industrial setpieces.',
+      tips: ['Place it where the visual source of the alarm is obvious instead of treating it as generic ambience.', 'Pair it with the relevant machine or hazard cycle so the alarm feels motivated.'],
+    };
+  }
+  if (/(^|\s)(koopafigure64)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Bowser Statue',
+      summary: 'Bowser’s Castle statue hazard. Use it when you want proximity-based flame breathing with visible warning space before the player commits.',
+      tips: ['Set the activation distance and start delay together so the statue reads early instead of firing unfairly into the player path.', 'Check the target lane from the racing line; this hazard is about readable timing, not just visual scale.'],
+    };
+  }
+  if (/(^|\s)(aurora)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Moving Aurora',
+      summary: 'Rainbow Road moving setpiece strip. Use it as part of the stage presentation while respecting its fixed transform behavior.',
+      tips: ['Because it cannot be rotated or scaled, treat placement and surrounding scene composition as the real setup work.', 'Check it in motion against the rest of the Rainbow Road backdrop so the movement reads intentional.'],
+    };
+  }
+  if (/(^|\s)(boble)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Lava Bubble',
+      summary: 'Route-driven lava bubble hazard. Use it when you want a simple bouncing fire threat with readable timing and spacing.',
+      tips: ['Keep the route and start speed simple so the jump rhythm reads clearly from the player line.', 'If you flip the model behavior, verify the result from multiple camera angles so the motion still reads naturally.'],
+      routeLabel: 'Movement Path',
+    };
+  }
+  if (/(^|\s)(seagull|bird)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Flying Flock',
+      summary: 'Route-following flying wildlife. Use it to add motion to the sky space without turning it into a distracting gameplay threat.',
+      tips: ['Keep the path clean and readable against the skybox so the flock motion supports the scene instead of looking erratic.', 'Use modest counts; repeated flying silhouettes become visual noise quickly.'],
+      routeLabel: 'Flight Path',
+    };
+  }
+  if (/(^|\s)(cruiserr)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Route Boat',
+      summary: 'Route-following boat setpiece. Use it to add readable trackside motion or moving water traffic without crowding the race line.',
+      tips: ['Check the boat from the main approach angle so its speed feels intentional rather than random background drift.', 'Use top or ortho view to keep the full route away from obvious shoreline clipping or collision confusion.'],
+      routeLabel: 'Boat Path',
+    };
+  }
+  if (/(^|\s)(fallbsa|fallbsb|fall_mh|fall_y)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Waterfall Effect',
+      summary: 'Waterfall particle helper. Use it to reinforce large moving water setpieces where the visual flow needs extra depth beyond the model alone.',
+      tips: ['Place the effect along the visible flow volume, not just at the source, so the full waterfall reads convincingly.', 'Match any effect variant to the surrounding waterfall asset set before finalizing the scene.'],
+    };
+  }
+  if (/(^|\s)(envsnow)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Snow Effect',
+      summary: 'Global snow presentation helper. Use it when the track slot and surrounding scene are meant to carry an active snow effect.',
+      tips: ['Treat this as a slot-and-scene effect, not as a local prop you can tune with placement alone.', 'Check the snow density against other particles so the course stays readable in motion.'],
+    };
+  }
+  if (/(^|\s)(flash_l|flash_b|flash_w|flash_m|flash_s)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Audience Flash',
+      summary: 'Crowd camera-flash effect helper. Use it to reinforce tricks, ambience cues, or crowd reactions around a spectacle-heavy section.',
+      tips: ['Keep the effect near the intended audience zone or stadium setpiece so the flashes feel connected to the crowd.', 'If you use a variant-selecting flash object, match the chosen variant to the surrounding venue assets.'],
+    };
+  }
   if (/(^|\s)(itembox|f_itembox|s_itembox|w_itembox|sin_itembox|w_itemboxline)(\s|$)/.test(sourceText)) {
     return {
       title: 'Item Box',
@@ -6019,6 +6938,15 @@ function getObjectInspectorProfile(entity: KmpEntity, objFlow: CommonResourceArc
       summary: 'Ambient audience sound source. Place it near spectator spaces so the audio presence matches what the player sees in that part of the course.',
       tips: ['Keep it off the racing surface and near the crowd or set-piece it is meant to support.', 'Its sound range comes from the assigned route, so set the Sound Range path first and shape that route around the spectator zone instead of the racing line.'],
       cautions: ['Treat this as support for nearby crowd or Mii-themed scenery, not as a general-purpose hazard or obstacle.', 'Vanilla Mario Kart Wii only uses this object on slots 1.1 and 3.1.'],
+      routeLabel: 'Sound Range',
+    };
+  }
+  if (/(^|\s)(sound_river|sound_water_fall|sound_lake|sound_big_fall|sound_sea|sound_fountain|sound_volcano|sound_audience|sound_big_river|sound_sand_fall|sound_lift)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Ambient Sound',
+      summary: 'Route-driven sound emitter. Place it near the visual source and shape the bound route around the space where the audio should feel present.',
+      tips: ['Use the Sound Range path below to describe where the effect should be heard instead of dropping the object directly on the racing line.', 'Check the sound source against the surrounding scenery so the route length and placement match what the player sees.'],
+      cautions: ['Most vanilla sound objects are slot-dependent, so verify the target slot before relying on them for critical ambience.', 'These are support objects, not hazards or collision props. Keep them out of the player path unless you deliberately want them visible.'],
       routeLabel: 'Sound Range',
     };
   }
@@ -6363,7 +7291,14 @@ function getObjectInspectorProfile(entity: KmpEntity, objFlow: CommonResourceArc
       variantLabel: 'Spinner Type',
     };
   }
-  if (/(^|\s)(k_sticklift00|kinoko_lift1|kinoko_ud|kinoko_bend|kinoko_nm|kinoko_kuki|escalator|escalator_group|belteasy|beltcrossing|beltcurvea|beltcurveb|belt|pendulum|sound_lift|dkship64|dkturibashigcc|dkmarutagcc|bulldozer_left|bulldozer_right|crane|townbridgedsc|venice_hasi|venice_gondola|twistedway|dkfalls)(\s|$)/.test(sourceText)) {
+  if (/(^|\s)(escalator|escalator_group|belteasy|beltcrossing|beltcurvea|beltcurveb|belt|bulldozer_left|bulldozer_right|townbridgedsc|venice_hasi)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Moving Terrain Helper',
+      summary: 'Moving-terrain support object. Use it to define how surrounding KCL or slot-specific motion behaves, then verify the setup from both player view and top view.',
+      tips: ['Check the related moving-road or moving-terrain collision first; several of these objects do not use a POTI route at all.', 'Use the object position, rotation, and nearby KCL as the main setup controls before you touch advanced fields.'],
+    };
+  }
+  if (/(^|\s)(k_sticklift00|kinoko_lift1|kinoko_ud|kinoko_bend|kinoko_nm|kinoko_kuki|pendulum|dkship64|dkturibashigcc|dkmarutagcc|crane|venice_gondola|twistedway|dkfalls)(\s|$)/.test(sourceText)) {
     return {
       title: 'Moving Platform',
       summary: 'Route-driven moving object. Assign a path first, then verify the motion from the player line and from top or ortho view.',
@@ -6531,6 +7466,7 @@ function presentValidationIssue(message: string): { summary: string; detail?: st
   if (message.startsWith('Checkpoint ') && message.includes('references missing respawn point')) return { summary: 'A checkpoint points to a respawn that does not exist.', detail: message };
   if (message.startsWith('Checkpoint ') && message.includes('references missing previous checkpoint')) return { summary: 'A checkpoint previous-link is invalid.', detail: message };
   if (message.startsWith('Checkpoint ') && message.includes('references missing next checkpoint')) return { summary: 'A checkpoint next-link is invalid.', detail: message };
+  if (message.startsWith('Object ') && message.includes('requires a route')) return { summary: 'A route-driven object is missing its route.', detail: message };
   if (message.startsWith('Object ') && message.includes('references missing route')) return { summary: 'An object points to a route that does not exist.', detail: message };
   if (message.startsWith('Area ') && message.includes('references missing route')) return { summary: 'An area points to a route that does not exist.', detail: message };
   if (message.startsWith('Area ') && message.includes('references missing camera')) return { summary: 'An area points to a camera that does not exist.', detail: message };
@@ -6578,6 +7514,15 @@ function humanizeObjectName(value: string): string {
       return lower.charAt(0).toUpperCase() + lower.slice(1);
     })
     .join(' ');
+}
+
+function toSigned16(value: number): number {
+  return value & 0x8000 ? value - 0x10000 : value;
+}
+
+function toUnsigned16(value: number): number {
+  const clamped = Math.max(-0x8000, Math.min(0x7fff, Math.trunc(value)));
+  return clamped < 0 ? clamped + 0x10000 : clamped;
 }
 
 function shortAssetName(resource: string): string {

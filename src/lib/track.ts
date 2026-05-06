@@ -167,6 +167,63 @@ export interface ValidateTrackOptions {
   common?: CommonResourceArchive | null;
 }
 
+const ROUTE_REQUIRED_OBJECT_NAMES = new Map<number, string>([
+  [0x005, 'sound_river'],
+  [0x006, 'sound_water_fall'],
+  [0x008, 'sound_lake'],
+  [0x009, 'sound_big_fall'],
+  [0x00a, 'sound_sea'],
+  [0x00b, 'sound_fountain'],
+  [0x00c, 'sound_volcano'],
+  [0x00d, 'sound_audience'],
+  [0x00e, 'sound_big_river'],
+  [0x00f, 'sound_sand_fall'],
+  [0x010, 'sound_lift'],
+  [0x015, 'sound_Mii'],
+  [0x072, 'sunDS'],
+  [0x099, 'f_itembox'],
+  [0x0b6, 'MashBalloonGC'],
+  [0x0c3, 'CarA1'],
+  [0x0cc, 'basabasa'],
+  [0x0ce, 'HeyhoShipGBA'],
+  [0x0cf, 'koopaBall'],
+  [0x0d0, 'kart_truck'],
+  [0x0d1, 'car_body'],
+  [0x0d2, 'skyship'],
+  [0x0d3, 'w_woodbox'],
+  [0x0d4, 'w_itembox'],
+  [0x0d5, 'w_itemboxline'],
+  [0x0d6, 'VolcanoBall1'],
+  [0x0d7, 'penguin_s'],
+  [0x0d8, 'penguin_m'],
+  [0x0d9, 'penguin_l'],
+  [0x0da, 'castleballoon1'],
+  [0x0dd, 'boble'],
+  [0x0de, 'K_bomb_car'],
+  [0x0e2, 'hanachan'],
+  [0x0e3, 'seagull'],
+  [0x0e4, 'moray'],
+  [0x0e5, 'crab'],
+  [0x0e7, 'CarA2'],
+  [0x0e8, 'CarA3'],
+  [0x0e9, 'Hwanwan'],
+  [0x0eb, 'Twanwan'],
+  [0x0ec, 'cruiserR'],
+  [0x0ed, 'bird'],
+  [0x0ee, 'sin_itembox'],
+  [0x190, 'heyho2'],
+  [0x191, 'kuribo'],
+  [0x192, 'choropu'],
+  [0x193, 'cow'],
+  [0x198, 'DKrockGC'],
+  [0x199, 'sanbo'],
+  [0x19b, 'TruckWagon'],
+  [0x19c, 'heyho'],
+  [0x1f5, 'DKship64'],
+  [0x253, 'venice_gondola'],
+  [0x257, 'RM_ring1'],
+]);
+
 export function validateTrack(track: TrackDocument, options: ValidateTrackOptions = {}): Array<{ level: 'error' | 'warning'; message: string }> {
   const results: Array<{ level: 'error' | 'warning'; message: string }> = [];
   if (!findFile(track.archiveEntries, 'course_model.brres')) results.push({ level: 'error', message: 'course_model.brres is missing.' });
@@ -362,6 +419,14 @@ function validateKnownObjectPitfalls(track: TrackDocument): Array<{ level: 'erro
   if (!track.kmp) return [];
   const results: Array<{ level: 'error' | 'warning'; message: string }> = [];
   const objects = track.kmp.entities.filter((entity) => entity.section === 'GOBJ' && entity.objectId !== undefined);
+  for (const entity of objects) {
+    const routeRequiredName = ROUTE_REQUIRED_OBJECT_NAMES.get(entity.objectId!);
+    if (!routeRequiredName || entity.routeIndex === undefined || entity.routeIndex !== 0xffff) continue;
+    results.push({
+      level: 'warning',
+      message: `Object ${entity.index} (${routeRequiredName}) requires a route but does not have one.`,
+    });
+  }
   const slotRestrictedObjects = new Map<number, string>([
     [0x72, 'sunDS'],
     [0x144, 'pylon01'],

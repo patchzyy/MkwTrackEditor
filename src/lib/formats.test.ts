@@ -703,6 +703,27 @@ describe('MKW track loading', () => {
     expect(issues.some((message) => message.includes('InsekiA') && message.includes('Setting 3 left at 0'))).toBe(true);
   });
 
+  it.runIf(existsSync(sampleTrack))('warns when a route-driven vanilla object is missing its route', () => {
+    const archive = decodeYaz0(new Uint8Array(readFileSync(sampleTrack)));
+    const entries = parseU8(archive);
+    const courseKmp = entries.find((entry) => entry.path.toLowerCase().endsWith('course.kmp'));
+    expect(courseKmp?.data).toBeTruthy();
+
+    const baseKmp = parseKmp(courseKmp!.data!);
+    const patched = appendKmpGobj(baseKmp, 0x0d0, { x: 10, y: 20, z: 30 });
+    const track: TrackDocument = {
+      fileName: '0.szs',
+      compressed: true,
+      archiveEntries: entries.map((entry) => (entry === courseKmp ? { ...entry, data: patched } : entry)),
+      kmp: parseKmp(patched),
+      brresFiles: [],
+      brresSummaries: {},
+      warnings: [],
+    };
+    const issues = validateTrack(track).map((item) => item.message);
+    expect(issues.some((message) => message.includes('kart_truck') && message.includes('requires a route'))).toBe(true);
+  });
+
   it.runIf(existsSync(sampleTrack))('warns when Daisy Circuit Mii audience objects are duplicated', () => {
     const archive = decodeYaz0(new Uint8Array(readFileSync(sampleTrack)));
     const entries = parseU8(archive);
