@@ -267,6 +267,8 @@ interface CameraLookDragState {
   lastClientX: number;
   lastClientY: number;
   pointerId: number;
+  pointerLocked: boolean;
+  skipNextDelta: boolean;
 }
 
 interface PendingEntityDragState {
@@ -301,6 +303,7 @@ type DofMode = 'full' | 'reduced' | 'off';
 
 const MKW_RENDER_SCALE = 0.1;
 const ENTITY_DRAG_START_THRESHOLD_PX = 4;
+const MAX_CAMERA_LOOK_DELTA_PX = 240;
 const CAMERA_MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyQ', 'KeyE', 'PageUp', 'PageDown', 'Space', 'KeyC', 'ControlLeft', 'ControlRight'] as const;
 const startSlotPixelCenterX = 59;
 const startSlotWidePixelWidth = 50;
@@ -598,6 +601,8 @@ export function Noclip3DViewport({
         lastClientX: event.clientX,
         lastClientY: event.clientY,
         pointerId: event.pointerId,
+        pointerLocked: document.pointerLockElement === canvas,
+        skipNextDelta: false,
       };
       setViewportCameraLookActive(true);
       if (viewerRef.current) viewerRef.current.inputManager.buttons = event.buttons;
@@ -613,14 +618,37 @@ export function Noclip3DViewport({
       event.stopPropagation();
       const viewer = viewerRef.current;
       if (!viewer) return;
-      const dx = document.pointerLockElement === canvas ? event.movementX : event.clientX - cameraLook.lastClientX;
-      const dy = document.pointerLockElement === canvas ? event.movementY : event.clientY - cameraLook.lastClientY;
+      const pointerLocked = document.pointerLockElement === canvas;
+      if (cameraLook.skipNextDelta || cameraLook.pointerLocked !== pointerLocked) {
+        cameraLookDragRef.current = {
+          lastClientX: event.clientX,
+          lastClientY: event.clientY,
+          pointerId: event.pointerId,
+          pointerLocked,
+          skipNextDelta: false,
+        };
+        return;
+      }
+      const dx = pointerLocked ? event.movementX : event.clientX - cameraLook.lastClientX;
+      const dy = pointerLocked ? event.movementY : event.clientY - cameraLook.lastClientY;
+      if (!Number.isFinite(dx) || !Number.isFinite(dy) || Math.abs(dx) > MAX_CAMERA_LOOK_DELTA_PX || Math.abs(dy) > MAX_CAMERA_LOOK_DELTA_PX) {
+        cameraLookDragRef.current = {
+          lastClientX: event.clientX,
+          lastClientY: event.clientY,
+          pointerId: event.pointerId,
+          pointerLocked,
+          skipNextDelta: false,
+        };
+        return;
+      }
       viewer.inputManager.buttons = event.buttons || 2;
       applyDirectCameraLook(viewer, dx, dy);
       cameraLookDragRef.current = {
         lastClientX: event.clientX,
         lastClientY: event.clientY,
         pointerId: event.pointerId,
+        pointerLocked,
+        skipNextDelta: false,
       };
     };
 
@@ -636,17 +664,29 @@ export function Noclip3DViewport({
       event.preventDefault();
     };
 
+    const handlePointerLockChange = () => {
+      const cameraLook = cameraLookDragRef.current;
+      if (!cameraLook) return;
+      cameraLookDragRef.current = {
+        ...cameraLook,
+        pointerLocked: document.pointerLockElement === canvas,
+        skipNextDelta: true,
+      };
+    };
+
     canvas.addEventListener('pointerdown', handleNativePointerDown);
     canvas.addEventListener('pointermove', handleNativePointerMove);
     canvas.addEventListener('pointerup', handleNativePointerRelease);
     canvas.addEventListener('pointercancel', handleNativePointerRelease);
     canvas.addEventListener('contextmenu', handleNativeContextMenu);
+    document.addEventListener('pointerlockchange', handlePointerLockChange);
     return () => {
       canvas.removeEventListener('pointerdown', handleNativePointerDown);
       canvas.removeEventListener('pointermove', handleNativePointerMove);
       canvas.removeEventListener('pointerup', handleNativePointerRelease);
       canvas.removeEventListener('pointercancel', handleNativePointerRelease);
       canvas.removeEventListener('contextmenu', handleNativeContextMenu);
+      document.removeEventListener('pointerlockchange', handlePointerLockChange);
     };
   }, []);
 

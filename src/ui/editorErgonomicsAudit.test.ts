@@ -80,6 +80,10 @@ describe('editor ergonomics audit', () => {
     expect(viewportSource).toContain('const position = placeFromScreen(event.clientX, event.clientY, 0, isCollisionSnapModifier(event));');
     expect(viewportSource).toContain('getVisibleEntitiesForRouteFilter(track.kmp.entities, routeVisibilityRef.current, track.kmp, routeUsage)');
     expect(viewportSource).toContain('routeVisibilityRef.current,');
+    expect(viewportSource).toContain('const MAX_CAMERA_LOOK_DELTA_PX = 240;');
+    expect(viewportSource).toContain('document.addEventListener(\'pointerlockchange\', handlePointerLockChange);');
+    expect(viewportSource).toContain('if (cameraLook.skipNextDelta || cameraLook.pointerLocked !== pointerLocked) {');
+    expect(viewportSource).toContain('Math.abs(dx) > MAX_CAMERA_LOOK_DELTA_PX || Math.abs(dy) > MAX_CAMERA_LOOK_DELTA_PX');
     expect(viewportSource).toContain("scheduleInteractionCommit({ kind: 'moveEntity', entity, position });");
     expect(viewportSource).toContain('flushPendingInteractionCommit();');
     expect(viewportSource).toContain('setDragPreview({ id: entity.id, position, rotation: entity.rotation, scale: entity.scale });');
