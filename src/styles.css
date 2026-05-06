@@ -379,7 +379,7 @@ input {
 
 .contentBrowser {
   position: relative;
-  height: 184px;
+  height: 248px;
   min-height: 46px;
   border-top: 1px solid #272d37;
   background: #171c24;
@@ -407,7 +407,7 @@ input {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  height: 46px;
+  min-height: 46px;
   padding: 12px 52px 0 14px;
 }
 
@@ -419,13 +419,59 @@ input {
   white-space: nowrap;
 }
 
+.browserFolders {
+  display: flex;
+  gap: 8px;
+  overflow: auto hidden;
+  padding: 10px 14px 8px;
+}
+
+.collapsed .browserFolders {
+  display: none;
+}
+
+.browserFolder {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid #2f3743;
+  border-radius: 6px;
+  color: #cbd5e1;
+  background: #1b212a;
+  cursor: pointer;
+  text-align: left;
+}
+
+.browserFolder strong,
+.browserFolder span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browserFolder strong {
+  font-size: 12px;
+}
+
+.browserFolder span {
+  color: #9faaba;
+  font-size: 11px;
+}
+
+.browserFolder.active {
+  border-color: #5fd6ff;
+  background: #243241;
+}
+
 .assetStrip {
   display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 136px;
+  grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
   gap: 10px;
-  overflow: auto hidden;
+  overflow: auto;
   padding: 0 14px 14px;
+  align-content: start;
 }
 
 .collapsed .assetStrip {

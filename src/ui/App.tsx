@@ -86,6 +86,13 @@ const kmpPointCatalog: Array<{ section: AppendableKmpSection; label: string; cat
   { section: 'MSPT', label: 'Battle Finish Point', category: 'Battle' },
 ];
 
+type BrowserObject = (typeof objectCatalog)[number] | ObjFlowEntry;
+type BrowserFolderId = 'featured' | 'kmp' | 'enemies' | 'nature' | 'gameplay' | 'props' | 'common' | 'track';
+type BrowserFolder =
+  | { id: BrowserFolderId; label: string; detail: string; kind: 'kmp'; items: typeof kmpPointCatalog }
+  | { id: BrowserFolderId; label: string; detail: string; kind: 'object'; items: BrowserObject[] }
+  | { id: BrowserFolderId; label: string; detail: string; kind: 'brres'; items: string[] };
+
 export function App() {
   const smokeTrackUrl = useMemo(() => (typeof window === 'undefined' ? null : new URL(window.location.href).searchParams.get('smokeTrack')), []);
   const smokeCallbackUrl = useMemo(() => (typeof window === 'undefined' ? null : new URL(window.location.href).searchParams.get('smokeCallback')), []);
@@ -95,6 +102,7 @@ export function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tool, setTool] = useState<TransformTool>('translate');
   const [browserOpen, setBrowserOpen] = useState(true);
+  const [browserFolder, setBrowserFolder] = useState<BrowserFolderId>('featured');
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [collisionVisible, setCollisionVisible] = useState(false);
   const [status, setStatus] = useState('No track loaded');
@@ -113,6 +121,31 @@ export function App() {
       .sort((a, b) => countAvailableResources(b, commonArchive) - countAvailableResources(a, commonArchive))
       .slice(0, 180);
   }, [objFlow, commonArchive]);
+  const browserFolders = useMemo<BrowserFolder[]>(() => {
+    const objects = (realObjectCatalog.length ? realObjectCatalog : objectCatalog).filter((object, index, list) => index === list.findIndex((candidate) => catalogId(candidate) === catalogId(object)));
+    const featured = objects.filter((object) => isFeaturedObject(object)).slice(0, 18);
+    const enemies = objects.filter((object) => classifyObjectFolder(object) === 'enemies').slice(0, 36);
+    const nature = objects.filter((object) => classifyObjectFolder(object) === 'nature').slice(0, 36);
+    const gameplay = objects.filter((object) => classifyObjectFolder(object) === 'gameplay').slice(0, 36);
+    const props = objects.filter((object) => classifyObjectFolder(object) === 'props').slice(0, 36);
+    const common = objects.slice(0, 120);
+    const trackAssets = track?.brresFiles.slice(0, 48) ?? [];
+    return [
+      { id: 'featured', label: 'Common', detail: `${featured.length} highlighted objects`, kind: 'object', items: featured },
+      { id: 'kmp', label: 'KMP', detail: `${kmpPointCatalog.length} editor records`, kind: 'kmp', items: kmpPointCatalog },
+      { id: 'enemies', label: 'Enemies', detail: `${enemies.length} common enemies`, kind: 'object', items: enemies },
+      { id: 'nature', label: 'Nature', detail: `${nature.length} trees and foliage`, kind: 'object', items: nature },
+      { id: 'gameplay', label: 'Gameplay', detail: `${gameplay.length} interactive objects`, kind: 'object', items: gameplay },
+      { id: 'props', label: 'Props', detail: `${props.length} scenery and structures`, kind: 'object', items: props },
+      { id: 'common', label: 'All Common', detail: `${common.length} ObjFlow objects`, kind: 'object', items: common },
+      { id: 'track', label: 'Track Meshes', detail: track ? `${trackAssets.length} BRRES files` : 'Load a track to list BRRES', kind: 'brres', items: trackAssets },
+    ].filter((folder) => folder.items.length > 0 || folder.id === 'track');
+  }, [commonArchive, objFlow, realObjectCatalog, track]);
+  const activeBrowserFolder = browserFolders.find((folder) => folder.id === browserFolder) ?? browserFolders[0] ?? null;
+
+  useEffect(() => {
+    if (!browserFolders.some((folder) => folder.id === browserFolder) && browserFolders[0]) setBrowserFolder(browserFolders[0].id);
+  }, [browserFolder, browserFolders]);
 
   useEffect(() => {
     let cancelled = false;
@@ -618,30 +651,52 @@ export function App() {
         </button>
         <div className="browserHeader">
           <strong>Content Browser</strong>
-          <span>{track ? `${track.brresFiles.length} BRRES resources${objFlow ? ` · ${objFlow.entries.length} ObjFlow objects` : ''}` : 'Load a track to list archive assets'}</span>
+          <span>
+            {activeBrowserFolder
+              ? `${activeBrowserFolder.label} · ${activeBrowserFolder.detail}`
+              : track
+                ? `${track.brresFiles.length} BRRES resources${objFlow ? ` · ${objFlow.entries.length} ObjFlow objects` : ''}`
+                : 'Load a track to list archive assets'}
+          </span>
+        </div>
+        <div className="browserFolders" role="tablist" aria-label="Content browser folders">
+          {browserFolders.map((folder) => (
+            <button
+              key={folder.id}
+              type="button"
+              className={folder.id === activeBrowserFolder?.id ? 'browserFolder active' : 'browserFolder'}
+              onClick={() => setBrowserFolder(folder.id)}
+            >
+              <strong>{folder.label}</strong>
+              <span>{folder.detail}</span>
+            </button>
+          ))}
         </div>
         <div className="assetStrip">
-          {kmpPointCatalog.map((item) => (
-            <div className="assetTile" key={item.section} draggable onDragStart={(event) => event.dataTransfer.setData('application/mkw-point-section', item.section)}>
-              <div className="thumbnail kmp">{item.section}</div>
-              <strong>{item.label}</strong>
-              <span>{item.category}</span>
-            </div>
-          ))}
-          {(realObjectCatalog.length ? realObjectCatalog : objectCatalog).map((object) => (
-            <div className="assetTile" key={catalogId(object)} draggable onDragStart={(event) => event.dataTransfer.setData('application/mkw-object-id', String(catalogId(object)))}>
-              <ObjectThumbnail object={object} common={commonArchive} summaries={commonBrresSummaries} />
-              <strong>{'label' in object ? object.label : object.name || object.resources}</strong>
-              <span>{objectAssetLabel(object, commonArchive, commonBrresSummaries)}</span>
-            </div>
-          ))}
-          {track?.brresFiles.slice(0, 24).map((path) => (
-            <div className="assetTile" key={path}>
-              <div className="thumbnail brres">BRRES</div>
-              <strong>{path.split('/').pop()}</strong>
-              <span>{describeBrres(track.brresSummaries[path]) || path}</span>
-            </div>
-          ))}
+          {activeBrowserFolder?.kind === 'kmp' &&
+            activeBrowserFolder.items.map((item) => (
+              <div className="assetTile" key={item.section} draggable onDragStart={(event) => event.dataTransfer.setData('application/mkw-point-section', item.section)}>
+                <div className="thumbnail kmp">{item.section}</div>
+                <strong>{item.label}</strong>
+                <span>{item.category}</span>
+              </div>
+            ))}
+          {activeBrowserFolder?.kind === 'object' &&
+            activeBrowserFolder.items.map((object) => (
+              <div className="assetTile" key={catalogId(object)} draggable onDragStart={(event) => event.dataTransfer.setData('application/mkw-object-id', String(catalogId(object)))}>
+                <ObjectThumbnail object={object} common={commonArchive} summaries={commonBrresSummaries} />
+                <strong>{'label' in object ? object.label : object.name || object.resources}</strong>
+                <span>{objectAssetLabel(object, commonArchive, commonBrresSummaries)}</span>
+              </div>
+            ))}
+          {activeBrowserFolder?.kind === 'brres' &&
+            activeBrowserFolder.items.map((path) => (
+              <div className="assetTile" key={path}>
+                <div className="thumbnail brres">BRRES</div>
+                <strong>{path.split('/').pop()}</strong>
+                <span>{describeBrres(track?.brresSummaries[path]) || path}</span>
+              </div>
+            ))}
         </div>
       </section>
     </main>
@@ -1384,6 +1439,29 @@ function countAvailableResources(object: ObjFlowEntry, common: CommonResourceArc
 
 function objectResources(object: (typeof objectCatalog)[number] | ObjFlowEntry): string[] {
   return 'resources' in object ? getObjFlowResourceNames(object) : [];
+}
+
+function classifyObjectFolder(object: BrowserObject): Exclude<BrowserFolderId, 'featured' | 'kmp' | 'common' | 'track'> {
+  const text = objectSearchText(object);
+  if (/(kuribo|goomba|choropu|pakkun|killer|wanwan|heyho|nokonoko|koopa|sanbo|crab|fish|enemy|boss)/.test(text)) return 'enemies';
+  if (/(tree|wood|bush|grass|flower|plant|leaf|palm|forest|kinoko|mushroom|cactus)/.test(text)) return 'nature';
+  if (/(item|lift|cannon|route|switch|gear|pendulum|flipper|jump|belt|panel|launcher|goal|sound|effect)/.test(text)) return 'gameplay';
+  return 'props';
+}
+
+function isFeaturedObject(object: BrowserObject): boolean {
+  const text = objectSearchText(object);
+  return /(kuribo|goomba|tree|item|box|cannon|pakkun|choropu|npc_mii|pendulum|lift|kinoko)/.test(text);
+}
+
+function objectSearchText(object: BrowserObject): string {
+  return [
+    'label' in object ? object.label : object.name,
+    'category' in object ? object.category : '',
+    ...objectResources(object),
+  ]
+    .join(' ')
+    .toLowerCase();
 }
 
 function shortAssetName(resource: string): string {
