@@ -37,13 +37,15 @@ describe('editor ergonomics audit', () => {
     expect(appSource).toContain('Duplicate');
     expect(appSource).toContain('Paste');
     expect(appSource).toContain("event.key === 'Delete' || event.key === 'Backspace'");
-    expect(appSource).toContain('Snap to Surface');
     expect(appSource).toContain('onDelete={deleteSelectedEntity}');
+    expect(appSource).not.toContain('Snap selected to collision');
+    expect(appSource).not.toContain('Snap to Surface');
 
     expect(viewportSource).toContain('marqueeSelection');
     expect(viewportSource).toContain('event.shiftKey');
     expect(viewportSource).toContain('event.ctrlKey');
     expect(viewportSource).toContain('isAdditiveSelectionModifier');
+    expect(viewportSource).toContain('function isCollisionSnapModifier(event: { ctrlKey: boolean; metaKey: boolean }): boolean {');
     expect(viewportSource).toContain('onSelectMany?.(selectedIds, { additive: marquee.additive })');
     expect(viewportSource).toContain('const ENTITY_DRAG_START_THRESHOLD_PX = 4;');
     expect(viewportSource).toContain('pendingEntityDragRef');
@@ -52,6 +54,7 @@ describe('editor ergonomics audit', () => {
     expect(viewportSource).toContain('fillBetweenPreview: SceneOverlayFillBetweenPreview[]');
     expect(viewportSource).toContain('const [hoveredHandle, setHoveredHandle] = useState<GizmoHandleKey | null>(null)');
     expect(viewportSource).toContain('const [previewTransform, setPreviewTransform] = useState<EntityTransformPreview | null>(null)');
+    expect(viewportSource).toContain('const routeVisibilityRef = useRef<Record<RouteVisibilityKey, boolean>>({');
     expect(viewportSource).toContain('const deltaDegrees = -normalizeAngle(angle - drag.startAngle) * (180 / Math.PI);');
     expect(viewportSource).toContain('if (selectedIdRef.current && hasCameraPositionChanged(cameraPosition, overlayCameraPositionRef.current)) {');
     expect(viewportSource).toContain('const baseLength = Math.max(180, Math.min(900, scaleLength || 260));');
@@ -59,6 +62,10 @@ describe('editor ergonomics audit', () => {
     expect(viewportSource).toContain("const CAMERA_MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD'");
     expect(viewportSource).toContain("document.documentElement.dataset.viewportCameraLook = active ? 'active' : 'inactive';");
     expect(viewportSource).toContain('const restoreSuppressedKeys = withSuppressedCameraMovementKeys(result.viewer!);');
+    expect(viewportSource).toContain('updateActiveDrag(event.clientX, event.clientY, isCollisionSnapModifier(event));');
+    expect(viewportSource).toContain('const position = placeFromScreen(event.clientX, event.clientY, 0, isCollisionSnapModifier(event));');
+    expect(viewportSource).toContain('getVisibleEntitiesForRouteFilter(track.kmp.entities, routeVisibilityRef.current, track.kmp, routeUsage)');
+    expect(viewportSource).toContain('routeVisibilityRef.current,');
     expect(viewportSource).toContain('setDragPreview({ id: entity.id, position, rotation: entity.rotation, scale: entity.scale });');
     expect(viewportSource).toContain('rotation: startEntity.rotation');
     expect(viewportSource).toContain('setHoveredId');

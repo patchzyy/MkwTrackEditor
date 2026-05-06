@@ -319,6 +319,10 @@ function isAdditiveSelectionModifier(event: { shiftKey: boolean; ctrlKey: boolea
   return event.shiftKey || event.ctrlKey || event.metaKey;
 }
 
+function isCollisionSnapModifier(event: { ctrlKey: boolean; metaKey: boolean }): boolean {
+  return event.ctrlKey || event.metaKey;
+}
+
 function getTrackViewBounds(track: TrackDocument): TrackViewBounds | null {
   const min = vec3.fromValues(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
   const max = vec3.fromValues(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
@@ -418,6 +422,16 @@ export function Noclip3DViewport({
   const selectedIdsRef = useRef<string[]>(selectedIds);
   const toolRef = useRef<TransformTool>(tool);
   const viewModeRef = useRef<ViewMode>(viewMode);
+  const routeVisibilityRef = useRef<Record<RouteVisibilityKey, boolean>>({
+    ENPT: true,
+    ITPT: true,
+    CKPT: true,
+    POTI_OBJECT: true,
+    POTI_CAMERA: true,
+    JGPT: true,
+    AREA: true,
+    CAME: true,
+  });
   const hoveredIdRef = useRef<string | null>(null);
   const hoveredHandleRef = useRef<GizmoHandleKey | null>(null);
   const activeHandleRef = useRef<GizmoHandleKey | null>(null);
@@ -459,6 +473,7 @@ export function Noclip3DViewport({
   selectedIdsRef.current = selectedIds;
   toolRef.current = tool;
   viewModeRef.current = viewMode;
+  routeVisibilityRef.current = routeVisibility;
   hoveredIdRef.current = hoveredId;
   hoveredHandleRef.current = hoveredHandle;
 
@@ -1069,12 +1084,12 @@ export function Noclip3DViewport({
       if (moved >= ENTITY_DRAG_START_THRESHOLD_PX) {
         pendingEntityDragRef.current = null;
         startEntityDrag(entity, pendingEntityDrag.startX, pendingEntityDrag.startY);
-        updateActiveDrag(event.clientX, event.clientY, event.shiftKey);
+        updateActiveDrag(event.clientX, event.clientY, isCollisionSnapModifier(event));
       }
       return;
     }
     if (draggingEntityRef.current) {
-      updateActiveDrag(event.clientX, event.clientY, event.shiftKey);
+      updateActiveDrag(event.clientX, event.clientY, isCollisionSnapModifier(event));
       return;
     }
     updateHoveredEntity(event.clientX, event.clientY, event.currentTarget);
@@ -1219,7 +1234,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     const rawObjectId = event.dataTransfer.getData('application/mkw-object-id');
     const rawKmpSection = event.dataTransfer.getData('application/mkw-point-section') as AppendableKmpSection | '';
     if (!rawObjectId && !rawKmpSection) return;
-    const position = placeFromScreen(event.clientX, event.clientY, 0, event.shiftKey);
+    const position = placeFromScreen(event.clientX, event.clientY, 0, isCollisionSnapModifier(event));
     if (!position) return;
     if (rawKmpSection) {
       onAddKmpPoint?.(rawKmpSection, position);
@@ -1284,7 +1299,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     if (!track?.kmp || !viewer || !canvas) return null;
     const routeUsage = getPotiRouteUsage(track.kmp);
     return pickEntityFromScreen(
-      getVisibleEntitiesForRouteFilter(track.kmp.entities, routeVisibility, track.kmp, routeUsage),
+      getVisibleEntitiesForRouteFilter(track.kmp.entities, routeVisibilityRef.current, track.kmp, routeUsage),
       clientX,
       clientY,
       canvas,
@@ -1322,7 +1337,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
         activeHandleRef.current,
         collisionVisibleRef.current,
         toolRef.current,
-        routeVisibility,
+        routeVisibilityRef.current,
         viewModeRef.current,
         getViewerCameraPosition(viewerRef.current),
       ),

@@ -51,7 +51,6 @@ import {
   type KmpStageField,
   type Vec3,
 } from '../lib/kmp';
-import { raycastDown } from '../lib/kcl';
 import { getObjFlowResourceNames, mergeCommonResourceEntries, parseCommonResourceArchive, type CommonResourceArchive, type ObjFlowEntry } from '../lib/objflow';
 import { parseNoclipBrresSummary, type NoclipBrresSummary } from '../lib/noclipBrres';
 import {
@@ -1676,36 +1675,6 @@ export function App() {
     }
   }
 
-  function snapSelectedToCollision() {
-    if (!track?.kmp || !track.kcl || !selected) return;
-    if (selected.checkpoint) {
-      const left = raycastDown(track.kcl, selected.checkpoint.left.x, selected.checkpoint.left.z);
-      const right = raycastDown(track.kcl, selected.checkpoint.right.x, selected.checkpoint.right.z);
-      if (!left && !right) {
-        setStatus('No collision surface found below checkpoint endpoints.');
-        return;
-      }
-      let nextBytes = track.kmp.original;
-      if (left) nextBytes = patchKmpCheckpointEndpoint(track.kmp, selected, 'left', left);
-      if (right) {
-        const nextDoc = parseKmp(nextBytes);
-        const nextEntity = nextDoc.entities.find((entity) => entity.id === selected.id) ?? selected;
-        nextBytes = patchKmpCheckpointEndpoint(nextDoc, nextEntity, 'right', right);
-      }
-      applyEditorChange(replaceCourseKmp(track, nextBytes));
-      setStatus('Snapped checkpoint endpoints to the collision surface.');
-      return;
-    }
-
-    const hit = raycastDown(track.kcl, selected.position.x, selected.position.z);
-    if (!hit) {
-      setStatus(`No collision surface found below ${entityLabel(selected)}.`);
-      return;
-    }
-    applyEditorChange(replaceCourseKmp(track, patchKmpEntityPosition(track.kmp, selected, hit)));
-    setStatus(`Snapped ${entityLabel(selected)} to the collision surface.`);
-  }
-
   function offsetSelectedEntities() {
     if (!track?.kmp || selectedEntities.length < 2) return;
     if (batchOffset.x === 0 && batchOffset.y === 0 && batchOffset.z === 0) return;
@@ -1728,51 +1697,6 @@ export function App() {
       if (movedCount === 0) return;
       applyEditorChange(replaceCourseKmp(track, current.original), selectedIdStateRef.current, true, selectedIdsStateRef.current);
       setStatus(`Offset ${movedCount} selected elements.`);
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  function snapMultipleSelectedToCollision() {
-    if (!track?.kmp || !track.kcl || selectedEntities.length < 2) return;
-    try {
-      let current = track.kmp;
-      let snappedCount = 0;
-      for (const entity of selectedEntities) {
-        if (entity.section === 'STGI') continue;
-        const live = findMatchingEntity(current, entity);
-        if (!live) continue;
-        if (live.checkpoint) {
-          const left = raycastDown(track.kcl, live.checkpoint.left.x, live.checkpoint.left.z);
-          const right = raycastDown(track.kcl, live.checkpoint.right.x, live.checkpoint.right.z);
-          let nextBytes = current.original;
-          let changed = false;
-          if (left) {
-            nextBytes = patchKmpCheckpointEndpoint(current, live, 'left', left);
-            changed = true;
-          }
-          if (right) {
-            const nextDoc = parseKmp(nextBytes);
-            const nextEntity = findMatchingEntity(nextDoc, live) ?? live;
-            nextBytes = patchKmpCheckpointEndpoint(nextDoc, nextEntity, 'right', right);
-            changed = true;
-          }
-          if (!changed) continue;
-          current = parseKmp(nextBytes);
-          snappedCount++;
-          continue;
-        }
-        const hit = raycastDown(track.kcl, live.position.x, live.position.z);
-        if (!hit) continue;
-        current = parseKmp(patchKmpEntityPosition(current, live, hit));
-        snappedCount++;
-      }
-      if (snappedCount === 0) {
-        setStatus('No collision surface found below the selected elements.');
-        return;
-      }
-      applyEditorChange(replaceCourseKmp(track, current.original), selectedIdStateRef.current, true, selectedIdsStateRef.current);
-      setStatus(`Snapped ${snappedCount} selected elements to the collision surface.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     }
@@ -2166,7 +2090,6 @@ export function App() {
               onChangeObjectId={setBatchObjectId}
               onApplyObjectId={batchObjectId !== null ? () => replaceSelectedObjectTypes(batchObjectId) : undefined}
               onDelete={deleteSelectedEntity}
-              onSnapToCollision={track.kcl ? snapMultipleSelectedToCollision : undefined}
             />
           )}
           {selected ? (
@@ -2184,7 +2107,6 @@ export function App() {
               onDelete={selected.section === 'STGI' ? undefined : deleteSelectedEntity}
               onMoveEarlier={selected.section === 'STGI' ? undefined : () => moveSelectedEntity(-1)}
               onMoveLater={selected.section === 'STGI' ? undefined : () => moveSelectedEntity(1)}
-              onSnapToCollision={track.kcl ? snapSelectedToCollision : undefined}
               onChangeCheckpointEndpoint={(side, position) => patchSelectedEntity((kmp, entity) => patchKmpCheckpointEndpoint(kmp, entity, side, position))}
               onChangeCheckpointField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpCheckpointField(kmp, entity, field, value))}
               onChangePointDeviation={(value) => patchSelectedEntity((kmp, entity) => patchKmpPointDeviation(kmp, entity, value))}
@@ -2641,7 +2563,6 @@ function BatchSelectionPanel({
   onChangeObjectId,
   onApplyObjectId,
   onDelete,
-  onSnapToCollision,
 }: {
   count: number;
   offset: Vec3;
@@ -2652,7 +2573,6 @@ function BatchSelectionPanel({
   onChangeObjectId: (value: number | null) => void;
   onApplyObjectId?: () => void;
   onDelete: () => void;
-  onSnapToCollision?: () => void;
 }) {
   return (
     <>
@@ -2667,9 +2587,6 @@ function BatchSelectionPanel({
           <div className="actionRow">
             <button className="inlineAction" type="button" onClick={onDelete}>
               Delete
-            </button>
-            <button className="inlineAction" type="button" onClick={onSnapToCollision} disabled={!onSnapToCollision}>
-              Snap to Surface
             </button>
           </div>
         </label>
@@ -2761,7 +2678,6 @@ function Inspector({
   onDelete,
   onMoveEarlier,
   onMoveLater,
-  onSnapToCollision,
   onChangeCheckpointEndpoint,
   onChangeCheckpointField,
   onChangePointDeviation,
@@ -2808,7 +2724,6 @@ function Inspector({
   onDelete?: () => void;
   onMoveEarlier?: () => void;
   onMoveLater?: () => void;
-  onSnapToCollision?: () => void;
   onChangeCheckpointEndpoint: (side: 'left' | 'right', position: Vec3) => void;
   onChangeCheckpointField: (field: KmpCheckpointField, value: number) => void;
   onChangePointDeviation: (value: number) => void;
@@ -2881,14 +2796,6 @@ function Inspector({
         <label>
           Position
           <VectorInputs value={entity.position} onChange={onChangePosition} />
-        </label>
-      )}
-      {entity.section !== 'STGI' && onSnapToCollision && (
-        <label>
-          Surface Snap
-          <button className="inlineAction" type="button" onClick={onSnapToCollision}>
-            Snap selected to collision
-          </button>
         </label>
       )}
       {entity.checkpoint && (
