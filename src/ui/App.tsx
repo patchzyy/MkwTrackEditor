@@ -760,6 +760,7 @@ type BrowserFolder =
   | { id: BrowserFolderId; label: string; detail: string; kind: 'brres'; items: string[] };
 
 type InspectorSection = 'object' | 'track';
+type OutlinerGroup = { key: string; label: string; entities: KmpEntity[] };
 
 export function App() {
   const CONTENT_BROWSER_COLLAPSED_HEIGHT = 46;
@@ -792,6 +793,8 @@ export function App() {
   const [browserQuery, setBrowserQuery] = useState('');
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [inspectorSection, setInspectorSection] = useState<InspectorSection>('object');
+  const [outlinerQuery, setOutlinerQuery] = useState('');
+  const [outlinerCollapsedSections, setOutlinerCollapsedSections] = useState<Record<string, boolean>>({});
   const [inspectorWidth, setInspectorWidth] = useState(INSPECTOR_DEFAULT_WIDTH);
   const [sidebarResizing, setSidebarResizing] = useState<'placeAssets' | 'inspector' | null>(null);
   const [collisionVisible, setCollisionVisible] = useState(false);
@@ -2067,11 +2070,36 @@ export function App() {
     setStatus(`Exported ${link.download} (${bytes.length.toLocaleString()} bytes).`);
   }
 
+  const outlinerGroups = useMemo(
+    () => buildOutlinerGroups(track?.kmp?.entities ?? [], outlinerQuery, entityLabel),
+    [outlinerQuery, track?.kmp?.entities, objFlow],
+  );
+  const selectedOutlinerCount = useMemo(
+    () => outlinerGroups.reduce((sum, group) => sum + group.entities.filter((entity) => selectedIds.includes(entity.id)).length, 0),
+    [outlinerGroups, selectedIds],
+  );
+  const trackSummary = useMemo(() => {
+    if (!track?.kmp) return null;
+    return {
+      entityCount: track.kmp.entities.length,
+      groupCount: track.kmp.pathGraphs.reduce((sum, graph) => sum + graph.groups.length, 0),
+      routeCount: track.kmp.routes.length,
+    };
+  }, [track?.kmp]);
+  function toggleOutlinerSection(section: string) {
+    setOutlinerCollapsedSections((current) => ({ ...current, [section]: !current[section] }));
+  }
+  function collapseAllOutlinerSections() {
+    setOutlinerCollapsedSections(Object.fromEntries(outlinerGroups.map((group) => [group.key, true])));
+  }
+  function expandAllOutlinerSections() {
+    setOutlinerCollapsedSections(Object.fromEntries(outlinerGroups.map((group) => [group.key, false])));
+  }
+
   const selectedInspectorSection: InspectorSection = selected?.section === 'STGI' ? 'track' : 'object';
   const selectedInspector = selected ? (
     <Inspector
       entity={selected}
-      label={entityLabel(selected)}
       pathInfo={selectedPathInfo}
       cameraHeader={cameraHeader}
       referenceCounts={referenceCounts}
@@ -2258,102 +2286,165 @@ export function App() {
         <aside className="inspector">
           {inspectorOpen && <div className="sidebarResizeHandle sidebarResizeHandleLeft" onPointerDown={(event) => beginSidebarResize('inspector', event)} />}
           <div className="panelHeader">
-            <h2>Inspector</h2>
+            <h2>Scene</h2>
             <button className="iconButton" type="button" onClick={() => setInspectorOpen(false)} title="Hide inspector" aria-label="Hide inspector">
               <PanelRightClose size={16} />
             </button>
           </div>
-          <div className="segmented inspectorSections" role="tablist" aria-label="Inspector sections">
-            <button
-              type="button"
-              className={inspectorSection === 'object' ? 'active' : ''}
-              onClick={() => setInspectorSection('object')}
-              role="tab"
-              aria-selected={inspectorSection === 'object'}
-            >
-              Object Settings
-            </button>
-            <button
-              type="button"
-              className={inspectorSection === 'track' ? 'active' : ''}
-              onClick={() => setInspectorSection('track')}
-              role="tab"
-              aria-selected={inspectorSection === 'track'}
-            >
-              Track Settings
-            </button>
+          <div className="rightSidebarPanels">
+            <section className="sidebarPane outlinerPane">
+              <div className="paneHeader">
+                <h2>Outliner</h2>
+                <span className="paneMeta">{track?.kmp ? `${track.kmp.entities.length} entities` : 'No track loaded'}</span>
+              </div>
+              <div className="paneBody">
+                <OutlinerPanel
+                  groups={outlinerGroups}
+                  query={outlinerQuery}
+                  onChangeQuery={setOutlinerQuery}
+                  selectedId={selectedId}
+                  selectedIds={selectedIds}
+                  collapsedSections={outlinerCollapsedSections}
+                  onToggleSection={toggleOutlinerSection}
+                  onSelect={selectEntity}
+                  selectedCount={selectedOutlinerCount}
+                  getEntityLabel={entityLabel}
+                  onExpandAll={expandAllOutlinerSections}
+                  onCollapseAll={collapseAllOutlinerSections}
+                />
+              </div>
+            </section>
+            <section className="sidebarPane detailsPane">
+              <div className="paneHeader">
+                <h2>Details</h2>
+              </div>
+              <div className="paneBody">
+                <div className="segmented inspectorSections" role="tablist" aria-label="Inspector sections">
+                  <button
+                    type="button"
+                    className={inspectorSection === 'object' ? 'active' : ''}
+                    onClick={() => setInspectorSection('object')}
+                    role="tab"
+                    aria-selected={inspectorSection === 'object'}
+                  >
+                    Object Settings
+                  </button>
+                  <button
+                    type="button"
+                    className={inspectorSection === 'track' ? 'active' : ''}
+                    onClick={() => setInspectorSection('track')}
+                    role="tab"
+                    aria-selected={inspectorSection === 'track'}
+                  >
+                    Track Settings
+                  </button>
+                </div>
+                {inspectorSection === 'object' ? (
+                  <>
+                    {selected && selectedInspectorSection === 'object' && (
+                      <DetailsSummaryBar
+                        items={[
+                          { label: 'Selection', value: entityLabel(selected) },
+                          { label: 'Section', value: friendlySectionLabel(selected.section) },
+                          { label: 'Index', value: `#${selected.index}` },
+                          { label: 'Multi-Select', value: selectedEntities.length > 1 ? `${selectedEntities.length} active` : '' },
+                          {
+                            label: 'Path',
+                            value: selected.routePoint ? `Route ${selected.routePoint.routeIndex} · Node ${selected.routePoint.pointIndex}` : selected.routeIndex !== undefined && selected.routeIndex !== 0xffff ? `Route ${selected.routeIndex}` : '',
+                          },
+                        ]}
+                      />
+                    )}
+                    {selectedEntities.length > 1 && (
+                      <BatchSelectionPanel
+                        count={selectedEntities.length}
+                        offset={batchOffset}
+                        onChangeOffset={setBatchOffset}
+                        onApplyOffset={offsetSelectedEntities}
+                        objectOptions={canBatchReplaceObjects ? objectOptions : []}
+                        objectId={batchObjectId}
+                        onChangeObjectId={setBatchObjectId}
+                        onApplyObjectId={batchObjectId !== null ? () => replaceSelectedObjectTypes(batchObjectId) : undefined}
+                        onDelete={deleteSelectedEntity}
+                      />
+                    )}
+                    {selectedInspector && selectedInspectorSection === 'object' ? (
+                      <>
+                        <h2>Selection</h2>
+                        {selectedInspector}
+                      </>
+                    ) : selected?.section === 'STGI' ? (
+                      <p className="muted">Track settings are in the Track Settings section below.</p>
+                    ) : (
+                      <p className="muted">Select an object, route node, checkpoint, start point, camera, cannon point, or respawn point in the viewport or outliner.</p>
+                    )}
+                    {selectedEntities.length > 1 && <p className="muted">{selectedEntities.length} selected. Details are showing the primary selection, with batch tools above.</p>}
+                  </>
+                ) : (
+                  <>
+                    {trackSummary && (
+                      <DetailsSummaryBar
+                        items={[
+                          { label: 'Entities', value: String(trackSummary.entityCount) },
+                          { label: 'Path Groups', value: String(trackSummary.groupCount) },
+                          { label: 'Routes', value: String(trackSummary.routeCount) },
+                          { label: 'Archive Warnings', value: String(track?.warnings.length ?? 0) },
+                        ]}
+                      />
+                    )}
+                    {selectedInspector && selectedInspectorSection === 'track' && (
+                      <>
+                        <h2>Selection</h2>
+                        {selectedInspector}
+                      </>
+                    )}
+                    {track?.kmp && <KmpOverview kmp={track.kmp} onSelect={(id, options) => selectEntity(id, options?.additive)} />}
+                    {track && (
+                      <PostEffectsPanel
+                        resources={postEffectResources}
+                        onCreateFog={createFogPostEffectFile}
+                        onChangeFogPreset={updateFogPreset}
+                        onAddBloom={addBloomPostEffectFile}
+                        onChangeBloomFile={updateBloomPostEffectFile}
+                        onCreateDof={createDofPostEffectFile}
+                        onChangeDofFile={updateDofPostEffectFile}
+                        onCreateBlight={createBlightPostEffectFile}
+                        onChangeBlight={updateBlightPostEffectFile}
+                      />
+                    )}
+                    <h2>Validation</h2>
+                    <div className="validationSummary">
+                      <span className={`validationBadge${validationCounts.errorCount > 0 ? ' error' : ''}`}>{validationCounts.errorCount} errors</span>
+                      <span className={`validationBadge${validationCounts.warningCount > 0 ? ' warning' : ''}`}>{validationCounts.warningCount} warnings</span>
+                    </div>
+                    <div className="validationList">
+                      {validation.length === 0 && <p className="muted">No validation issues for the loaded data.</p>}
+                      {validation.map((item, index) => {
+                        const presented = presentValidationIssue(item.message);
+                        return (
+                        <div className={`validationIssue ${item.level}`} key={`${item.message}-${index}`}>
+                          <TriangleAlert size={14} />
+                          <div className="validationCopy">
+                            <strong>{presented.summary}</strong>
+                            {presented.detail && <span>{presented.detail}</span>}
+                          </div>
+                        </div>
+                      )})}
+                      {track?.warnings.map((warning, index) => (
+                        <div className="validationIssue warning" key={`${warning}-${index}`}>
+                          <TriangleAlert size={14} />
+                          <div className="validationCopy">
+                            <strong>Track load warning</strong>
+                            <span>{warning}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </section>
           </div>
-          {inspectorSection === 'object' ? (
-            <>
-              {selectedEntities.length > 1 && (
-                <BatchSelectionPanel
-                  count={selectedEntities.length}
-                  offset={batchOffset}
-                  onChangeOffset={setBatchOffset}
-                  onApplyOffset={offsetSelectedEntities}
-                  objectOptions={canBatchReplaceObjects ? objectOptions : []}
-                  objectId={batchObjectId}
-                  onChangeObjectId={setBatchObjectId}
-                  onApplyObjectId={batchObjectId !== null ? () => replaceSelectedObjectTypes(batchObjectId) : undefined}
-                  onDelete={deleteSelectedEntity}
-                />
-              )}
-              {selectedInspector && selectedInspectorSection === 'object' ? (
-                selectedInspector
-              ) : selected?.section === 'STGI' ? (
-                <p className="muted">Track settings are in the Track Settings section above.</p>
-              ) : (
-                <p className="muted">Select an object, route node, checkpoint, start point, camera, cannon point, or respawn point in the viewport.</p>
-              )}
-              {selectedEntities.length > 1 && <p className="muted">{selectedEntities.length} selected. Inspector is showing the primary selection, with batch tools above.</p>}
-            </>
-          ) : (
-            <>
-              {selectedInspector && selectedInspectorSection === 'track' && selectedInspector}
-              {track?.kmp && <KmpOverview kmp={track.kmp} onSelect={(id, options) => selectEntity(id, options?.additive)} />}
-              {track && (
-                <PostEffectsPanel
-                  resources={postEffectResources}
-                  onCreateFog={createFogPostEffectFile}
-                  onChangeFogPreset={updateFogPreset}
-                  onAddBloom={addBloomPostEffectFile}
-                  onChangeBloomFile={updateBloomPostEffectFile}
-                  onCreateDof={createDofPostEffectFile}
-                  onChangeDofFile={updateDofPostEffectFile}
-                  onCreateBlight={createBlightPostEffectFile}
-                  onChangeBlight={updateBlightPostEffectFile}
-                />
-              )}
-              <h2>Validation</h2>
-              <div className="validationSummary">
-                <span className={`validationBadge${validationCounts.errorCount > 0 ? ' error' : ''}`}>{validationCounts.errorCount} errors</span>
-                <span className={`validationBadge${validationCounts.warningCount > 0 ? ' warning' : ''}`}>{validationCounts.warningCount} warnings</span>
-              </div>
-              <div className="validationList">
-                {validation.length === 0 && <p className="muted">No validation issues for the loaded data.</p>}
-                {validation.map((item, index) => {
-                  const presented = presentValidationIssue(item.message);
-                  return (
-                  <div className={`validationIssue ${item.level}`} key={`${item.message}-${index}`}>
-                    <TriangleAlert size={14} />
-                    <div className="validationCopy">
-                      <strong>{presented.summary}</strong>
-                      {presented.detail && <span>{presented.detail}</span>}
-                    </div>
-                  </div>
-                )})}
-                {track?.warnings.map((warning, index) => (
-                  <div className="validationIssue warning" key={`${warning}-${index}`}>
-                    <TriangleAlert size={14} />
-                    <div className="validationCopy">
-                      <strong>Track load warning</strong>
-                      <span>{warning}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
         </aside>
       </div>
 
@@ -2781,6 +2872,110 @@ function BatchSelectionPanel({
   );
 }
 
+function DetailsSummaryBar({ items }: { items: Array<{ label: string; value: string }> }) {
+  const visibleItems = items.filter((item) => item.value.trim().length > 0);
+  if (visibleItems.length === 0) return null;
+  return (
+    <div className="detailsSummaryBar">
+      {visibleItems.map((item) => (
+        <div className="detailsSummaryItem" key={`${item.label}-${item.value}`}>
+          <span>{item.label}</span>
+          <strong>{item.value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function OutlinerPanel({
+  groups,
+  query,
+  onChangeQuery,
+  selectedId,
+  selectedIds,
+  collapsedSections,
+  onToggleSection,
+  onSelect,
+  selectedCount,
+  getEntityLabel,
+  onCollapseAll,
+  onExpandAll,
+}: {
+  groups: OutlinerGroup[];
+  query: string;
+  onChangeQuery: (value: string) => void;
+  selectedId: string | null;
+  selectedIds: string[];
+  collapsedSections: Record<string, boolean>;
+  onToggleSection: (section: string) => void;
+  onSelect: (id: string, additive?: boolean) => void;
+  selectedCount: number;
+  getEntityLabel: (entity: KmpEntity) => string;
+  onCollapseAll: () => void;
+  onExpandAll: () => void;
+}) {
+  const totalCount = groups.reduce((sum, group) => sum + group.entities.length, 0);
+  return (
+    <>
+      <div className="outlinerToolbar">
+        <input
+          className="outlinerSearch"
+          type="search"
+          placeholder="Search entities"
+          value={query}
+          onChange={(event) => onChangeQuery(event.currentTarget.value)}
+        />
+        <div className="outlinerActions">
+          <button className="inlineAction" type="button" onClick={onExpandAll}>
+            Expand All
+          </button>
+          <button className="inlineAction" type="button" onClick={onCollapseAll}>
+            Collapse All
+          </button>
+        </div>
+        <span className="outlinerMeta">{totalCount} shown · {selectedCount} selected</span>
+      </div>
+      <div className="outlinerTree">
+        {groups.length === 0 ? (
+          <p className="muted">{query.trim() ? 'No matching entities in this track.' : 'Load a track to browse its entities.'}</p>
+        ) : (
+          groups.map((group) => {
+            const collapsed = collapsedSections[group.key] ?? false;
+            return (
+              <section className="outlinerGroup" key={group.key}>
+                <button className="outlinerGroupButton" type="button" onClick={() => onToggleSection(group.key)}>
+                  {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                  <strong>{group.label}</strong>
+                  <span>{group.entities.length}</span>
+                </button>
+                {!collapsed && (
+                  <div className="outlinerGroupItems">
+                    {group.entities.map((entity) => {
+                      const active = selectedIds.includes(entity.id);
+                      const primary = selectedId === entity.id;
+                      return (
+                        <button
+                          key={entity.id}
+                          type="button"
+                          className={`outlinerItem${active ? ' isSelected' : ''}${primary ? ' isPrimary' : ''}`}
+                          onClick={(event) => onSelect(entity.id, event.ctrlKey || event.metaKey || event.shiftKey)}
+                        >
+                          <span className="outlinerItemTitle">{outlinerEntityTitle(entity, getEntityLabel)}</span>
+                          <span className="outlinerItemMeta">{outlinerEntitySubtitle(entity)}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            );
+          })
+        )}
+      </div>
+    </>
+  );
+}
+
 function FillBetweenPanel({
   objectLabel,
   count,
@@ -2828,7 +3023,6 @@ function FillBetweenPanel({
 
 function Inspector({
   entity,
-  label,
   pathInfo,
   cameraHeader,
   referenceCounts,
@@ -2874,7 +3068,6 @@ function Inspector({
   onChangePresenceFlags,
 }: {
   entity: KmpEntity;
-  label: string;
   pathInfo: PathInfo | null;
   cameraHeader: ReturnType<typeof getKmpCameraHeader> | null;
   referenceCounts: ReferenceCounts;
@@ -2925,14 +3118,7 @@ function Inspector({
   const objectHasExtraPresenceBits = entity.presenceFlags !== undefined && objectPresenceBaseFlags !== 0;
   return (
     <div className="propertyGrid">
-      <label>
-        Name
-        <span>{label}</span>
-      </label>
-      <label>
-        Section
-        <span>{entity.section}</span>
-      </label>
+      <div className="detailsSectionHeader">General</div>
       {onDelete && (
         <label>
           Delete
@@ -2992,6 +3178,7 @@ function Inspector({
           </label>
         </>
       )}
+      {(entity.pointSettings || entity.poti) && <div className="detailsSectionHeader">Route / Point Data</div>}
       {entity.pointSettings && (
         <>
           {entity.pointDeviation !== undefined && (
@@ -3143,6 +3330,7 @@ function Inspector({
           </label>
         </>
       )}
+      {(entity.area || entity.camera || entity.respawn || entity.cannon || entity.battleFinish || entity.stage) && <div className="detailsSectionHeader">Behavior</div>}
       {entity.area && (
         <>
           <label>
@@ -3431,6 +3619,7 @@ function Inspector({
           </label>
         </>
       )}
+      {(entity.rotation || entity.scale) && <div className="detailsSectionHeader">Transform</div>}
       {entity.rotation && (
         <label>
           Rotation
@@ -3443,6 +3632,7 @@ function Inspector({
           <VectorInputs value={entity.scale} onChange={onChangeScale} step={0.1} />
         </label>
       )}
+      {entity.objectId !== undefined && objectProfile && <div className="detailsSectionHeader">Object Setup</div>}
       {entity.objectId !== undefined && objectProfile && (
         <>
           <label>
@@ -6507,6 +6697,7 @@ function Inspector({
           )}
         </>
       )}
+      {entity.routeIndex !== undefined && <div className="detailsSectionHeader">Route Binding</div>}
       {entity.routeIndex !== undefined && (
         <label>
           {objectProfile?.routeLabel ?? 'Path'}
@@ -6520,6 +6711,7 @@ function Inspector({
           </div>
         </label>
       )}
+      {(entity.objectId !== undefined || entity.objectSettings || entity.presenceFlags !== undefined) && <div className="detailsSectionHeader">Advanced</div>}
       {(entity.objectId !== undefined || entity.objectSettings || entity.presenceFlags !== undefined) && (
         <details className="advancedDetails">
           <summary>Advanced object data</summary>
@@ -6571,6 +6763,7 @@ function Inspector({
           </div>
         </details>
       )}
+      {(entity.routePoint || pathInfo) && <div className="detailsSectionHeader">Path Group</div>}
       {entity.routePoint && (
         <label>
           Route Node
@@ -7521,6 +7714,72 @@ function KmpOverview({ kmp, onSelect }: { kmp: KmpDocument; onSelect: (id: strin
       </div>
     </>
   );
+}
+
+function buildOutlinerGroups(entities: KmpEntity[], query: string, getEntityLabel: (entity: KmpEntity) => string): OutlinerGroup[] {
+  const filteredEntities = entities.filter((entity) => outlinerEntitySearchText(entity, getEntityLabel).includes(query.trim().toLowerCase()));
+  const groups = new Map<string, OutlinerGroup>();
+  for (const entity of filteredEntities) {
+    const key = entity.section;
+    const existing = groups.get(key);
+    if (existing) existing.entities.push(entity);
+    else groups.set(key, { key, label: friendlySectionLabel(entity.section), entities: [entity] });
+  }
+  return [...groups.values()].sort((a, b) => outlinerSectionSortValue(a.key) - outlinerSectionSortValue(b.key) || a.label.localeCompare(b.label));
+}
+
+function outlinerEntityTitle(entity: KmpEntity, getEntityLabel: (entity: KmpEntity) => string): string {
+  if (entity.section === 'STGI') return 'Track Settings';
+  if (entity.objectId !== undefined) return getEntityLabel(entity);
+  if (entity.routePoint) return `${friendlySectionSingularLabel(entity.section)} ${entity.routePoint.pointIndex}`;
+  return describeEntity(entity);
+}
+
+function outlinerEntitySubtitle(entity: KmpEntity): string {
+  if (entity.routePoint) return `Route ${entity.routePoint.routeIndex} · ${entity.section}`;
+  if (entity.routeIndex !== undefined && entity.routeIndex !== 0xffff) return `Path ${entity.routeIndex} · ${entity.section} #${entity.index}`;
+  return `${entity.section} #${entity.index}`;
+}
+
+function outlinerEntitySearchText(entity: KmpEntity, getEntityLabel: (entity: KmpEntity) => string): string {
+  return [
+    getEntityLabel(entity),
+    outlinerEntityTitle(entity, getEntityLabel),
+    outlinerEntitySubtitle(entity),
+    friendlySectionLabel(entity.section),
+  ]
+    .join(' ')
+    .toLowerCase();
+}
+
+function outlinerSectionSortValue(section: string): number {
+  return [
+    'STGI',
+    'KTPT',
+    'ENPT',
+    'ITPT',
+    'CKPT',
+    'POTI',
+    'GOBJ',
+    'AREA',
+    'CAME',
+    'JGPT',
+    'CNPT',
+    'MSPT',
+  ].indexOf(section) === -1 ? 99 : [
+    'STGI',
+    'KTPT',
+    'ENPT',
+    'ITPT',
+    'CKPT',
+    'POTI',
+    'GOBJ',
+    'AREA',
+    'CAME',
+    'JGPT',
+    'CNPT',
+    'MSPT',
+  ].indexOf(section);
 }
 
 function friendlySectionLabel(section: string): string {
