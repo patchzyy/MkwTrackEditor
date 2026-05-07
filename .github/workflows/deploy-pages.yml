@@ -35,7 +35,7 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: npm run build
+        run: npm run build -- --base=/MkwTrackEditor/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
