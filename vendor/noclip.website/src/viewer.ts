@@ -1,0 +1,418 @@
+
+import * as UI from './ui.js';
+
+import InputManager from './InputManager.js';
+import { SceneDesc, SceneGroup } from "./SceneBase.js";
+import { CameraController, Camera, XRCameraController, CameraUpdateResult } from './Camera.js';
+import { GfxDevice, GfxSwapChain, GfxStatisticsGroup, GfxTexture, makeTextureDescriptor2D, GfxFormat, GfxPlatform } from './gfx/platform/GfxPlatform.js';
+import { createSwapChainForWebGL2, gfxDeviceGetImpl_GL, GfxPlatformWebGL2Config } from './gfx/platform/GfxPlatformWebGL2.js';
+import { createSwapChainForWebGPU, GfxPlatformWebGPUConfig } from './gfx/platform/GfxPlatformWebGPU.js';
+import { RenderStatistics, RenderStatisticsTracker } from './RenderStatistics.js';
+import { AntialiasingMode } from './gfx/helpers/RenderGraphHelpers.js';
+import { WebXRContext, WebXRInputManager } from './WebXR.js';
+import { IS_DEVELOPMENT } from './BuildVersion.js';
+import { GlobalSaveManager } from './SaveManager.js';
+import { mat4 } from 'gl-matrix';
+
+export interface ViewerUpdateInfo {
+    time: number;
+    webXRContext: WebXRContext | null;
+}
+
+export interface Texture {
+    gfxTexture: GfxTexture;
+    extraInfo?: Map<string, string> | null;
+}
+
+interface MouseLocation {
+    mouseX: number;
+    mouseY: number;
+}
+
+export interface DebugConsole {
+    addInfoLine(line: string): void;
+}
+
+export interface ViewerRenderInput {
+    camera: Camera;
+    time: number;
+    deltaTime: number;
+    backbufferWidth: number;
+    backbufferHeight: number;
+    onscreenTexture: GfxTexture;
+    antialiasingMode: AntialiasingMode;
+    mouseLocation: MouseLocation;
+    debugConsole: DebugConsole;
+}
+
+export interface SceneGfx {
+    textureHolder?: UI.TextureListHolder;
+    createPanels?(): UI.Panel[];
+    createCameraController?(): CameraController;
+    adjustCameraController?(c: CameraController): void;
+    getDefaultWorldMatrix?(dst: mat4): void;
+    serializeSaveState?(dst: ArrayBuffer, offs: number): number;
+    deserializeSaveState?(src: ArrayBuffer, offs: number, byteLength: number): number;
+    onstatechanged?: () => void;
+    render(device: GfxDevice, renderInput: ViewerRenderInput): void;
+    destroy(device: GfxDevice): void;
+}
+
+export type Listener = (viewer: Viewer) => void;
+
+function resetGfxStatisticsGroup(group: GfxStatisticsGroup): void {
+    group.bufferUploadCount = 0;
+    group.drawCallCount = 0;
+    group.textureBindCount = 0;
+    group.triangleCount = 0;
+}
+
+export function resizeCanvas(canvas: HTMLCanvasElement, width: number, height: number, devicePixelRatio: number): void {
+    const nw = width * devicePixelRatio;
+    const nh = height * devicePixelRatio;
+    if (canvas.width === nw && canvas.height === nh)
+        return;
+
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    canvas.width = nw;
+    canvas.height = nh;
+}
+
+export class Viewer {
+    public inputManager: InputManager;
+    public xrInputManager: WebXRInputManager = new WebXRInputManager();
+
+    public cameraController: CameraController | null = null;
+    public xrCameraController: XRCameraController = new XRCameraController();
+
+    public camera = new Camera();
+
+    // Scene time. Can be paused / scaled / rewound / whatever.
+    public sceneTime: number = 0;
+    // requestAnimationFrame time. Used to calculate dt from the new time.
+    public rafTime: number = 0;
+    public sceneTimeScale: number = 1;
+    public externalControl: boolean = false;
+
+    public gfxDevice: GfxDevice;
+    public viewerRenderInput: ViewerRenderInput;
+    public renderStatisticsTracker = new RenderStatisticsTracker();
+
+    public scene: SceneGfx | null = null;
+
+    public oncamerachanged: (force: boolean) => void = (() => {});
+    public onstatistics: (statistics: RenderStatistics) => void = (() => {});
+
+    private keyMoveSpeedListeners: Listener[] = [];
+    private statisticsGroup: GfxStatisticsGroup = { drawCallCount: 0, bufferUploadCount: 0, textureBindCount: 0, triangleCount: 0 };
+
+    constructor(public gfxSwapChain: GfxSwapChain, public canvas: HTMLCanvasElement) {
+        this.inputManager = new InputManager(this.canvas);
+        this.rafTime = window.performance.now();
+
+        // GfxDevice.
+        this.gfxDevice = this.gfxSwapChain.getDevice();
+        this.viewerRenderInput = {
+            camera: this.camera,
+            time: this.sceneTime,
+            deltaTime: 0,
+            backbufferWidth: 0,
+            backbufferHeight: 0,
+            onscreenTexture: null!,
+            antialiasingMode: AntialiasingMode.None,
+            mouseLocation: this.inputManager,
+            debugConsole: this.renderStatisticsTracker,
+        };
+
+        GlobalSaveManager.addSettingListener('AntialiasingMode', (saveManager, key) => {
+            const antialiasingMode = saveManager.loadSetting<AntialiasingMode>(key, AntialiasingMode.FXAA);
+            this.viewerRenderInput.antialiasingMode = antialiasingMode;
+        });
+    }
+
+    private onKeyMoveSpeed(): void {
+        for (let i = 0; i < this.keyMoveSpeedListeners.length; i++)
+            this.keyMoveSpeedListeners[i](this);
+    }
+
+    public setKeyMoveSpeed(n: number): void {
+        if (this.cameraController === null)
+            return;
+        this.cameraController.setKeyMoveSpeed(n);
+        this.onKeyMoveSpeed();
+    }
+
+    public addKeyMoveSpeedListener(listener: Listener): void {
+        this.keyMoveSpeedListeners.push(listener);
+    }
+
+    private renderViewport(): void {
+        if (this.scene !== null)
+            this.scene.render(this.gfxDevice, this.viewerRenderInput);
+    }
+
+    private render(): void {
+        this.viewerRenderInput.camera = this.camera;
+        this.viewerRenderInput.time = this.sceneTime;
+        this.viewerRenderInput.backbufferWidth = this.canvas.width;
+        this.viewerRenderInput.backbufferHeight = this.canvas.height;
+        this.gfxSwapChain.configureSwapChain(this.canvas.width, this.canvas.height);
+        this.gfxDevice.beginFrame();
+
+        this.viewerRenderInput.onscreenTexture = this.gfxSwapChain.getOnscreenTexture();
+        this.renderStatisticsTracker.beginFrame();
+
+        resetGfxStatisticsGroup(this.statisticsGroup);
+        this.gfxDevice.setStatisticsGroup(this.statisticsGroup);
+
+        this.renderViewport();
+
+        this.gfxDevice.setStatisticsGroup(null);
+        this.gfxDevice.endFrame();
+
+        const renderStatistics = this.renderStatisticsTracker.endFrame();
+        this.finishRenderStatistics(renderStatistics, this.statisticsGroup);
+        this.onstatistics(renderStatistics);
+    }
+
+    private xrTempRT: GfxTexture | null = null;
+    private xrTempWidth: number = -1;
+    private xrTempHeight: number = -1;
+
+    private getXRTempRT(width: number, height: number): GfxTexture {
+        if (this.xrTempWidth !== width || this.xrTempHeight !== height) {
+            if (this.xrTempRT !== null)
+                this.gfxDevice.destroyTexture(this.xrTempRT);
+
+            this.xrTempRT = this.gfxDevice.createTexture(makeTextureDescriptor2D(GfxFormat.U8_RGBA_RT, width, height, 1));
+            this.xrTempWidth = width;
+            this.xrTempHeight = height;
+        }
+
+        return this.xrTempRT!;
+    }
+
+    private renderWebXR(webXRContext: WebXRContext) {
+        if (webXRContext.xrSession === null)
+            return;
+
+        const baseLayer = webXRContext.xrSession.renderState.baseLayer;
+        if (baseLayer === undefined)
+            return;
+
+        this.viewerRenderInput.time = this.sceneTime;
+        this.gfxSwapChain.configureSwapChain(baseLayer.framebufferWidth, baseLayer.framebufferHeight, baseLayer.framebuffer);
+        this.gfxDevice.beginFrame();
+
+        const swapChainTex = this.gfxSwapChain.getOnscreenTexture();
+        this.renderStatisticsTracker.beginFrame();
+
+        resetGfxStatisticsGroup(this.statisticsGroup);
+        this.gfxDevice.setStatisticsGroup(this.statisticsGroup);
+
+        for (let i = 0; i < webXRContext.views.length; i++) {
+            this.viewerRenderInput.camera = this.xrCameraController.cameras[i];
+            const xrView: XRView = webXRContext.views[i];
+            const viewport = baseLayer.getViewport(xrView);
+            if (viewport === undefined)
+                continue;
+
+            // Render the viewport to our temp RT.
+            this.viewerRenderInput.backbufferWidth = viewport.width;
+            this.viewerRenderInput.backbufferHeight = viewport.height;
+            const tempRT = this.getXRTempRT(viewport.width, viewport.height);
+            this.viewerRenderInput.onscreenTexture = tempRT;
+            this.renderViewport();
+
+            // Now composite into the backbuffer.
+            this.gfxDevice.copySubTexture2D(swapChainTex, viewport.x, viewport.y, tempRT, 0, 0);
+
+            // Reset the delta time so we don't advance time next render.
+            this.viewerRenderInput.deltaTime = 0;
+        }
+
+        this.gfxDevice.setStatisticsGroup(null);
+        this.gfxDevice.endFrame();
+        const renderStatistics = this.renderStatisticsTracker.endFrame();
+        this.finishRenderStatistics(renderStatistics, this.statisticsGroup);
+        this.onstatistics(renderStatistics);
+    }
+
+    private finishRenderStatistics(statistics: RenderStatistics, statisticsGroup: GfxStatisticsGroup): void {
+        if (statisticsGroup.drawCallCount)
+            statistics.lines.push(`Draw Calls: ${statisticsGroup.drawCallCount}`);
+        if (statisticsGroup.triangleCount)
+            statistics.lines.push(`Drawn Triangles: ${statisticsGroup.triangleCount}`);
+        if (statisticsGroup.textureBindCount)
+            statistics.lines.push(`Texture Binds: ${statisticsGroup.textureBindCount}`);
+        if (statisticsGroup.bufferUploadCount)
+            statistics.lines.push(`Buffer Uploads: ${statisticsGroup.bufferUploadCount}`);
+
+        const worldMatrix = this.camera.worldMatrix;
+        const camPositionX = worldMatrix[12].toFixed(2), camPositionY = worldMatrix[13].toFixed(2), camPositionZ = worldMatrix[14].toFixed(2);
+        statistics.lines.push(`Camera Position: ${camPositionX} ${camPositionY} ${camPositionZ}`);
+
+        const vendorInfo = this.gfxDevice.queryVendorInfo();
+        const platformString = GfxPlatform[vendorInfo.platform];
+        statistics.lines.push(`Platform: ${platformString}`);
+
+        if (vendorInfo.platform === GfxPlatform.WebGL2) {
+            const impl = gfxDeviceGetImpl_GL(this.gfxDevice);
+            const w = impl.gl.drawingBufferWidth, h = impl.gl.drawingBufferHeight;
+            statistics.lines.push(`Drawing Buffer Size: ${w}x${h}`);
+        }
+    }
+
+    public setCameraController(cameraController: CameraController) {
+        this.cameraController = cameraController;
+
+        if (this.scene !== null && this.scene.adjustCameraController !== undefined)
+            this.scene.adjustCameraController(cameraController);
+
+        this.cameraController.camera = this.camera;
+        this.cameraController.forceUpdate = true;
+    }
+
+    public setScene(scene: SceneGfx | null): void {
+        this.scene = scene;
+        this.cameraController = null;
+    }
+
+    public update(updateInfo: ViewerUpdateInfo): void {
+        const dt = updateInfo.time - this.rafTime;
+        this.updateDT(dt, updateInfo);
+    }
+
+    private updateDT(dt: number, updateInfo: ViewerUpdateInfo): void {
+        if (dt < 0)
+            return;
+        this.rafTime += dt;
+
+        const camera = this.camera;
+
+        camera.clipSpaceNearZ = this.gfxDevice.queryVendorInfo().clipSpaceNearZ;
+
+        camera.newFrame();
+        const aspect = this.canvas.width / this.canvas.height;
+        camera.aspect = aspect;
+        camera.setClipPlanes(5);
+
+        if (this.cameraController) {
+            const result = this.cameraController.update(this.inputManager, dt, this.sceneTimeScale);
+            if (result !== CameraUpdateResult.Unchanged)
+                this.oncamerachanged(result === CameraUpdateResult.ImportantChange);
+        }
+
+        const deltaTime = dt * this.sceneTimeScale;
+        this.viewerRenderInput.deltaTime += deltaTime;
+        this.sceneTime += deltaTime;
+
+        if (updateInfo.webXRContext !== null && updateInfo.webXRContext.views && updateInfo.webXRContext.xrSession) {
+            this.xrInputManager.afterFrame(updateInfo.webXRContext);
+            this.xrCameraController.update(updateInfo.webXRContext, this.xrInputManager);
+            this.renderWebXR(updateInfo.webXRContext);
+        } else {
+            this.render();
+        }
+
+        this.inputManager.afterFrame();
+
+        // Reset the delta for next frame.
+        this.viewerRenderInput.deltaTime = 0;
+    }
+}
+
+export type { SceneDesc, SceneGroup };
+
+interface ViewerOut {
+    error: InitErrorCode;
+    viewer?: Viewer;
+}
+
+export enum InitErrorCode {
+    SUCCESS,
+    NO_WEBGL2_GENERIC,
+    NO_WEBGPU_GENERIC,
+    GARBAGE_WEBGL2_SWIFTSHADER,
+    MISSING_MISC_WEB_APIS,
+}
+
+export async function initializeViewerWebGL2(canvas: HTMLCanvasElement): Promise<ViewerOut> {
+    const gl = canvas.getContext("webgl2", { antialias: false, preserveDrawingBuffer: false, depth: false, stencil: false });
+    // For debugging purposes, add a hook for this.
+    (window as any).gl = gl;
+    if (!gl)
+        return { error: InitErrorCode.NO_WEBGL2_GENERIC };
+
+    // SwiftShader is slow, and gives a poor experience.
+    const WEBGL_debug_renderer_info = gl.getExtension('WEBGL_debug_renderer_info');
+    if (WEBGL_debug_renderer_info && gl.getParameter(WEBGL_debug_renderer_info.UNMASKED_RENDERER_WEBGL).includes('SwiftShader'))
+        return { error: InitErrorCode.GARBAGE_WEBGL2_SWIFTSHADER };
+
+    const config = new GfxPlatformWebGL2Config();
+    config.trackResources = IS_DEVELOPMENT;
+    config.shaderDebug = IS_DEVELOPMENT;
+
+    const gfxSwapChain = createSwapChainForWebGL2(gl, config);
+    const viewer = new Viewer(gfxSwapChain, canvas);
+
+    return { viewer, error: InitErrorCode.SUCCESS };
+}
+
+export async function initializeViewerWebGPU(canvas: HTMLCanvasElement): Promise<ViewerOut> {
+    const config = new GfxPlatformWebGPUConfig();
+    config.trackResources = IS_DEVELOPMENT;
+    config.shaderDebug = IS_DEVELOPMENT;
+
+    const gfxSwapChain = await createSwapChainForWebGPU(canvas, config);
+    if (gfxSwapChain === null)
+        return { error: InitErrorCode.NO_WEBGPU_GENERIC };
+
+    const viewer = new Viewer(gfxSwapChain, canvas);
+    return { viewer, error: InitErrorCode.SUCCESS };
+}
+
+export function makeErrorMessageUI(message: string): DocumentFragment {
+    const errorMessage = UI.createDOMFromString(`
+<div style="display: flex; background-color: #220000; flex-direction: column; position: absolute; top: 0; bottom: 0; left: 0; right: 0; justify-content: center;">
+<div style="display: flex; background-color: #aa2233; justify-content: center; box-shadow: 0 0 32px black;">
+<div style="max-width: 1000px; font: 16pt sans-serif; color: white; text-align: justify;">
+<style>
+a:link, a:visited { color: #ccc; transition: .5s color; }
+a:hover { color: #fff; }
+</style>
+${message}
+`);
+
+    return errorMessage;
+}
+
+export function makeErrorUI(errorCode: InitErrorCode): DocumentFragment {
+    if (errorCode === InitErrorCode.NO_WEBGL2_GENERIC)
+        return makeErrorMessageUI(`
+<p>Your browser does not appear to have WebGL 2 support.
+<p>If <a href="http://webglreport.com/?v=2">WebGL Report</a> says your browser supports WebGL 2, please open a <a href="https://github.com/magcius/noclip.website/issues/new?template=tech_support.md">GitHub issue</a> with as much as information as possible.
+<p style="text-align: right">Thank you.
+`);
+    else if (errorCode === InitErrorCode.NO_WEBGPU_GENERIC)
+        return makeErrorMessageUI(`
+<p>Your browser does not appear to have WebGPU support.
+<p>If <a href="https://webgpureport.org/">WebGPU</a> says your browser supports WebGPU, please open a <a href="https://github.com/magcius/noclip.website/issues/new?template=tech_support.md">GitHub issue</a> with as much as information as possible.
+<p style="text-align: right">Thank you.
+`);
+    else if (errorCode === InitErrorCode.GARBAGE_WEBGL2_SWIFTSHADER)
+        return makeErrorMessageUI(`
+<p>This application requires hardware acceleration to be enabled.
+<p>Please enable hardware acceleration in your's browser settings.
+<p>If you have enabled hardware acceleration and are still getting this error message, try restarting your browser and computer.
+<p style="text-align: right">Thank you.
+`);
+    else if (errorCode === InitErrorCode.MISSING_MISC_WEB_APIS)
+        return makeErrorMessageUI(`
+<p>Your browser is too old and is missing support for web APIs that I rely on.
+<p>Please try to update your browser to a more recent version.
+`);
+    else
+        throw "whoops";
+}
