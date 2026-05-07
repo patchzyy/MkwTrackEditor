@@ -2463,8 +2463,8 @@ function getGizmoLength(entity: KmpEntity, cameraPosition: Vec3 | null): number 
   const dy = entity.position.y - cameraPosition.y;
   const dz = entity.position.z - cameraPosition.z;
   const distance = Math.hypot(dx, dy, dz);
-  const distanceLength = Math.max(170, distance * 0.08);
-  return Math.max(180, Math.min(1800, Math.max(baseLength, distanceLength)));
+  const distanceLength = Math.max(30, distance * 0.08);
+  return Math.max(600, Math.min(1800, Math.max(baseLength, distanceLength)));
 }
 
 function getViewerCameraPosition(viewer: Viewer | null): Vec3 | null {

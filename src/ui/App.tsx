@@ -767,6 +767,10 @@ export function App() {
   const CONTENT_BROWSER_DEFAULT_HEIGHT = 248;
   const CONTENT_BROWSER_MIN_HEIGHT = 140;
   const WORKSPACE_MIN_HEIGHT = 160;
+  const OUTLINER_DEFAULT_HEIGHT = 280;
+  const OUTLINER_MIN_HEIGHT = 120;
+  const DETAILS_MIN_HEIGHT = 160;
+  const INSPECTOR_PANE_RESIZE_HANDLE_SIZE = 10;
   const PLACE_ASSETS_COLLAPSED_WIDTH = 52;
   const PLACE_ASSETS_DEFAULT_WIDTH = 220;
   const PLACE_ASSETS_MIN_WIDTH = 160;
@@ -793,10 +797,12 @@ export function App() {
   const [browserQuery, setBrowserQuery] = useState('');
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [inspectorSection, setInspectorSection] = useState<InspectorSection>('object');
+  const [outlinerHeight, setOutlinerHeight] = useState(OUTLINER_DEFAULT_HEIGHT);
   const [outlinerQuery, setOutlinerQuery] = useState('');
   const [outlinerCollapsedSections, setOutlinerCollapsedSections] = useState<Record<string, boolean>>({});
   const [inspectorWidth, setInspectorWidth] = useState(INSPECTOR_DEFAULT_WIDTH);
   const [sidebarResizing, setSidebarResizing] = useState<'placeAssets' | 'inspector' | null>(null);
+  const [inspectorPaneResizing, setInspectorPaneResizing] = useState(false);
   const [collisionVisible, setCollisionVisible] = useState(false);
   const [status, setStatus] = useState('No track loaded');
   const [commonArchive, setCommonArchive] = useState<CommonResourceArchive | null>(null);
@@ -811,10 +817,13 @@ export function App() {
   const [fillBetweenCount, setFillBetweenCount] = useState(3);
   const [fillBetweenPanelOpen, setFillBetweenPanelOpen] = useState(false);
   const appShellRef = useRef<HTMLElement | null>(null);
+  const shellBodyRef = useRef<HTMLDivElement | null>(null);
   const topBarRef = useRef<HTMLElement | null>(null);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
+  const inspectorPanelsRef = useRef<HTMLDivElement | null>(null);
   const browserResizeRef = useRef<{ startY: number; startHeight: number } | null>(null);
   const sidebarResizeRef = useRef<{ side: 'placeAssets' | 'inspector'; startX: number; startWidth: number } | null>(null);
+  const inspectorPaneResizeRef = useRef<{ startY: number; startHeight: number } | null>(null);
   const trackStateRef = useRef<TrackDocument | null>(track);
   const selectedIdStateRef = useRef<string | null>(selectedId);
   const selectedIdsStateRef = useRef<string[]>(selectedIds);
@@ -975,22 +984,22 @@ export function App() {
     const handlePointerMove = (event: PointerEvent) => {
       const resize = sidebarResizeRef.current;
       const workspace = workspaceRef.current;
+      const shellBody = shellBodyRef.current;
       if (!resize || !workspace) return;
-      const availableWidth = workspace.getBoundingClientRect().width;
-      const otherWidth = resize.side === 'placeAssets'
-        ? (inspectorOpen ? inspectorWidth : 0)
-        : (placeAssetsOpen ? placeAssetsWidth : PLACE_ASSETS_COLLAPSED_WIDTH);
-      const maxWidth = Math.max(
-        resize.side === 'placeAssets' ? PLACE_ASSETS_MIN_WIDTH : INSPECTOR_MIN_WIDTH,
-        Math.floor(availableWidth - otherWidth - WORKSPACE_MIN_VIEWPORT_WIDTH),
-      );
+      const minWidth = resize.side === 'placeAssets' ? PLACE_ASSETS_MIN_WIDTH : INSPECTOR_MIN_WIDTH;
+      const availableWidth = resize.side === 'placeAssets'
+        ? workspace.getBoundingClientRect().width
+        : (shellBody?.getBoundingClientRect().width ?? workspace.getBoundingClientRect().width + (inspectorOpen ? inspectorWidth : 0));
+      const maxWidth = resize.side === 'placeAssets'
+        ? Math.max(minWidth, Math.floor(availableWidth - WORKSPACE_MIN_VIEWPORT_WIDTH))
+        : Math.max(
+            minWidth,
+            Math.floor(availableWidth - (placeAssetsOpen ? placeAssetsWidth : PLACE_ASSETS_COLLAPSED_WIDTH) - WORKSPACE_MIN_VIEWPORT_WIDTH),
+          );
       const rawWidth = resize.side === 'placeAssets'
         ? resize.startWidth + (event.clientX - resize.startX)
         : resize.startWidth + (resize.startX - event.clientX);
-      const nextWidth = Math.max(
-        resize.side === 'placeAssets' ? PLACE_ASSETS_MIN_WIDTH : INSPECTOR_MIN_WIDTH,
-        Math.min(maxWidth, Math.round(rawWidth)),
-      );
+      const nextWidth = Math.max(minWidth, Math.min(maxWidth, Math.round(rawWidth)));
       if (resize.side === 'placeAssets') {
         setPlaceAssetsOpen(true);
         setPlaceAssetsWidth(nextWidth);
@@ -1017,16 +1026,66 @@ export function App() {
   }, [inspectorOpen, inspectorWidth, placeAssetsOpen, placeAssetsWidth]);
 
   useEffect(() => {
-    if (!browserResizing && !sidebarResizing) return;
+    const handlePointerMove = (event: PointerEvent) => {
+      const resize = inspectorPaneResizeRef.current;
+      const panels = inspectorPanelsRef.current;
+      if (!resize || !panels) return;
+      const maxHeight = Math.max(
+        OUTLINER_MIN_HEIGHT,
+        Math.floor(panels.getBoundingClientRect().height - DETAILS_MIN_HEIGHT - INSPECTOR_PANE_RESIZE_HANDLE_SIZE),
+      );
+      const nextHeight = Math.max(
+        OUTLINER_MIN_HEIGHT,
+        Math.min(maxHeight, Math.round(resize.startHeight + (event.clientY - resize.startY))),
+      );
+      setOutlinerHeight(nextHeight);
+    };
+
+    const stopResize = () => {
+      if (!inspectorPaneResizeRef.current) return;
+      inspectorPaneResizeRef.current = null;
+      setInspectorPaneResizing(false);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', stopResize);
+    window.addEventListener('pointercancel', stopResize);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', stopResize);
+      window.removeEventListener('pointercancel', stopResize);
+    };
+  }, []);
+
+  useEffect(() => {
+    const panels = inspectorPanelsRef.current;
+    if (!panels || typeof ResizeObserver === 'undefined') return;
+
+    const clampOutlinerHeight = () => {
+      const maxHeight = Math.max(
+        OUTLINER_MIN_HEIGHT,
+        Math.floor(panels.getBoundingClientRect().height - DETAILS_MIN_HEIGHT - INSPECTOR_PANE_RESIZE_HANDLE_SIZE),
+      );
+      setOutlinerHeight((current) => Math.min(current, maxHeight));
+    };
+
+    clampOutlinerHeight();
+    const observer = new ResizeObserver(clampOutlinerHeight);
+    observer.observe(panels);
+    return () => observer.disconnect();
+  }, [browserHeight, browserOpen, inspectorOpen]);
+
+  useEffect(() => {
+    if (!browserResizing && !sidebarResizing && !inspectorPaneResizing) return;
     const previousCursor = document.body.style.cursor;
     const previousUserSelect = document.body.style.userSelect;
-    document.body.style.cursor = browserResizing ? 'ns-resize' : 'ew-resize';
+    document.body.style.cursor = browserResizing || inspectorPaneResizing ? 'ns-resize' : 'ew-resize';
     document.body.style.userSelect = 'none';
     return () => {
       document.body.style.cursor = previousCursor;
       document.body.style.userSelect = previousUserSelect;
     };
-  }, [browserResizing, sidebarResizing]);
+  }, [browserResizing, inspectorPaneResizing, sidebarResizing]);
 
   useEffect(() => {
     if (canBatchReplaceObjects) {
@@ -1058,6 +1117,14 @@ export function App() {
     if (side === 'placeAssets') setPlaceAssetsOpen(true);
     else setInspectorOpen(true);
     setSidebarResizing(side);
+  }
+
+  function beginInspectorPaneResize(event: React.PointerEvent<HTMLElement>) {
+    inspectorPaneResizeRef.current = {
+      startY: event.clientY,
+      startHeight: outlinerHeight,
+    };
+    setInspectorPaneResizing(true);
   }
 
   const workspaceStyle: CSSProperties = {
@@ -2194,96 +2261,95 @@ export function App() {
         <span className="status">{status}</span>
       </header>
 
-      <div
-        ref={workspaceRef}
-        className={`${inspectorOpen ? 'workspace' : 'workspace inspectorCollapsed'}${placeAssetsOpen ? '' : ' placeAssetsCollapsed'}`}
-        style={workspaceStyle}
-      >
-        <aside className="placeAssetsPanel">
-          {placeAssetsOpen && <div className="sidebarResizeHandle sidebarResizeHandleRight" onPointerDown={(event) => beginSidebarResize('placeAssets', event)} />}
-          <div className="panelHeader placeAssetsHeader">
-            <div>
-              <h2>Place Assets</h2>
-              {placeAssetsOpen && <p className="panelSubtle">Common draggable game objects</p>}
+      <div ref={shellBodyRef} className={inspectorOpen ? 'shellBody' : 'shellBody inspectorCollapsed'} style={workspaceStyle}>
+        <div ref={workspaceRef} className={placeAssetsOpen ? 'workspace' : 'workspace placeAssetsCollapsed'}>
+          <aside className="placeAssetsPanel">
+            {placeAssetsOpen && <div className="sidebarResizeHandle sidebarResizeHandleRight" onPointerDown={(event) => beginSidebarResize('placeAssets', event)} />}
+            <div className="panelHeader placeAssetsHeader">
+              <div>
+                <h2>Place Assets</h2>
+                {placeAssetsOpen && <p className="panelSubtle">Common draggable game objects</p>}
+              </div>
+              <button
+                className="iconButton"
+                type="button"
+                onClick={() => setPlaceAssetsOpen((value) => !value)}
+                title={placeAssetsOpen ? 'Hide place assets' : 'Show place assets'}
+                aria-label={placeAssetsOpen ? 'Hide place assets' : 'Show place assets'}
+              >
+                {placeAssetsOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
+              </button>
             </div>
-            <button
-              className="iconButton"
-              type="button"
-              onClick={() => setPlaceAssetsOpen((value) => !value)}
-              title={placeAssetsOpen ? 'Hide place assets' : 'Show place assets'}
-              aria-label={placeAssetsOpen ? 'Hide place assets' : 'Show place assets'}
-            >
-              {placeAssetsOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
-            </button>
-          </div>
-          {placeAssetsOpen && (
-            <div className="placeAssetsBody">
-              {quickObjectOptions.length > 0 ? (
-                <div className="placeAssetsGrid">
-                  {quickObjectOptions.map((option) => {
-                    const quickObject = objFlow?.byId.get(option.id) ?? objectCatalog.find((entry) => entry.id === option.id);
-                    return (
-                      <div
-                        key={option.id}
-                        className="placeAssetTile"
-                        draggable
-                        onDragStart={(event) => event.dataTransfer.setData('application/mkw-object-id', String(option.id))}
-                      >
-                        {quickObject && <ObjectThumbnail object={quickObject} common={commonArchive} summaries={commonBrresSummaries} />}
-                        <strong>{option.label}</strong>
-                      </div>
-                    );
+            {placeAssetsOpen && (
+              <div className="placeAssetsBody">
+                {quickObjectOptions.length > 0 ? (
+                  <div className="placeAssetsGrid">
+                    {quickObjectOptions.map((option) => {
+                      const quickObject = objFlow?.byId.get(option.id) ?? objectCatalog.find((entry) => entry.id === option.id);
+                      return (
+                        <div
+                          key={option.id}
+                          className="placeAssetTile"
+                          draggable
+                          onDragStart={(event) => event.dataTransfer.setData('application/mkw-object-id', String(option.id))}
+                        >
+                          {quickObject && <ObjectThumbnail object={quickObject} common={commonArchive} summaries={commonBrresSummaries} />}
+                          <strong>{option.label}</strong>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="muted">Load shared object data to place common objects from this rail.</p>
+                )}
+              </div>
+            )}
+          </aside>
+          <Noclip3DViewport
+            track={track}
+            selectedId={selectedId}
+            selectedIds={selectedIds}
+            fillBetweenPreviewPositions={fillBetweenPreviewPositions}
+            smokeCommonUrl={smokeCommonUrl}
+            tool={tool}
+            viewMode={viewMode}
+            collisionVisible={collisionVisible}
+            onChangeTool={setTool}
+            onChangeViewMode={setViewMode}
+            onChangeCollisionVisible={(visible) => {
+              setCollisionVisible(visible);
+              if (visible && viewMode !== 'dev') setViewMode('dev');
+            }}
+            getEntityLabel={entityLabel}
+            onSelect={(id, options) => selectEntity(id, options?.additive)}
+            onSelectMany={(ids, options) => selectEntities(ids, options?.additive)}
+            onMoveEntity={moveEntity}
+            onRotateEntity={rotateEntity}
+            onScaleEntity={scaleEntity}
+            onMoveCheckpointEndpoint={moveCheckpointEndpoint}
+            onAddObject={addObject}
+            onAddKmpPoint={addKmpPoint}
+            onInteractionStart={beginEditSession}
+            onInteractionEnd={endEditSession}
+            topRightOverlay={
+              fillBetweenPanelOpen && fillBetweenSelection ? (
+                <FillBetweenPanel
+                  objectLabel={browserObjectTitle({
+                    objectId: fillBetweenSelection.objectId,
+                    name: objFlow?.byId.get(fillBetweenSelection.objectId)?.name ?? '',
+                    resources: objFlow?.byId.get(fillBetweenSelection.objectId)?.resources ?? '',
                   })}
-                </div>
-              ) : (
-                <p className="muted">Load shared object data to place common objects from this rail.</p>
-              )}
-            </div>
-          )}
-        </aside>
-        <Noclip3DViewport
-          track={track}
-          selectedId={selectedId}
-          selectedIds={selectedIds}
-          fillBetweenPreviewPositions={fillBetweenPreviewPositions}
-          smokeCommonUrl={smokeCommonUrl}
-          tool={tool}
-          viewMode={viewMode}
-          collisionVisible={collisionVisible}
-          onChangeTool={setTool}
-          onChangeViewMode={setViewMode}
-          onChangeCollisionVisible={(visible) => {
-            setCollisionVisible(visible);
-            if (visible && viewMode !== 'dev') setViewMode('dev');
-          }}
-          getEntityLabel={entityLabel}
-          onSelect={(id, options) => selectEntity(id, options?.additive)}
-          onSelectMany={(ids, options) => selectEntities(ids, options?.additive)}
-          onMoveEntity={moveEntity}
-          onRotateEntity={rotateEntity}
-          onScaleEntity={scaleEntity}
-          onMoveCheckpointEndpoint={moveCheckpointEndpoint}
-          onAddObject={addObject}
-          onAddKmpPoint={addKmpPoint}
-          onInteractionStart={beginEditSession}
-          onInteractionEnd={endEditSession}
-          topRightOverlay={
-            fillBetweenPanelOpen && fillBetweenSelection ? (
-              <FillBetweenPanel
-                objectLabel={browserObjectTitle({
-                  objectId: fillBetweenSelection.objectId,
-                  name: objFlow?.byId.get(fillBetweenSelection.objectId)?.name ?? '',
-                  resources: objFlow?.byId.get(fillBetweenSelection.objectId)?.resources ?? '',
-                })}
-                count={fillBetweenCount}
-                onChangeCount={setFillBetweenCount}
-                onApply={applyFillBetween}
-                onClose={() => setFillBetweenPanelOpen(false)}
-              />
-            ) : null
-          }
-        />
-        <aside className="inspector">
+                  count={fillBetweenCount}
+                  onChangeCount={setFillBetweenCount}
+                  onApply={applyFillBetween}
+                  onClose={() => setFillBetweenPanelOpen(false)}
+                />
+              ) : null
+            }
+          />
+        </div>
+
+        <aside className={inspectorPaneResizing ? 'inspector resizingPanes' : 'inspector'}>
           {inspectorOpen && <div className="sidebarResizeHandle sidebarResizeHandleLeft" onPointerDown={(event) => beginSidebarResize('inspector', event)} />}
           <div className="panelHeader">
             <h2>Scene</h2>
@@ -2291,8 +2357,8 @@ export function App() {
               <PanelRightClose size={16} />
             </button>
           </div>
-          <div className="rightSidebarPanels">
-            <section className="sidebarPane outlinerPane">
+          <div ref={inspectorPanelsRef} className="rightSidebarPanels">
+            <section className="sidebarPane outlinerPane" style={{ height: `${outlinerHeight}px` }}>
               <div className="paneHeader">
                 <h2>Outliner</h2>
                 <span className="paneMeta">{track?.kmp ? `${track.kmp.entities.length} entities` : 'No track loaded'}</span>
@@ -2314,6 +2380,13 @@ export function App() {
                 />
               </div>
             </section>
+            <div
+              className="inspectorPaneResizeHandle"
+              onPointerDown={beginInspectorPaneResize}
+              role="separator"
+              aria-label="Resize outliner and details"
+              aria-orientation="horizontal"
+            />
             <section className="sidebarPane detailsPane">
               <div className="paneHeader">
                 <h2>Details</h2>
@@ -2446,98 +2519,98 @@ export function App() {
             </section>
           </div>
         </aside>
-      </div>
 
-      <section
-        className={`${browserOpen ? 'contentBrowser' : 'contentBrowser collapsed'}${browserResizing ? ' resizing' : ''}`}
-        style={{ height: `${browserOpen ? browserHeight : CONTENT_BROWSER_COLLAPSED_HEIGHT}px` }}
-      >
-        <div
-          className="contentBrowserResizeHandle"
-          onPointerDown={beginBrowserResize}
-          role="separator"
-          aria-label="Resize content browser"
-          aria-orientation="horizontal"
-        />
-        <button className="collapseButton" onClick={() => setBrowserOpen((value) => !value)} aria-label={browserOpen ? 'Collapse content browser' : 'Expand content browser'}>
-          {browserOpen ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
-        </button>
-        <div className="browserHeader">
-          <strong>Content Browser</strong>
-          <span>
-            {filteredBrowserFolder
-              ? `${filteredBrowserFolder.label} · ${filteredBrowserFolder.detail}`
-              : track
-                ? `${track.brresFiles.length} track asset files${objFlow ? ` · ${objFlow.entries.length} game objects` : ''}`
-                : 'Load a track to list archive assets'}
-          </span>
-        </div>
-        <div className="browserSearchRow">
-          <input
-            className="browserSearchInput"
-            type="search"
-            placeholder="Search this folder"
-            value={browserQuery}
-            onChange={(event) => setBrowserQuery(event.currentTarget.value)}
-            aria-label="Search content browser"
+        <section
+          className={`${browserOpen ? 'contentBrowser' : 'contentBrowser collapsed'}${browserResizing ? ' resizing' : ''}`}
+          style={{ height: `${browserOpen ? browserHeight : CONTENT_BROWSER_COLLAPSED_HEIGHT}px` }}
+        >
+          <div
+            className="contentBrowserResizeHandle"
+            onPointerDown={beginBrowserResize}
+            role="separator"
+            aria-label="Resize content browser"
+            aria-orientation="horizontal"
           />
-        </div>
-        <div className="browserFolders" role="tablist" aria-label="Content browser folders">
-          {browserFolders.map((folder) => (
-            <button
-              key={folder.id}
-              type="button"
-              className={folder.id === activeBrowserFolder?.id ? 'browserFolder active' : 'browserFolder'}
-              onClick={() => setBrowserFolder(folder.id)}
-            >
-              <strong>{folder.label}</strong>
-              <span>{folder.detail}</span>
-            </button>
-          ))}
-        </div>
-        <div className="assetStrip">
-          {filteredBrowserFolder?.kind === 'kmp' &&
-            filteredBrowserFolder.items.map((item) => (
-              <div className="assetTile" key={item.section} draggable onDragStart={(event) => event.dataTransfer.setData('application/mkw-point-section', item.section)}>
-                <div className="thumbnail kmp">{friendlySectionLabel(item.section)}</div>
-                <strong>{item.label}</strong>
-                <span>{item.category}</span>
-              </div>
+          <button className="collapseButton" onClick={() => setBrowserOpen((value) => !value)} aria-label={browserOpen ? 'Collapse content browser' : 'Expand content browser'}>
+            {browserOpen ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+          </button>
+          <div className="browserHeader">
+            <strong>Content Browser</strong>
+            <span>
+              {filteredBrowserFolder
+                ? `${filteredBrowserFolder.label} · ${filteredBrowserFolder.detail}`
+                : track
+                  ? `${track.brresFiles.length} track asset files${objFlow ? ` · ${objFlow.entries.length} game objects` : ''}`
+                  : 'Load a track to list archive assets'}
+            </span>
+          </div>
+          <div className="browserSearchRow">
+            <input
+              className="browserSearchInput"
+              type="search"
+              placeholder="Search this folder"
+              value={browserQuery}
+              onChange={(event) => setBrowserQuery(event.currentTarget.value)}
+              aria-label="Search content browser"
+            />
+          </div>
+          <div className="browserFolders" role="tablist" aria-label="Content browser folders">
+            {browserFolders.map((folder) => (
+              <button
+                key={folder.id}
+                type="button"
+                className={folder.id === activeBrowserFolder?.id ? 'browserFolder active' : 'browserFolder'}
+                onClick={() => setBrowserFolder(folder.id)}
+              >
+                <strong>{folder.label}</strong>
+                <span>{folder.detail}</span>
+              </button>
             ))}
-          {filteredBrowserFolder?.kind === 'object' &&
-            filteredBrowserFolder.items.map((object) =>
-              isCourseAssetBrowserItem(object) ? (
-                <div
-                  className={object.objectId !== null ? 'assetTile' : 'assetTile disabled'}
-                  key={object.id}
-                  draggable={object.objectId !== null}
-                  onDragStart={(event) => {
-                    if (object.objectId !== null) event.dataTransfer.setData('application/mkw-object-id', String(object.objectId));
-                  }}
-                >
-                  <CourseAssetThumbnail asset={object} summaries={commonBrresSummaries} />
-                  <strong>{object.objectLabel ?? object.baseName.replace(/\.brres$/i, '')}</strong>
-                  <span>{describeCourseAsset(object)}</span>
+          </div>
+          <div className="assetStrip">
+            {filteredBrowserFolder?.kind === 'kmp' &&
+              filteredBrowserFolder.items.map((item) => (
+                <div className="assetTile" key={item.section} draggable onDragStart={(event) => event.dataTransfer.setData('application/mkw-point-section', item.section)}>
+                  <div className="thumbnail kmp">{friendlySectionLabel(item.section)}</div>
+                  <strong>{item.label}</strong>
+                  <span>{item.category}</span>
                 </div>
-              ) : (
-                <div className="assetTile" key={catalogId(object)} draggable onDragStart={(event) => event.dataTransfer.setData('application/mkw-object-id', String(catalogId(object)))}>
-                  <ObjectThumbnail object={object} common={commonArchive} summaries={commonBrresSummaries} />
-                  <strong>{browserObjectTitle(object)}</strong>
-                  <span>{objectAssetLabel(object, commonArchive, commonBrresSummaries)}</span>
+              ))}
+            {filteredBrowserFolder?.kind === 'object' &&
+              filteredBrowserFolder.items.map((object) =>
+                isCourseAssetBrowserItem(object) ? (
+                  <div
+                    className={object.objectId !== null ? 'assetTile' : 'assetTile disabled'}
+                    key={object.id}
+                    draggable={object.objectId !== null}
+                    onDragStart={(event) => {
+                      if (object.objectId !== null) event.dataTransfer.setData('application/mkw-object-id', String(object.objectId));
+                    }}
+                  >
+                    <CourseAssetThumbnail asset={object} summaries={commonBrresSummaries} />
+                    <strong>{object.objectLabel ?? object.baseName.replace(/\.brres$/i, '')}</strong>
+                    <span>{describeCourseAsset(object)}</span>
+                  </div>
+                ) : (
+                  <div className="assetTile" key={catalogId(object)} draggable onDragStart={(event) => event.dataTransfer.setData('application/mkw-object-id', String(catalogId(object)))}>
+                    <ObjectThumbnail object={object} common={commonArchive} summaries={commonBrresSummaries} />
+                    <strong>{browserObjectTitle(object)}</strong>
+                    <span>{objectAssetLabel(object, commonArchive, commonBrresSummaries)}</span>
+                  </div>
+                ),
+              )}
+            {filteredBrowserFolder?.kind === 'brres' &&
+              filteredBrowserFolder.items.map((path) => (
+                <div className="assetTile" key={path}>
+                  <div className="thumbnail brres">Asset</div>
+                  <strong>{friendlyTrackAssetName(path)}</strong>
+                  <span>{describeBrres(track?.brresSummaries[path]) || path}</span>
                 </div>
-              ),
-            )}
-          {filteredBrowserFolder?.kind === 'brres' &&
-            filteredBrowserFolder.items.map((path) => (
-              <div className="assetTile" key={path}>
-                <div className="thumbnail brres">Asset</div>
-                <strong>{friendlyTrackAssetName(path)}</strong>
-                <span>{describeBrres(track?.brresSummaries[path]) || path}</span>
-              </div>
-            ))}
-          {filteredBrowserFolder && filteredBrowserFolder.items.length === 0 && <p className="browserEmpty">No assets match this search.</p>}
-        </div>
-      </section>
+              ))}
+            {filteredBrowserFolder && filteredBrowserFolder.items.length === 0 && <p className="browserEmpty">No assets match this search.</p>}
+          </div>
+        </section>
+      </div>
     </main>
   );
 }

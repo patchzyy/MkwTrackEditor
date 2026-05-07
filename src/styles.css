@@ -26,7 +26,7 @@ input {
 
 .appShell {
   display: grid;
-  grid-template-rows: 48px minmax(0, 1fr) auto;
+  grid-template-rows: 48px minmax(0, 1fr);
   width: 100%;
   height: 100%;
   overflow: hidden;
@@ -119,14 +119,24 @@ input {
   white-space: nowrap;
 }
 
-.workspace {
+.shellBody {
   display: grid;
-  grid-template-columns: var(--place-assets-width, 220px) minmax(0, 1fr) var(--inspector-width, 320px);
+  grid-template-columns: minmax(0, 1fr) var(--inspector-width, 320px);
+  grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
   overflow: hidden;
 }
 
-.workspace.inspectorCollapsed .inspector {
+.workspace {
+  display: grid;
+  grid-column: 1;
+  grid-row: 1;
+  grid-template-columns: var(--place-assets-width, 220px) minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.shellBody.inspectorCollapsed .inspector {
   overflow: hidden;
   padding: 0;
   border-left: 0;
@@ -497,6 +507,8 @@ input {
 }
 
 .inspector {
+  grid-column: 2;
+  grid-row: 1 / span 2;
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -565,9 +577,8 @@ input {
 }
 
 .rightSidebarPanels {
-  display: grid;
-  grid-template-rows: minmax(200px, 34%) minmax(0, 1fr);
-  gap: 10px;
+  display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
   padding-top: 10px;
@@ -579,6 +590,38 @@ input {
   flex-direction: column;
   border: 1px solid #222b35;
   background: #151a21;
+}
+
+.outlinerPane {
+  flex: 0 1 auto;
+}
+
+.detailsPane {
+  flex: 1 1 0;
+}
+
+.inspectorPaneResizeHandle {
+  position: relative;
+  flex: 0 0 10px;
+  height: 10px;
+  cursor: ns-resize;
+  z-index: 4;
+}
+
+.inspectorPaneResizeHandle::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: rgba(95, 214, 255, 0.18);
+  transition: background 120ms ease;
+}
+
+.inspectorPaneResizeHandle:hover::before,
+.inspector.resizingPanes .inspectorPaneResizeHandle::before {
+  background: rgba(95, 214, 255, 0.72);
 }
 
 .paneHeader {
@@ -1018,6 +1061,8 @@ input {
 }
 
 .contentBrowser {
+  grid-column: 1;
+  grid-row: 2;
   position: relative;
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr);
@@ -1368,19 +1413,31 @@ input {
 }
 
 @media (max-width: 860px) {
-  .workspace {
+  .shellBody {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) 260px;
+    grid-template-rows: minmax(0, 1fr) minmax(260px, 36vh) auto;
   }
 
-  .workspace.inspectorCollapsed {
+  .workspace {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) 0;
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .shellBody.inspectorCollapsed {
+    grid-template-rows: minmax(0, 1fr) 0 auto;
   }
 
   .inspector {
+    grid-column: 1;
+    grid-row: 2;
     border-top: 1px solid #272d37;
     border-left: 0;
+  }
+
+  .contentBrowser {
+    grid-column: 1;
+    grid-row: 3;
   }
 
   .sidebarResizeHandle {
