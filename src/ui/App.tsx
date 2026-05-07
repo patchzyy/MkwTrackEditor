@@ -53,6 +53,7 @@ import {
 } from '../lib/kmp';
 import { getObjFlowResourceNames, mergeCommonResourceEntries, parseCommonResourceArchive, type CommonResourceArchive, type ObjFlowEntry } from '../lib/objflow';
 import { parseNoclipBrresSummary, type NoclipBrresSummary } from '../lib/noclipBrres';
+import { buildPublicAssetUrl } from '../lib/assetPaths';
 import {
   createDefaultBlight,
   createDefaultBblm,
@@ -73,6 +74,7 @@ import {
   type RgbColor,
   type RgbaColor,
 } from '../lib/posteffects';
+import { loadPersistedCommonSzs, savePersistedCommonSzs } from '../lib/persistedCommon';
 import { describeEntity, exportTrack, loadTrackBytes, loadTrackFile, replaceArchiveFile, replaceCourseKmp, validateExportBytes, validateTrack, type TrackDocument } from '../lib/track';
 import { parseU8 } from '../lib/u8';
 import { comparePlaceableCourseAssetPriority, dedupePlaceableCourseAssetsForBrowser } from './browserAssetDedupe';
@@ -806,6 +808,7 @@ export function App() {
   const [collisionVisible, setCollisionVisible] = useState(false);
   const [status, setStatus] = useState('No track loaded');
   const [commonArchive, setCommonArchive] = useState<CommonResourceArchive | null>(null);
+  const [commonArchiveUrl, setCommonArchiveUrl] = useState<string | null>(null);
   const [courseAssetDb, setCourseAssetDb] = useState<CourseAssetDatabase | null>(null);
   const [commonBrresSummaries, setCommonBrresSummaries] = useState<Record<string, NoclipBrresSummary>>({});
   const [commonLoadStatus, setCommonLoadStatus] = useState('idle');
@@ -832,6 +835,7 @@ export function App() {
   const editSessionRef = useRef<EditorSnapshot | null>(null);
   const transientViewportEditRef = useRef(false);
   const clipboardEntityRef = useRef<ClipboardEntity | null>(null);
+  const commonArchiveObjectUrlRef = useRef<string | null>(null);
   const objFlow = commonArchive?.objFlow ?? null;
   const analysisTrack = transientViewportEditRef.current ? editSessionRef.current?.track ?? track : track;
   const selected = useMemo(() => track?.kmp?.entities.find((entity) => entity.id === selectedId) ?? null, [track, selectedId]);
@@ -941,6 +945,17 @@ export function App() {
   trackStateRef.current = track;
   selectedIdStateRef.current = selectedId;
   selectedIdsStateRef.current = selectedIds;
+
+  useEffect(() => () => {
+    if (commonArchiveObjectUrlRef.current) URL.revokeObjectURL(commonArchiveObjectUrlRef.current);
+  }, []);
+
+  function replaceCommonArchiveObjectUrl(bytes: Uint8Array) {
+    if (commonArchiveObjectUrlRef.current) URL.revokeObjectURL(commonArchiveObjectUrlRef.current);
+    const next = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+    commonArchiveObjectUrlRef.current = next;
+    setCommonArchiveUrl(next);
+  }
 
   useEffect(() => {
     if (!browserFolders.some((folder) => folder.id === browserFolder) && browserFolders[0]) setBrowserFolder(browserFolders[0].id);
@@ -1359,10 +1374,29 @@ export function App() {
 
   useEffect(() => {
     let cancelled = false;
-    async function loadBundledCommon() {
+    async function loadCommonAssets() {
       try {
+        if (!smokeCommonUrl) {
+          try {
+            if (!cancelled) setCommonLoadStatus('checking saved common assets');
+            const stored = await loadPersistedCommonSzs();
+            if (cancelled) return;
+            if (stored) {
+              if (!cancelled) setCommonLoadStatus('loading saved common assets');
+              const common = await resolveCommonResourceArchive(stored, smokeMode);
+              if (cancelled) return;
+              replaceCommonArchiveObjectUrl(stored);
+              setCommonArchive(common);
+              setCommonLoadStatus(`ready: ${common.objFlow.entries.length} objects, ${common.resourceEntries.length} resources`);
+              setStatus((current) => (current === 'No track loaded' ? `Loaded saved Common.szs: ${common.objFlow.entries.length} game objects` : current));
+              return;
+            }
+          } catch {
+            if (!cancelled) setCommonLoadStatus('saved common assets failed; trying bundled assets');
+          }
+        }
         if (!cancelled) setCommonLoadStatus('fetching bundled common assets');
-        const response = await fetch(smokeCommonUrl ?? '/data/MarioKartWii/Race/Common.szs');
+        const response = await fetch(smokeCommonUrl ?? buildPublicAssetUrl('data/MarioKartWii/Race/Common.szs'));
         if (!response.ok) {
           if (!cancelled) {
             setCommonLoadStatus(`fetch failed: HTTP ${response.status}`);
@@ -1370,13 +1404,11 @@ export function App() {
           }
           return;
         }
-        const baseCommon = parseCommonResourceArchive(new Uint8Array(await response.arrayBuffer()));
-        if (!cancelled) setCommonLoadStatus('loaded base common assets');
-        const common = smokeMode
-          ? await withBundledCourseObjectResources(baseCommon, getSmokePreviewResourceNames(baseCommon.objFlow))
-          : await withExtractedCourseAssetResources(await withBundledCourseObjectResources(baseCommon));
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        const common = await resolveCommonResourceArchive(bytes, smokeMode);
         if (!cancelled) {
-          setCommonArchive((current) => current ?? common);
+          replaceCommonArchiveObjectUrl(bytes);
+          setCommonArchive(common);
           setCommonLoadStatus(`ready: ${common.objFlow.entries.length} objects, ${common.resourceEntries.length} resources`);
           setStatus((current) => (current === 'No track loaded' ? `Loaded bundled common assets: ${common.objFlow.entries.length} game objects` : current));
         }
@@ -1388,7 +1420,7 @@ export function App() {
         // Manual Common.szs loading remains available if the bundled file is absent.
       }
     }
-    void loadBundledCommon();
+    void loadCommonAssets();
     return () => {
       cancelled = true;
     };
@@ -1398,7 +1430,7 @@ export function App() {
     let cancelled = false;
     async function loadCourseAssetDb() {
       try {
-        const response = await fetch('/data/MarioKartWii/Race/Course/course-asset-db.json');
+        const response = await fetch(buildPublicAssetUrl('data/MarioKartWii/Race/Course/course-asset-db.json'));
         if (!response.ok) return;
         const next = (await response.json()) as CourseAssetDatabase;
         if (!cancelled) setCourseAssetDb(next);
@@ -1649,6 +1681,29 @@ export function App() {
       resetHistory();
       setStatus(`Loaded ${file.name}: ${loaded.archiveEntries.length} files, ${loaded.kmp?.entities.length ?? 0} editable track records`);
     } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function importCommonArchive(files: FileList | null) {
+    const file = files?.[0];
+    if (!file) return;
+    try {
+      setCommonLoadStatus('importing Common.szs');
+      setStatus(`Importing ${file.name}...`);
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const common = await resolveCommonResourceArchive(bytes, smokeMode);
+      replaceCommonArchiveObjectUrl(bytes);
+      setCommonArchive(common);
+      setCommonLoadStatus(`ready: ${common.objFlow.entries.length} objects, ${common.resourceEntries.length} resources`);
+      try {
+        await savePersistedCommonSzs(bytes);
+        setStatus(`Imported Common.szs: ${common.objFlow.entries.length} game objects`);
+      } catch {
+        setStatus(`Imported Common.szs for this session, but browser storage save failed.`);
+      }
+    } catch (error) {
+      setCommonLoadStatus(error instanceof Error ? `import failed: ${error.message}` : `import failed: ${String(error)}`);
       setStatus(error instanceof Error ? error.message : String(error));
     }
   }
@@ -2239,6 +2294,19 @@ export function App() {
           Open .szs
           <input hidden type="file" accept=".szs" onChange={(event) => void openFiles(event.currentTarget.files)} />
         </label>
+        <label className="button" title="Import Common.szs once and keep it in this browser">
+          <FolderOpen size={16} />
+          Import Common.szs
+          <input
+            hidden
+            type="file"
+            accept=".szs"
+            onChange={(event) => {
+              void importCommonArchive(event.currentTarget.files);
+              event.currentTarget.value = '';
+            }}
+          />
+        </label>
         <button className="button buttonIconOnly" disabled={historyState.undo === 0} onClick={undoEdit} title="Undo (Ctrl/Cmd+Z)" aria-label="Undo">
           <Undo2 size={16} />
         </button>
@@ -2300,7 +2368,7 @@ export function App() {
                     })}
                   </div>
                 ) : (
-                  <p className="muted">Load shared object data to place common objects from this rail.</p>
+                  <p className="muted">Load shared object data to place common objects from this rail. Use Import Common.szs once if the bundled archive is unavailable.</p>
                 )}
               </div>
             )}
@@ -2311,6 +2379,7 @@ export function App() {
             selectedIds={selectedIds}
             fillBetweenPreviewPositions={fillBetweenPreviewPositions}
             smokeCommonUrl={smokeCommonUrl}
+            commonArchiveUrl={commonArchiveUrl}
             tool={tool}
             viewMode={viewMode}
             collisionVisible={collisionVisible}
@@ -2827,7 +2896,7 @@ function offsetCheckpointPoint(point: Vec3, sourceCenter: Vec3, targetCenter: Ve
 
 async function withBundledCourseObjectResources(common: CommonResourceArchive, allowedBaseNames?: Set<string>): Promise<CommonResourceArchive> {
   try {
-    const basePath = '/data/MarioKartWii/Race/Course/Object/';
+    const basePath = buildPublicAssetUrl('data/MarioKartWii/Race/Course/Object/');
     const manifestResponse = await fetch(`${basePath}manifest.json`);
     if (!manifestResponse.ok) return common;
     const names = (await manifestResponse.json()) as string[];
@@ -2847,13 +2916,19 @@ async function withBundledCourseObjectResources(common: CommonResourceArchive, a
 
 async function withExtractedCourseAssetResources(common: CommonResourceArchive): Promise<CommonResourceArchive> {
   try {
-    const response = await fetch('/data/MarioKartWii/Race/Course/ExtractedAssets.u8');
+    const response = await fetch(buildPublicAssetUrl('data/MarioKartWii/Race/Course/ExtractedAssets.u8'));
     if (!response.ok) return common;
     const entries = parseU8(new Uint8Array(await response.arrayBuffer())).filter((entry) => entry.type === 'file' && entry.data);
     return mergeCommonResourceEntries(common, entries);
   } catch {
     return common;
   }
+}
+
+async function resolveCommonResourceArchive(bytes: Uint8Array, smokeMode: boolean): Promise<CommonResourceArchive> {
+  const baseCommon = parseCommonResourceArchive(bytes);
+  if (smokeMode) return withBundledCourseObjectResources(baseCommon, getSmokePreviewResourceNames(baseCommon.objFlow));
+  return withExtractedCourseAssetResources(await withBundledCourseObjectResources(baseCommon));
 }
 
 function getSmokePreviewResourceNames(objFlow: CommonResourceArchive['objFlow']): Set<string> {

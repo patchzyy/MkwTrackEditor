@@ -9,6 +9,7 @@ import { getMatrixAxisY } from '../../vendor/noclip.website/src/MathHelpers';
 import type { Destroyable, SceneContext } from '../../vendor/noclip.website/src/SceneBase';
 import { InitErrorCode, initializeViewerWebGL2, resizeCanvas, type SceneGfx, type Viewer } from '../../vendor/noclip.website/src/viewer';
 import { createSceneFromU8Buffer } from '../../vendor/noclip.website/src/rres/scenes';
+import { buildPublicAssetUrl } from '../lib/assetPaths';
 import { buildU8 } from '../lib/u8';
 import type { AppendableKmpSection, KmpDocument, KmpEntity, Vec3 } from '../lib/kmp';
 import { raycastDown, raycastMesh, snapPointToTriangleFeature } from '../lib/kcl';
@@ -21,6 +22,7 @@ interface Noclip3DViewportProps {
   selectedIds: string[];
   fillBetweenPreviewPositions?: Vec3[];
   smokeCommonUrl?: string | null;
+  commonArchiveUrl?: string | null;
   tool: TransformTool;
   viewMode: ViewMode;
   collisionVisible: boolean;
@@ -433,6 +435,7 @@ export function Noclip3DViewport({
   selectedIds,
   fillBetweenPreviewPositions = [],
   smokeCommonUrl = null,
+  commonArchiveUrl = null,
   tool,
   viewMode,
   collisionVisible,
@@ -759,7 +762,7 @@ export function Noclip3DViewport({
 
         const archiveBytes = buildU8(sceneTrack.archiveEntries);
         const dataShare = new DataShare();
-        const dataFetcher = makeLocalDataFetcher(smokeCommonUrl);
+        const dataFetcher = makeLocalDataFetcher(commonArchiveUrl ?? smokeCommonUrl);
         const context: SceneContext = {
           device: viewer.gfxDevice,
           dataFetcher,
@@ -2730,10 +2733,10 @@ function sampleViewportState(canvas: HTMLCanvasElement): 'blank' | 'nonblank' | 
   return colors.size >= 64 && channelStdDev >= 8 && nonDarkRatio >= 0.005 ? 'nonblank' : 'blank';
 }
 
-function makeLocalDataFetcher(smokeCommonUrl?: string | null): DataFetcher {
+function makeLocalDataFetcher(commonArchiveUrl?: string | null): DataFetcher {
   return {
     fetchData: async (path: string) => {
-      const url = smokeCommonUrl && path === 'MarioKartWii/Race/Common.szs' ? smokeCommonUrl : `/data/${path}`;
+      const url = commonArchiveUrl && path === 'MarioKartWii/Race/Common.szs' ? commonArchiveUrl : buildPublicAssetUrl(`data/${path}`);
       const response = await fetch(url);
       if (!response.ok) throw new Error(`Failed to load renderer data ${path}: ${response.status}`);
       return new ArrayBufferSlice(await response.arrayBuffer()) as never;
