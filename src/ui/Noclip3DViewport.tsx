@@ -1692,20 +1692,37 @@ function getSceneKey(track: TrackDocument): string {
 }
 
 function getGobjSignature(track: TrackDocument): string {
-  return (
-    track.kmp?.entities
-      .filter((entity) => entity.section === 'GOBJ')
-      .map((entity) =>
-        [
-          entity.index,
-          entity.objectId ?? -1,
-          entity.routeIndex ?? -1,
-          entity.presenceFlags ?? -1,
-          ...(entity.objectSettings ?? []),
-        ].join(':'),
-      )
-      .join('|') ?? 'nogobj'
-  );
+  if (!track.kmp) return 'nogobj';
+  const gobjSignature = track.kmp.entities
+    .filter((entity) => entity.section === 'GOBJ')
+    .map((entity) =>
+      [
+        entity.index,
+        entity.objectId ?? -1,
+        entity.routeIndex ?? -1,
+        entity.presenceFlags ?? -1,
+        ...(entity.objectSettings ?? []),
+      ].join(':'),
+    )
+    .join('|');
+  const potiSignature = track.kmp.routes
+    .map((route) =>
+      [
+        route.index,
+        route.setting1,
+        route.setting2,
+        ...route.points.flatMap((point) => [
+          point.pointIndex,
+          point.position.x,
+          point.position.y,
+          point.position.z,
+          point.setting1,
+          point.setting2,
+        ]),
+      ].join(':'),
+    )
+    .join('|');
+  return `${gobjSignature}#${potiSignature}`;
 }
 
 function buildSceneOverlayData(
