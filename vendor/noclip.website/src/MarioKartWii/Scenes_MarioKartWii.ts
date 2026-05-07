@@ -392,7 +392,7 @@ class MarioKartWiiRenderer {
     private editorOverlayViewportWidth = 1;
     private editorOverlayViewportHeight = 1;
     private editorOverlayScratchMatrix = mat4.create();
-    private editorDOFMode: EditorDOFMode = 'full';
+    private editorDOFMode: EditorDOFMode = 'off';
 
     constructor(context: SceneContext, public commonCache: CommonCache, public courseArc: U8.U8Archive, useFallbackLighting: boolean) {
         this.renderHelper = new GXRenderHelperGfx(context.device, context);
@@ -3570,7 +3570,7 @@ class MarioKartWiiSceneDesc implements Viewer.SceneDesc {
             const bdofRes = parseBDOF(bdofData);
             const eggDOF = new EggDrawPathDOF(device, cache, bdofRes);
             renderer.eggDOF = eggDOF;
-            renderer.setEditorDOFMode('full');
+            renderer.setEditorDOFMode('off');
 
             const warpTex = arc.findFileData(`./posteffect/posteffect.bti`);
             if (warpTex !== null) {

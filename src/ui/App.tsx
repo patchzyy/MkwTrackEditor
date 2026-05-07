@@ -9,7 +9,9 @@ import {
   appendKmpPotiPoint,
   appendKmpPotiRoute,
   deleteKmpEntity,
+  forkKmpPathPoint,
   getKmpCameraHeader,
+  insertKmpPathPoint,
   moveKmpEntity,
   parseKmp,
   patchKmpAreaField,
@@ -47,6 +49,7 @@ import {
   type KmpCannonField,
   type KmpDocument,
   type KmpEntity,
+  type KmpRouteInsertTarget,
   type KmpRespawnField,
   type KmpStageField,
   type Vec3,
@@ -1806,6 +1809,43 @@ export function App() {
     }
   }
 
+  function insertRoutePoint(target: KmpRouteInsertTarget, position: Vec3) {
+    if (!track?.kmp) return;
+    try {
+      let nextKmp: Uint8Array;
+      let newSelectedId: string;
+      let label: string;
+      if (target.section === 'POTI') {
+        const route = track.kmp.routes[target.routeIndex];
+        if (!route) throw new Error(`Cannot add POTI node: route ${target.routeIndex} is missing.`);
+        const nextPointIndex = Math.max(0, Math.min(target.afterPointIndex + 1, route.points.length));
+        nextKmp = appendKmpPotiPoint(track.kmp, target.routeIndex, target.afterPointIndex, position);
+        newSelectedId = `POTI-${target.routeIndex}-${nextPointIndex}`;
+        label = `object route ${target.routeIndex} node`;
+      } else {
+        const graph = track.kmp.pathGraphs.find((candidate) => candidate.pointSection === target.section);
+        const group = graph?.groups[target.groupIndex];
+        if (!graph || !group) throw new Error(`Cannot add ${target.section}: group ${target.groupIndex} is missing.`);
+        if (target.mode === 'fork') {
+          const nextPointSectionCount = track.kmp.sections.find((candidate) => candidate.name === target.section)?.count ?? 0;
+          nextKmp = forkKmpPathPoint(track.kmp, target.section, target.groupIndex, target.localPointIndex, position);
+          newSelectedId = `${target.section}-${nextPointSectionCount}`;
+          label = `${friendlySectionSingularLabel(target.section)} fork`;
+        } else {
+          const nextPointIndex = group.startIndex + Math.max(0, Math.min(target.afterPointIndex + 1, group.pointCount));
+          nextKmp = insertKmpPathPoint(track.kmp, target.section, target.groupIndex, target.afterPointIndex, position);
+          newSelectedId = `${target.section}-${nextPointIndex}`;
+          label = friendlySectionSingularLabel(target.section);
+        }
+      }
+      const nextTrack = replaceCourseKmp(track, nextKmp);
+      applyEditorChange(nextTrack, newSelectedId, true, [newSelectedId]);
+      setStatus(`Added ${label} at ${position.x.toFixed(1)}, ${position.y.toFixed(1)}, ${position.z.toFixed(1)}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   function createObjectRoute(entity: KmpEntity) {
     if (!track?.kmp || entity.section !== 'GOBJ' || entity.routeIndex === undefined || entity.routeIndex !== 0xffff) return;
     try {
@@ -2398,6 +2438,7 @@ export function App() {
             onMoveCheckpointEndpoint={moveCheckpointEndpoint}
             onAddObject={addObject}
             onAddKmpPoint={addKmpPoint}
+            onInsertRoutePoint={insertRoutePoint}
             onInteractionStart={beginEditSession}
             onInteractionEnd={endEditSession}
             topRightOverlay={

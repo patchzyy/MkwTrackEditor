@@ -11,7 +11,7 @@ import { InitErrorCode, initializeViewerWebGL2, resizeCanvas, type SceneGfx, typ
 import { createSceneFromU8Buffer } from '../../vendor/noclip.website/src/rres/scenes';
 import { buildPublicAssetUrl } from '../lib/assetPaths';
 import { buildU8 } from '../lib/u8';
-import type { AppendableKmpSection, KmpDocument, KmpEntity, Vec3 } from '../lib/kmp';
+import type { AppendableKmpSection, KmpDocument, KmpEntity, KmpRouteInsertTarget, Vec3 } from '../lib/kmp';
 import { raycastDown, raycastMesh, snapPointToTriangleFeature } from '../lib/kcl';
 import type { TrackDocument } from '../lib/track';
 import { describeEntity } from '../lib/track';
@@ -39,6 +39,7 @@ interface Noclip3DViewportProps {
   onMoveCheckpointEndpoint?: (entity: KmpEntity, side: 'left' | 'right', position: Vec3) => void;
   onAddObject?: (objectId: number, position: Vec3) => void;
   onAddKmpPoint?: (section: AppendableKmpSection, position: Vec3) => void;
+  onInsertRoutePoint?: (target: KmpRouteInsertTarget, position: Vec3) => void;
   onInteractionStart?: () => void;
   onInteractionEnd?: () => void;
 }
@@ -177,6 +178,16 @@ interface SceneOverlayData {
   fillBetweenPreview: SceneOverlayFillBetweenPreview[];
   routeDeviationSegments: SceneOverlayRouteDeviationSegment[];
   routeDeviationCaps: SceneOverlayRouteDeviationCap[];
+}
+
+interface RouteInsertPreview {
+  position: Vec3;
+  target: KmpRouteInsertTarget;
+}
+
+interface RouteInsertCandidate {
+  position: Vec3;
+  target: KmpRouteInsertTarget;
 }
 
 type SceneOverlayPick =
@@ -332,6 +343,7 @@ type DofMode = 'full' | 'reduced' | 'off';
 const MKW_RENDER_SCALE = 0.1;
 const ENTITY_DRAG_START_THRESHOLD_PX = 4;
 const MAX_CAMERA_LOOK_DELTA_PX = 240;
+const ROUTE_INSERT_SNAP_MAX_SCREEN_DISTANCE_PX = 18;
 const CAMERA_MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyQ', 'KeyE', 'PageUp', 'PageDown', 'Space', 'KeyC', 'ControlLeft', 'ControlRight'] as const;
 const startSlotPixelCenterX = 59;
 const startSlotWidePixelWidth = 50;
@@ -452,6 +464,7 @@ export function Noclip3DViewport({
   onMoveCheckpointEndpoint,
   onAddObject,
   onAddKmpPoint,
+  onInsertRoutePoint,
   onInteractionStart,
   onInteractionEnd,
 }: Noclip3DViewportProps) {
@@ -510,8 +523,9 @@ export function Noclip3DViewport({
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [hoveredHandle, setHoveredHandle] = useState<GizmoHandleKey | null>(null);
   const [previewTransform, setPreviewTransform] = useState<EntityTransformPreview | null>(null);
+  const [routeInsertPreview, setRouteInsertPreview] = useState<RouteInsertPreview | null>(null);
   const [routePanelOpen, setRoutePanelOpen] = useState(false);
-  const [dofMode, setDofMode] = useState<DofMode>('full');
+  const [dofMode, setDofMode] = useState<DofMode>('off');
   const [routeVisibility, setRouteVisibility] = useState<Record<RouteVisibilityKey, boolean>>({
     ENPT: true,
     ITPT: true,
@@ -524,6 +538,7 @@ export function Noclip3DViewport({
   });
   const [marqueeSelection, setMarqueeSelection] = useState<MarqueeSelectionState | null>(null);
   const marqueeSelectionRef = useRef<MarqueeSelectionState | null>(null);
+  const lastPointerRef = useRef<{ x: number; y: number; snapToFeatures: boolean; altKey: boolean } | null>(null);
   const suppressNextClickRef = useRef(false);
   const onMoveEntityRef = useRef(onMoveEntity);
   const onRotateEntityRef = useRef(onRotateEntity);
@@ -812,7 +827,40 @@ export function Noclip3DViewport({
 
   useEffect(() => {
     syncSceneOverlay(track, selectedId);
-  }, [fillBetweenPreviewPositions, previewTransform, track?.kmp, track?.kcl, selectedId, selectedIds, hoveredId, hoveredHandle, collisionVisible, tool, routeVisibility, viewMode]);
+  }, [fillBetweenPreviewPositions, previewTransform, routeInsertPreview, track?.kmp, track?.kcl, selectedId, selectedIds, hoveredId, hoveredHandle, collisionVisible, tool, routeVisibility, viewMode]);
+
+  useEffect(() => {
+    const updateFromLastPointer = (altKey: boolean) => {
+      const pointer = lastPointerRef.current;
+      if (!pointer) {
+        if (!altKey) setRouteInsertPreview(null);
+        return;
+      }
+      lastPointerRef.current = { ...pointer, altKey };
+      updateRouteInsertPreview(pointer.x, pointer.y, altKey, pointer.snapToFeatures);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Alt') updateFromLastPointer(true);
+    };
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.key === 'Alt') updateFromLastPointer(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    const pointer = lastPointerRef.current;
+    if (!pointer?.altKey) {
+      setRouteInsertPreview(null);
+      return;
+    }
+    updateRouteInsertPreview(pointer.x, pointer.y, true, pointer.snapToFeatures);
+  }, [track?.kmp, selectedId, selectedIds]);
 
   useEffect(() => {
     const trackValue = trackRef.current;
@@ -1128,6 +1176,11 @@ export function Noclip3DViewport({
   function handleCanvasPointerDown(event: PointerEvent<HTMLCanvasElement>) {
     if (event.button === 2) return;
     if (event.button !== 0 || draggingEntityRef.current) return;
+    if (event.altKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const additiveSelection = isAdditiveSelectionModifier(event);
     const scene = sceneRef.current as SceneGfx & {
       pickEditorHandle?: (normalizedX: number, normalizedY: number) => SceneOverlayPick | null;
@@ -1207,6 +1260,12 @@ export function Noclip3DViewport({
 
   function handleCanvasPointerMove(event: PointerEvent<HTMLCanvasElement>) {
     if (cameraLookDragRef.current && event.pointerId === cameraLookDragRef.current.pointerId) return;
+    lastPointerRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      snapToFeatures: isCollisionSnapModifier(event),
+      altKey: event.altKey,
+    };
     if (marqueeSelectionRef.current) {
       const nextMarquee = { ...marqueeSelectionRef.current, currentX: event.clientX, currentY: event.clientY };
       marqueeSelectionRef.current = nextMarquee;
@@ -1232,6 +1291,7 @@ export function Noclip3DViewport({
       updateActiveDrag(event.clientX, event.clientY, isCollisionSnapModifier(event));
       return;
     }
+    updateRouteInsertPreview(event.clientX, event.clientY, event.altKey, isCollisionSnapModifier(event));
     updateHoveredEntity(event.clientX, event.clientY, event.currentTarget);
   }
 
@@ -1262,6 +1322,8 @@ export function Noclip3DViewport({
     if (marqueeSelectionRef.current) return;
     setHoveredGizmoHandle(null);
     if (hoveredIdRef.current !== null) setHoveredId(null);
+    lastPointerRef.current = null;
+    setRouteInsertPreview(null);
   }
 
 function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDragState, snapToFeatures = false) {
@@ -1396,6 +1458,13 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     const scene = sceneRef.current as SceneGfx & {
       pickEditorHandle?: (normalizedX: number, normalizedY: number) => SceneOverlayPick | null;
     } | null;
+    if (event.altKey) {
+      const candidate = onInsertRoutePoint ? resolveRouteInsertCandidate(event.clientX, event.clientY, isCollisionSnapModifier(event)) : null;
+      event.preventDefault();
+      event.stopPropagation();
+      if (candidate) onInsertRoutePoint?.(candidate.target, candidate.position);
+      return;
+    }
     const scenePick = pickSceneHandle(scene, event.clientX, event.clientY, canvas);
     const picked = pickEntityFromPick(scenePick) ?? pickEntityFromScreenPosition(event.clientX, event.clientY);
     onSelect(picked?.id ?? null, { additive: isAdditiveSelectionModifier(event) });
@@ -1481,6 +1550,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
         routeVisibilityRef.current,
         viewModeRef.current,
         getViewerCameraPosition(viewerRef.current),
+        routeInsertPreview,
       ),
     );
   }
@@ -1494,6 +1564,25 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     const hovered = pickEntityFromPick(scenePick) ?? pickEntityFromScreenPosition(clientX, clientY);
     const nextHoveredId = hovered?.id ?? null;
     if (nextHoveredId !== hoveredIdRef.current) setHoveredId(nextHoveredId);
+  }
+
+  function updateRouteInsertPreview(clientX: number, clientY: number, altKey: boolean, snapToFeatures: boolean) {
+    if (!altKey || draggingEntityRef.current || pendingEntityDragRef.current || marqueeSelectionRef.current || cameraLookDragRef.current) {
+      setRouteInsertPreview(null);
+      return;
+    }
+    const next = resolveRouteInsertCandidate(clientX, clientY, snapToFeatures);
+    setRouteInsertPreview((current) => (routeInsertPreviewEquals(current, next) ? current : next));
+  }
+
+  function resolveRouteInsertCandidate(clientX: number, clientY: number, snapToFeatures: boolean): RouteInsertCandidate | null {
+    const track = trackRef.current;
+    const canvas = canvasRef.current;
+    const viewer = viewerRef.current;
+    if (!track?.kmp || !canvas || !viewer) return null;
+    const cursorPosition = placeFromScreen(clientX, clientY, 0, snapToFeatures);
+    if (!cursorPosition) return null;
+    return getRouteInsertCandidate(track.kmp, selectedIdRef.current, cursorPosition, clientX, clientY, canvas, viewer);
   }
 
   function applyViewMode(nextTrack: TrackDocument | null, resetFrame: boolean) {
@@ -1742,6 +1831,7 @@ function buildSceneOverlayData(
   routeVisibility: Record<string, boolean>,
   viewMode: ViewMode,
   cameraPosition: Vec3 | null,
+  routeInsertPreview: RouteInsertPreview | null,
 ): SceneOverlayData {
   if (!track?.kmp) return { tool, points: [], lines: [], centerHandle: null, axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [], startSlots: [], fillBetweenPreview: [], routeDeviationSegments: [], routeDeviationCaps: [] };
   const showCollision = viewMode === 'dev' && collisionVisible;
@@ -1777,6 +1867,16 @@ function buildSceneOverlayData(
       hovered: entity.id === hoveredId && entity.id !== selectedId,
       invalid: false,
     }));
+  if (routeInsertPreview) {
+    points.push({
+      id: '__route-insert-preview__',
+      section: 'ROUTE_INSERT_PREVIEW',
+      position: routeInsertPreview.position,
+      selected: false,
+      hovered: false,
+      invalid: false,
+    });
+  }
   for (const point of points) point.invalid = invalidIds.has(point.id);
 
   const selectedDeviationSections = new Set<'ENPT' | 'ITPT'>();
@@ -1976,6 +2076,152 @@ function buildSceneOverlayData(
   }
 
   return { tool, points, lines, centerHandle, axes, planes, checkpointEndpoints, collisionTriangles, checkpointWalls, areaVolumes, startSlots, fillBetweenPreview, routeDeviationSegments, routeDeviationCaps };
+}
+
+function getRouteInsertCandidate(
+  kmp: KmpDocument | null,
+  selectedId: string | null,
+  cursorPosition: Vec3,
+  clientX: number,
+  clientY: number,
+  canvas: HTMLCanvasElement,
+  viewer: Viewer,
+): RouteInsertCandidate | null {
+  if (!kmp || !selectedId) return null;
+  const selected = kmp.entities.find((entity) => entity.id === selectedId);
+  if (!selected) return null;
+  if (selected.routePoint) {
+    const route = kmp.routes[selected.routePoint.routeIndex];
+    if (!route || route.points.length === 0) return null;
+    const segment = getNearestRouteInsertSegment(route.points.map((point) => point.position), cursorPosition, clientX, clientY, canvas, viewer);
+    if (!segment) return null;
+    return {
+      position: segment.snapped ? segment.position : cursorPosition,
+      target: {
+        section: 'POTI',
+        routeIndex: route.index,
+        afterPointIndex: segment.snapped ? segment.afterPointIndex : selected.routePoint.pointIndex,
+      },
+    };
+  }
+  if (selected.section !== 'ENPT' && selected.section !== 'ITPT' && selected.section !== 'CKPT') return null;
+  const graph = kmp.pathGraphs.find((candidate) => candidate.pointSection === selected.section);
+  const group = graph?.groups.find((candidate) => selected.index >= candidate.startIndex && selected.index < candidate.startIndex + candidate.pointCount);
+  if (!graph || !group) return null;
+  const groupPoints = kmp.entities
+    .filter((entity) => entity.section === selected.section)
+    .slice(group.startIndex, group.startIndex + group.pointCount)
+    .map((entity) => entity.position);
+  if (groupPoints.length === 0) return null;
+  const segment = getNearestRouteInsertSegment(groupPoints, cursorPosition, clientX, clientY, canvas, viewer);
+  if (!segment) return null;
+  return {
+    position: segment.snapped ? segment.position : cursorPosition,
+    target: segment.snapped
+      ? {
+          section: selected.section,
+          groupIndex: group.index,
+          afterPointIndex: segment.afterPointIndex,
+          mode: 'insert',
+        }
+      : {
+          section: selected.section,
+          groupIndex: group.index,
+          localPointIndex: selected.index - group.startIndex,
+          mode: 'fork',
+        },
+  };
+}
+
+function getNearestRouteInsertSegment(
+  points: readonly Vec3[],
+  _cursorPosition: Vec3,
+  clientX: number,
+  clientY: number,
+  canvas: HTMLCanvasElement,
+  viewer: Viewer,
+): { afterPointIndex: number; position: Vec3; snapped: boolean } | null {
+  if (points.length <= 1) return null;
+  let best: { afterPointIndex: number; position: Vec3; screenDistanceSq: number } | null = null;
+  for (let i = 0; i < points.length - 1; i++) {
+    const screenProjection = projectCursorOntoRouteSegment(points[i], points[i + 1], clientX, clientY, canvas, viewer);
+    if (!screenProjection) continue;
+    const projected = interpolateVec3(points[i], points[i + 1], screenProjection.t);
+    const screenDistanceSq = screenProjection.distanceSq;
+    if (!best || screenDistanceSq < best.screenDistanceSq) {
+      best = { afterPointIndex: i, position: projected, screenDistanceSq };
+    }
+  }
+  if (!best) return null;
+  return {
+    afterPointIndex: best.afterPointIndex,
+    position: best.position,
+    snapped: best.screenDistanceSq <= ROUTE_INSERT_SNAP_MAX_SCREEN_DISTANCE_PX * ROUTE_INSERT_SNAP_MAX_SCREEN_DISTANCE_PX,
+  };
+}
+
+function projectCursorOntoRouteSegment(
+  a: Vec3,
+  b: Vec3,
+  clientX: number,
+  clientY: number,
+  canvas: HTMLCanvasElement,
+  viewer: Viewer,
+): { x: number; y: number; t: number; distanceSq: number } | null {
+  const a2 = projectWorldToClient(a, canvas, viewer);
+  const b2 = projectWorldToClient(b, canvas, viewer);
+  if (!a2 || !b2) return null;
+  const segment2d = { x: b2.x - a2.x, y: b2.y - a2.y };
+  const lengthSq = segment2d.x * segment2d.x + segment2d.y * segment2d.y;
+  if (lengthSq <= 0.000001) {
+    const dx = clientX - a2.x;
+    const dy = clientY - a2.y;
+    return { x: a2.x, y: a2.y, t: 0, distanceSq: dx * dx + dy * dy };
+  }
+  const t = Math.min(1, Math.max(0, ((clientX - a2.x) * segment2d.x + (clientY - a2.y) * segment2d.y) / lengthSq));
+  const x = a2.x + segment2d.x * t;
+  const y = a2.y + segment2d.y * t;
+  const dx = clientX - x;
+  const dy = clientY - y;
+  return {
+    x,
+    y,
+    t,
+    distanceSq: dx * dx + dy * dy,
+  };
+}
+
+function interpolateVec3(a: Vec3, b: Vec3, t: number): Vec3 {
+  return {
+    x: a.x + (b.x - a.x) * t,
+    y: a.y + (b.y - a.y) * t,
+    z: a.z + (b.z - a.z) * t,
+  };
+}
+
+function projectPointOntoSegment(a: Vec3, b: Vec3, point: Vec3): Vec3 {
+  const ab = subVec3(b, a);
+  const lengthSq = dot(ab, ab);
+  if (lengthSq <= 0.000001) return a;
+  const t = Math.min(1, Math.max(0, dot(subVec3(point, a), ab) / lengthSq));
+  return {
+    x: a.x + ab.x * t,
+    y: a.y + ab.y * t,
+    z: a.z + ab.z * t,
+  };
+}
+
+function routeInsertPreviewEquals(a: RouteInsertPreview | null, b: RouteInsertPreview | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.position.x === b.position.x &&
+    a.position.y === b.position.y &&
+    a.position.z === b.position.z &&
+    a.target.section === b.target.section &&
+    ('routeIndex' in a.target ? a.target.routeIndex : a.target.groupIndex) === ('routeIndex' in b.target ? b.target.routeIndex : b.target.groupIndex) &&
+    a.target.afterPointIndex === b.target.afterPointIndex
+  );
 }
 
 function buildRouteDeviationSegment(

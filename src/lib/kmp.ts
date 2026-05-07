@@ -152,6 +152,11 @@ export interface KmpDocument {
 
 export type AppendableKmpPointSection = 'KTPT' | 'ENPT' | 'ITPT' | 'JGPT' | 'CNPT' | 'MSPT';
 export type AppendableKmpSection = AppendableKmpPointSection | 'CKPT' | 'POTI' | 'AREA' | 'CAME';
+export type InsertableKmpPathPointSection = 'ENPT' | 'ITPT' | 'CKPT';
+export type KmpRouteInsertTarget =
+  | { section: 'POTI'; routeIndex: number; afterPointIndex: number }
+  | { section: InsertableKmpPathPointSection; groupIndex: number; afterPointIndex: number; mode?: 'insert' }
+  | { section: InsertableKmpPathPointSection; groupIndex: number; localPointIndex: number; mode: 'fork' };
 
 const SECTION_RECORD_SIZE: Record<string, number> = {
   KTPT: 0x1c,
@@ -850,15 +855,7 @@ export function appendKmpCamera(document: KmpDocument, position: Vec3): Uint8Arr
 }
 
 export function appendKmpPoint(document: KmpDocument, sectionName: AppendableKmpPointSection, position: Vec3): Uint8Array {
-  const recordSize = SECTION_RECORD_SIZE[sectionName];
-  const positionOffset = POSITION_OFFSETS[sectionName];
-  if (!recordSize || positionOffset === undefined) throw new Error(`Cannot add ${sectionName}: unsupported point section.`);
-  const record = new Uint8Array(recordSize);
-  const view = new DataView(record.buffer);
-  view.setFloat32(positionOffset, position.x, false);
-  view.setFloat32(positionOffset + 4, position.y, false);
-  view.setFloat32(positionOffset + 8, position.z, false);
-  if (sectionName === 'ENPT' || sectionName === 'ITPT') view.setFloat32(0x0c, 10, false);
+  const record = createKmpPointRecord(sectionName, position);
   const appended = appendKmpRecord(document, sectionName, record);
   if (sectionName === 'ENPT') return connectAppendedPathPoint(appended, 'ENPT', 'ENPH');
   if (sectionName === 'ITPT') return connectAppendedPathPoint(appended, 'ITPT', 'ITPH');
@@ -866,18 +863,7 @@ export function appendKmpPoint(document: KmpDocument, sectionName: AppendableKmp
 }
 
 export function appendKmpCheckpoint(document: KmpDocument, position: Vec3, width = 1200): Uint8Array {
-  const record = new Uint8Array(SECTION_RECORD_SIZE.CKPT);
-  const view = new DataView(record.buffer);
-  const halfWidth = width / 2;
-  view.setFloat32(0x00, position.x - halfWidth, false);
-  view.setFloat32(0x04, position.z, false);
-  view.setFloat32(0x08, position.x + halfWidth, false);
-  view.setFloat32(0x0c, position.z, false);
-  view.setUint8(0x10, 0xff);
-  view.setUint8(0x11, 0xff);
-  view.setUint8(0x12, 0);
-  view.setUint8(0x13, 0);
-  return connectAppendedPathPoint(appendKmpRecord(document, 'CKPT', record), 'CKPT', 'CKPH');
+  return connectAppendedPathPoint(appendKmpRecord(document, 'CKPT', createCheckpointRecord(position, width)), 'CKPT', 'CKPH');
 }
 
 export function appendKmpPotiRoute(document: KmpDocument, position: Vec3): Uint8Array {
@@ -907,6 +893,95 @@ export function appendKmpPotiPoint(document: KmpDocument, routeIndex: number, af
   return out;
 }
 
+export function insertKmpPathPoint(
+  document: KmpDocument,
+  pointSectionName: InsertableKmpPathPointSection,
+  groupIndex: number,
+  afterPointIndex: number,
+  position: Vec3,
+  checkpointWidth = 1200,
+): Uint8Array {
+  const graph = document.pathGraphs.find((candidate) => candidate.pointSection === pointSectionName);
+  const pointSection = document.sections.find((candidate) => candidate.name === pointSectionName);
+  if (!graph || !pointSection) throw new Error(`Cannot add ${pointSectionName}: path graph is missing.`);
+  const group = graph.groups[groupIndex];
+  if (!group) throw new Error(`Cannot add ${pointSectionName}: group ${groupIndex} is missing.`);
+  if (group.pointCount >= 0xff) throw new Error(`Cannot add ${pointSectionName}: group ${groupIndex} already has the maximum number of points.`);
+
+  const clampedAfter = Math.max(-1, Math.min(afterPointIndex, group.pointCount - 1));
+  const insertIndex = group.startIndex + clampedAfter + 1;
+  const record =
+    pointSectionName === 'CKPT'
+      ? createCheckpointRecord(position, checkpointWidth)
+      : createKmpPointRecord(pointSectionName, position);
+  const insertOffset = pointSection.offset + 8 + insertIndex * record.length;
+  const inserted = insertBytesAfterSectionRecord(document, pointSectionName, pointSection.offset, insertOffset, record);
+  const groups = graph.groups.map((candidate) => ({
+    ...candidate,
+    prevGroups: [...candidate.prevGroups],
+    nextGroups: [...candidate.nextGroups],
+    startIndex: candidate.index === groupIndex ? candidate.startIndex : candidate.startIndex + (candidate.startIndex >= insertIndex ? 1 : 0),
+    pointCount: candidate.index === groupIndex ? candidate.pointCount + 1 : candidate.pointCount,
+  }));
+  return replaceKmpSectionPayload(parseKmp(inserted), graph.groupSection, buildPathGroupPayload(groups), groups.length);
+}
+
+export function forkKmpPathPoint(
+  document: KmpDocument,
+  pointSectionName: InsertableKmpPathPointSection,
+  groupIndex: number,
+  localPointIndex: number,
+  position: Vec3,
+  checkpointWidth = 1200,
+): Uint8Array {
+  const initialGraph = document.pathGraphs.find((candidate) => candidate.pointSection === pointSectionName);
+  const initialGroup = initialGraph?.groups[groupIndex];
+  if (!initialGraph || !initialGroup) throw new Error(`Cannot fork ${pointSectionName}: group ${groupIndex} is missing.`);
+  if (localPointIndex < 0 || localPointIndex >= initialGroup.pointCount) throw new Error(`Cannot fork ${pointSectionName}: point ${localPointIndex} is outside group ${groupIndex}.`);
+
+  let working = document;
+  if (localPointIndex < initialGroup.pointCount - 1) working = parseKmp(splitKmpPathGroup(document, pointSectionName, groupIndex, localPointIndex));
+  const graph = working.pathGraphs.find((candidate) => candidate.pointSection === pointSectionName);
+  if (!graph) throw new Error(`Cannot fork ${pointSectionName}: path graph is missing after split.`);
+  if (graph.groups.length >= 0xff) throw new Error(`Cannot fork ${pointSectionName}: maximum group count reached.`);
+  const branchGroup = graph.groups[groupIndex];
+  if (!branchGroup) throw new Error(`Cannot fork ${pointSectionName}: branch source group ${groupIndex} is missing.`);
+  if (branchGroup.nextGroups.length >= 6) throw new Error(`Cannot fork ${pointSectionName}: source group ${groupIndex} already has the maximum number of outgoing links.`);
+
+  const pointSection = working.sections.find((candidate) => candidate.name === pointSectionName);
+  if (!pointSection) throw new Error(`Cannot fork ${pointSectionName}: point section is missing.`);
+  const record =
+    pointSectionName === 'CKPT'
+      ? createCheckpointRecord(position, checkpointWidth)
+      : createKmpPointRecord(pointSectionName, position);
+  const appended = appendKmpRecord(working, pointSectionName, record);
+  const appendedDoc = parseKmp(appended);
+  const appendedGraph = appendedDoc.pathGraphs.find((candidate) => candidate.pointSection === pointSectionName);
+  const appendedPointSection = appendedDoc.sections.find((candidate) => candidate.name === pointSectionName);
+  if (!appendedGraph || !appendedPointSection) throw new Error(`Cannot fork ${pointSectionName}: appended path data is missing.`);
+
+  const newPointIndex = appendedPointSection.count - 1;
+  const newGroupIndex = appendedGraph.groups.length;
+  const groups = appendedGraph.groups.map((candidate) => ({
+    ...candidate,
+    prevGroups: [...candidate.prevGroups],
+    nextGroups: [...candidate.nextGroups],
+  }));
+  groups[groupIndex] = {
+    ...groups[groupIndex],
+    nextGroups: [...groups[groupIndex].nextGroups, newGroupIndex],
+  };
+  groups.push({
+    section: appendedGraph.groupSection,
+    index: newGroupIndex,
+    startIndex: newPointIndex,
+    pointCount: 1,
+    prevGroups: [groupIndex],
+    nextGroups: [],
+  });
+  return replaceKmpSectionPayload(appendedDoc, appendedGraph.groupSection, buildPathGroupPayload(groups), groups.length);
+}
+
 function appendKmpRecord(document: KmpDocument, sectionName: string, record: Uint8Array): Uint8Array {
   const reader = new BinReader(document.original.slice().buffer);
   const sectionCount = reader.u16(0x08);
@@ -932,6 +1007,34 @@ function appendKmpRecord(document: KmpDocument, sectionName: string, record: Uin
     if (offsets[i] > sectionOffset) view.setUint32(offsetSlots[i], offsets[i] + record.length - headerSize, false);
   }
   return out;
+}
+
+function createKmpPointRecord(sectionName: AppendableKmpPointSection, position: Vec3): Uint8Array {
+  const recordSize = SECTION_RECORD_SIZE[sectionName];
+  const positionOffset = POSITION_OFFSETS[sectionName];
+  if (!recordSize || positionOffset === undefined) throw new Error(`Cannot add ${sectionName}: unsupported point section.`);
+  const record = new Uint8Array(recordSize);
+  const view = new DataView(record.buffer);
+  view.setFloat32(positionOffset, position.x, false);
+  view.setFloat32(positionOffset + 4, position.y, false);
+  view.setFloat32(positionOffset + 8, position.z, false);
+  if (sectionName === 'ENPT' || sectionName === 'ITPT') view.setFloat32(0x0c, 10, false);
+  return record;
+}
+
+function createCheckpointRecord(position: Vec3, width = 1200): Uint8Array {
+  const record = new Uint8Array(SECTION_RECORD_SIZE.CKPT);
+  const view = new DataView(record.buffer);
+  const halfWidth = width / 2;
+  view.setFloat32(0x00, position.x - halfWidth, false);
+  view.setFloat32(0x04, position.z, false);
+  view.setFloat32(0x08, position.x + halfWidth, false);
+  view.setFloat32(0x0c, position.z, false);
+  view.setUint8(0x10, 0xff);
+  view.setUint8(0x11, 0xff);
+  view.setUint8(0x12, 0);
+  view.setUint8(0x13, 0);
+  return record;
 }
 
 function connectAppendedPathPoint(data: Uint8Array, pointSectionName: 'ENPT' | 'ITPT' | 'CKPT', groupSectionName: 'ENPH' | 'ITPH' | 'CKPH'): Uint8Array {
