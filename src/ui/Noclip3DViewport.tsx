@@ -24,6 +24,9 @@ interface Noclip3DViewportProps {
   tool: TransformTool;
   viewMode: ViewMode;
   collisionVisible: boolean;
+  onChangeTool?: (tool: TransformTool) => void;
+  onChangeViewMode?: (mode: ViewMode) => void;
+  onChangeCollisionVisible?: (visible: boolean) => void;
   topRightOverlay?: ReactNode;
   getEntityLabel?: (entity: KmpEntity) => string;
   onSelect: (id: string | null, options?: { additive?: boolean }) => void;
@@ -49,6 +52,7 @@ interface SceneOverlayPoint {
   section: string;
   position: Vec3;
   markerText?: string;
+  specialColor?: 'bulletBillCantStop';
   selected: boolean;
   hovered: boolean;
   invalid: boolean;
@@ -136,6 +140,26 @@ interface SceneOverlayFillBetweenPreview {
   index: number;
 }
 
+interface SceneOverlayRouteDeviationSegment {
+  id: string;
+  section: 'ENPT' | 'ITPT';
+  aLeft: Vec3;
+  aRight: Vec3;
+  bLeft: Vec3;
+  bRight: Vec3;
+  selected: boolean;
+  hovered: boolean;
+}
+
+interface SceneOverlayRouteDeviationCap {
+  id: string;
+  section: 'ENPT' | 'ITPT';
+  position: Vec3;
+  radius: number;
+  selected: boolean;
+  hovered: boolean;
+}
+
 interface SceneOverlayData {
   tool: TransformTool;
   points: SceneOverlayPoint[];
@@ -149,6 +173,8 @@ interface SceneOverlayData {
   areaVolumes: SceneOverlayAreaVolume[];
   startSlots: SceneOverlayStartSlot[];
   fillBetweenPreview: SceneOverlayFillBetweenPreview[];
+  routeDeviationSegments: SceneOverlayRouteDeviationSegment[];
+  routeDeviationCaps: SceneOverlayRouteDeviationCap[];
 }
 
 type SceneOverlayPick =
@@ -382,6 +408,25 @@ function getInitialCameraFrame(track: TrackDocument): CameraFrame {
   };
 }
 
+function applyFPSCameraFrame(controller: FPSCameraController, frame: CameraFrame) {
+  const forward = vec3.sub(vec3.create(), frame.target, frame.eye);
+  const distance = vec3.length(forward);
+  if (distance > 0.0001) vec3.scale(forward, forward, 1 / distance);
+  else vec3.set(forward, 0, 0, -1);
+  vec3.copy(controller.translation, frame.target);
+  controller.txVel = 0;
+  controller.tyVel = 0;
+  controller.xVel = 0;
+  controller.yVel = 0;
+  controller.orbitXVel = 0;
+  controller.shouldOrbit = false;
+  controller.z = -Math.max(distance, 1);
+  controller.zTarget = controller.z;
+  controller.x = Math.atan2(forward[2], forward[0]);
+  controller.y = Math.acos(Math.max(-1, Math.min(1, forward[1])));
+  controller.forceUpdate = true;
+}
+
 export function Noclip3DViewport({
   track,
   selectedId,
@@ -391,6 +436,9 @@ export function Noclip3DViewport({
   tool,
   viewMode,
   collisionVisible,
+  onChangeTool,
+  onChangeViewMode,
+  onChangeCollisionVisible,
   topRightOverlay,
   getEntityLabel = describeEntity,
   onSelect,
@@ -1456,11 +1504,12 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     scene.setEditorViewMode?.(nextMode);
     if (nextMode === 'normal' || nextMode === 'dev') {
       const shouldResetCamera = resetFrame || !(viewer.cameraController instanceof FPSCameraController);
-      if (!(viewer.cameraController instanceof FPSCameraController)) viewer.setCameraController(new FPSCameraController());
+      const controller = viewer.cameraController instanceof FPSCameraController ? viewer.cameraController : new FPSCameraController();
+      if (!(viewer.cameraController instanceof FPSCameraController)) viewer.setCameraController(controller);
       viewer.camera.setPerspective(Math.PI / 3, getViewerAspect(viewer), 4, 500000);
       if (shouldResetCamera) {
-        const initialCamera = getInitialCameraFrame(nextTrack);
-        mat4.targetTo(viewer.camera.worldMatrix, initialCamera.eye, initialCamera.target, vec3.fromValues(0, 1, 0));
+        applyFPSCameraFrame(controller, getInitialCameraFrame(nextTrack));
+        controller.update(viewer.inputManager, 0, 0);
       }
       viewer.camera.worldMatrixUpdated();
       return;
@@ -1497,7 +1546,44 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     <section ref={viewportRef} className="viewport" onDragOver={(event) => event.preventDefault()} onDrop={handleDrop}>
       <div ref={uiContainerRef} className="noclipUiHost" />
       <div className="viewportToolbar">
-        <ToolBadge tool={tool} />
+        <div className="segmented viewportToolSegmented" aria-label="Viewport tool">
+          <button
+            type="button"
+            className={tool === 'translate' ? 'active' : ''}
+            onClick={() => onChangeTool?.('translate')}
+            title="Translate"
+            aria-label="Translate"
+          >
+            <Move3D size={16} />
+          </button>
+          <button
+            type="button"
+            className={tool === 'rotate' ? 'active' : ''}
+            onClick={() => onChangeTool?.('rotate')}
+            title="Rotate"
+            aria-label="Rotate"
+          >
+            <RotateCcw size={16} />
+          </button>
+          <button
+            type="button"
+            className={tool === 'scale' ? 'active' : ''}
+            onClick={() => onChangeTool?.('scale')}
+            title="Scale"
+            aria-label="Scale"
+          >
+            <Scale3D size={16} />
+          </button>
+        </div>
+        <label className="viewportModeSelect">
+          <span>View</span>
+          <select value={viewMode} onChange={(event) => onChangeViewMode?.(event.currentTarget.value as ViewMode)} aria-label="Viewport view mode">
+            <option value="normal">Normal</option>
+            <option value="dev">Dev</option>
+            <option value="topdown">Top</option>
+            <option value="ortho">Ortho</option>
+          </select>
+        </label>
       </div>
       <div className="viewportTopRightStack">
         <div className="routeVisibilityHud">
@@ -1532,6 +1618,17 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
                   </label>
                 ))
               )}
+              <div className="routePanelSection">
+                <strong>Viewport</strong>
+                <label className="routeVisibilityRow">
+                  <input
+                    type="checkbox"
+                    checked={collisionVisible}
+                    onChange={(event) => onChangeCollisionVisible?.(event.currentTarget.checked)}
+                  />
+                  <span>Collision</span>
+                </label>
+              </div>
               <div className="routePanelSection">
                 <strong>Depth Of Field</strong>
                 <div className="routeModeButtons">
@@ -1626,8 +1723,8 @@ function buildSceneOverlayData(
   viewMode: ViewMode,
   cameraPosition: Vec3 | null,
 ): SceneOverlayData {
-  if (!track?.kmp) return { tool, points: [], lines: [], centerHandle: null, axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [], startSlots: [], fillBetweenPreview: [] };
-  const showCollision = collisionVisible || viewMode === 'dev';
+  if (!track?.kmp) return { tool, points: [], lines: [], centerHandle: null, axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [], startSlots: [], fillBetweenPreview: [], routeDeviationSegments: [], routeDeviationCaps: [] };
+  const showCollision = viewMode === 'dev' && collisionVisible;
   const selectedSet = new Set(selectedIds);
   if (selectedId) selectedSet.add(selectedId);
   const routeUsage = getPotiRouteUsage(track.kmp);
@@ -1652,11 +1749,33 @@ function buildSceneOverlayData(
         getPotiRouteVisibilityKey(entity.routePoint.routeIndex, routeUsage) === 'POTI_OBJECT'
           ? String(entity.routePoint.routeIndex)
           : undefined,
+      specialColor:
+        entity.section === 'ITPT' && (entity.pointSettings?.[1] === 1 || entity.pointSettings?.[1] === 0x0b)
+          ? 'bulletBillCantStop'
+          : undefined,
       selected: selectedSet.has(entity.id),
       hovered: entity.id === hoveredId && entity.id !== selectedId,
       invalid: false,
     }));
   for (const point of points) point.invalid = invalidIds.has(point.id);
+
+  const selectedDeviationSections = new Set<'ENPT' | 'ITPT'>();
+  for (const entity of visibleEntities) {
+    if (!selectedSet.has(entity.id)) continue;
+    if (entity.section === 'ENPT' || entity.section === 'ITPT') selectedDeviationSections.add(entity.section);
+  }
+
+  const routeDeviationSegments: SceneOverlayRouteDeviationSegment[] = [];
+  const routeDeviationCaps: SceneOverlayRouteDeviationCap[] = visibleEntities
+    .filter((entity) => (entity.section === 'ENPT' || entity.section === 'ITPT') && selectedDeviationSections.has(entity.section) && (entity.pointDeviation ?? 0) > 0)
+    .map((entity) => ({
+      id: `${entity.id}-cap`,
+      section: entity.section,
+      position: applyPreviewPosition(entity),
+      radius: Math.max(0, (entity.pointDeviation ?? 0) * 50),
+      selected: selectedSet.has(entity.id),
+      hovered: entity.id === hoveredId && entity.id !== selectedId,
+    }));
 
   const lines: SceneOverlayLine[] = [];
   for (const graph of track.kmp.pathGraphs) {
@@ -1669,6 +1788,10 @@ function buildSceneOverlayData(
         const b = graphPoints[pointIndex + 1];
         if (!a || !b) continue;
         lines.push({ id: `${routeKey}-seq-${pointIndex}`, routeKey, section: graph.pointSection, a: applyPreviewPosition(a), b: applyPreviewPosition(b) });
+        if (graph.pointSection === 'ENPT' || graph.pointSection === 'ITPT') {
+          const segment = buildRouteDeviationSegment(`${routeKey}-deviation-seq-${pointIndex}`, graph.pointSection, a, b, applyPreviewPosition, selectedSet, hoveredId, selectedId);
+          if (segment && selectedDeviationSections.has(graph.pointSection)) routeDeviationSegments.push(segment);
+        }
       }
       for (const nextGroupIndex of group.nextGroups) {
         const a = graphPoints[group.startIndex + group.pointCount - 1];
@@ -1676,6 +1799,10 @@ function buildSceneOverlayData(
         const b = nextGroup ? graphPoints[nextGroup.startIndex] : null;
         if (!a || !b) continue;
         lines.push({ id: `${routeKey}-next-${nextGroupIndex}`, routeKey, section: graph.pointSection, a: applyPreviewPosition(a), b: applyPreviewPosition(b) });
+        if (graph.pointSection === 'ENPT' || graph.pointSection === 'ITPT') {
+          const segment = buildRouteDeviationSegment(`${routeKey}-deviation-next-${group.index}-${nextGroupIndex}`, graph.pointSection, a, b, applyPreviewPosition, selectedSet, hoveredId, selectedId);
+          if (segment && selectedDeviationSections.has(graph.pointSection)) routeDeviationSegments.push(segment);
+        }
       }
     }
   }
@@ -1828,7 +1955,40 @@ function buildSceneOverlayData(
     }
   }
 
-  return { tool, points, lines, centerHandle, axes, planes, checkpointEndpoints, collisionTriangles, checkpointWalls, areaVolumes, startSlots, fillBetweenPreview };
+  return { tool, points, lines, centerHandle, axes, planes, checkpointEndpoints, collisionTriangles, checkpointWalls, areaVolumes, startSlots, fillBetweenPreview, routeDeviationSegments, routeDeviationCaps };
+}
+
+function buildRouteDeviationSegment(
+  id: string,
+  section: 'ENPT' | 'ITPT',
+  a: KmpEntity,
+  b: KmpEntity,
+  getPosition: (entity: KmpEntity) => Vec3,
+  selectedSet: ReadonlySet<string>,
+  hoveredId: string | null,
+  selectedId: string | null,
+): SceneOverlayRouteDeviationSegment | null {
+  const radiusA = Math.max(0, (a.pointDeviation ?? 0) * 50);
+  const radiusB = Math.max(0, (b.pointDeviation ?? 0) * 50);
+  if (radiusA <= 0 && radiusB <= 0) return null;
+  const positionA = getPosition(a);
+  const positionB = getPosition(b);
+  const dx = positionB.x - positionA.x;
+  const dz = positionB.z - positionA.z;
+  const length = Math.hypot(dx, dz);
+  if (length < 0.001) return null;
+  const offsetX = (-dz / length);
+  const offsetZ = (dx / length);
+  return {
+    id,
+    section,
+    aLeft: { x: positionA.x + offsetX * radiusA, y: positionA.y, z: positionA.z + offsetZ * radiusA },
+    aRight: { x: positionA.x - offsetX * radiusA, y: positionA.y, z: positionA.z - offsetZ * radiusA },
+    bLeft: { x: positionB.x + offsetX * radiusB, y: positionB.y, z: positionB.z + offsetZ * radiusB },
+    bRight: { x: positionB.x - offsetX * radiusB, y: positionB.y, z: positionB.z - offsetZ * radiusB },
+    selected: selectedSet.has(a.id) || selectedSet.has(b.id),
+    hovered: (a.id === hoveredId || b.id === hoveredId) && hoveredId !== selectedId,
+  };
 }
 
 function buildRaceStartSlots(
@@ -2562,14 +2722,4 @@ function makeLocalDataFetcher(smokeCommonUrl?: string | null): DataFetcher {
       return new ArrayBufferSlice(await response.arrayBuffer()) as never;
     },
   } as DataFetcher;
-}
-
-function ToolBadge({ tool }: { tool: TransformTool }) {
-  const Icon = tool === 'translate' ? Move3D : tool === 'rotate' ? RotateCcw : Scale3D;
-  return (
-    <span className="toolBadge">
-      <Icon size={14} />
-      {tool}
-    </span>
-  );
 }

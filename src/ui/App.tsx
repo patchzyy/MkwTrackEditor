@@ -1,5 +1,5 @@
 import { startTransition, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { Box, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ClipboardPaste, Copy, Database, Download, Eye, FolderOpen, Move3D, PanelRightClose, PanelRightOpen, Redo2, RotateCcw, Scale3D, TriangleAlert, Undo2 } from 'lucide-react';
+import { Box, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Download, FolderOpen, PanelRightClose, PanelRightOpen, Redo2, TriangleAlert, Undo2 } from 'lucide-react';
 import {
   appendKmpArea,
   appendKmpCamera,
@@ -759,6 +759,8 @@ type BrowserFolder =
   | { id: BrowserFolderId; label: string; detail: string; kind: 'object'; items: BrowserAssetItem[] }
   | { id: BrowserFolderId; label: string; detail: string; kind: 'brres'; items: string[] };
 
+type InspectorSection = 'object' | 'track';
+
 export function App() {
   const CONTENT_BROWSER_COLLAPSED_HEIGHT = 46;
   const CONTENT_BROWSER_DEFAULT_HEIGHT = 248;
@@ -789,6 +791,7 @@ export function App() {
   const [browserFolder, setBrowserFolder] = useState<BrowserFolderId>('featured');
   const [browserQuery, setBrowserQuery] = useState('');
   const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [inspectorSection, setInspectorSection] = useState<InspectorSection>('object');
   const [inspectorWidth, setInspectorWidth] = useState(INSPECTOR_DEFAULT_WIDTH);
   const [sidebarResizing, setSidebarResizing] = useState<'placeAssets' | 'inspector' | null>(null);
   const [collisionVisible, setCollisionVisible] = useState(false);
@@ -847,6 +850,10 @@ export function App() {
   const areaInspectorResources = useMemo(() => getAreaInspectorResources(analysisTrack), [analysisTrack]);
   const postEffectResources = useMemo(() => getTrackPostEffectResources(analysisTrack), [analysisTrack]);
   const selectedObjectProfile = useMemo(() => (selected?.section === 'GOBJ' ? getObjectInspectorProfile(selected, objFlow) : null), [objFlow, selected]);
+  useEffect(() => {
+    if (!selected) return;
+    setInspectorSection(selected.section === 'STGI' ? 'track' : 'object');
+  }, [selected]);
   const validationCounts = useMemo(() => {
     const errorCount = validation.filter((item) => item.level === 'error').length;
     const warningCount = validation.filter((item) => item.level === 'warning').length + (track?.warnings.length ?? 0);
@@ -2005,18 +2012,6 @@ export function App() {
     );
   }
 
-  async function openCommon(files: FileList | null) {
-    const file = files?.[0];
-    if (!file) return;
-    try {
-      const common = await withExtractedCourseAssetResources(await withBundledCourseObjectResources(parseCommonResourceArchive(new Uint8Array(await file.arrayBuffer()))));
-      setCommonArchive(common);
-      setStatus(`Loaded ${file.name}: ${common.objFlow.entries.length} game object definitions, ${common.resourceEntries.length} shared asset files`);
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
-    }
-  }
-
   function entityLabel(entity: KmpEntity): string {
     if (entity.section !== 'GOBJ' || entity.objectId === undefined) return describeEntity(entity);
     const title = browserObjectTitle({ objectId: entity.objectId, name: objFlow?.byId.get(entity.objectId)?.name ?? '', resources: objFlow?.byId.get(entity.objectId)?.resources ?? '' });
@@ -2072,6 +2067,63 @@ export function App() {
     setStatus(`Exported ${link.download} (${bytes.length.toLocaleString()} bytes).`);
   }
 
+  const selectedInspectorSection: InspectorSection = selected?.section === 'STGI' ? 'track' : 'object';
+  const selectedInspector = selected ? (
+    <Inspector
+      entity={selected}
+      label={entityLabel(selected)}
+      pathInfo={selectedPathInfo}
+      cameraHeader={cameraHeader}
+      referenceCounts={referenceCounts}
+      areaInspectorResources={areaInspectorResources}
+      objectProfile={selectedObjectProfile}
+      objectOptions={objectOptions}
+      objectVariantOptions={selectedObjectVariantOptions}
+      onChangePosition={(position) => patchSelectedEntity((kmp, entity) => patchKmpEntityPosition(kmp, entity, position))}
+      onDelete={selected.section === 'STGI' ? undefined : deleteSelectedEntity}
+      onMoveEarlier={selected.section === 'STGI' ? undefined : () => moveSelectedEntity(-1)}
+      onMoveLater={selected.section === 'STGI' ? undefined : () => moveSelectedEntity(1)}
+      onChangeCheckpointEndpoint={(side, position) => patchSelectedEntity((kmp, entity) => patchKmpCheckpointEndpoint(kmp, entity, side, position))}
+      onChangeCheckpointField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpCheckpointField(kmp, entity, field, value))}
+      onChangePointDeviation={(value) => patchSelectedEntity((kmp, entity) => patchKmpPointDeviation(kmp, entity, value))}
+      onChangePathGroupLinks={(side, links) => {
+        if (!track.kmp || !selectedPathInfo) return;
+        applyEditorChange(replaceCourseKmp(track, patchKmpPathGroupLinks(track.kmp, selectedPathInfo.groupSection, selectedPathInfo.groupIndex, side, links)));
+      }}
+      onSplitPathGroup={selectedPathInfo && selectedPathInfo.localIndex < selectedPathInfo.groupSize - 1 ? splitSelectedPathGroup : undefined}
+      onMergePathGroup={selectedPathInfo && selectedPathInfo.nextGroups.length === 1 ? mergeSelectedPathGroup : undefined}
+      onChangePointSetting={(settingIndex, value) => patchSelectedEntity((kmp, entity) => patchKmpPointSetting(kmp, entity, settingIndex, value))}
+      onChangePotiRouteSetting={(settingIndex, value) => patchSelectedEntity((kmp, entity) => patchKmpPotiRouteSetting(kmp, entity, settingIndex, value))}
+      onChangePotiPointSetting={(settingIndex, value) => patchSelectedEntity((kmp, entity) => patchKmpPotiPointSetting(kmp, entity, settingIndex, value))}
+      onAddPotiNode={() => addPotiNode(selected)}
+      onCreateObjectRoute={() => createObjectRoute(selected)}
+      onResetObjectBehavior={() => resetObjectBehavior(selected)}
+      onClearObjectRoute={() => clearObjectRoute(selected)}
+      onSelectObjectRoute={() => selectObjectRoute(selected)}
+      onApplySafeFallingRockDefaults={() => applySafeFallingRockDefaults(selected)}
+      onCreateCannonPointFromObject={() => createCannonPointFromObject(selected)}
+      onApplyRoulettePlatformDefaults={() => applyRoulettePlatformDefaults(selected)}
+      onChangeAreaField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpAreaField(kmp, entity, field, value))}
+      onChangeCameraField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpCameraField(kmp, entity, field, value))}
+      onChangeCameraHeaderField={(field, value) => {
+        if (!track.kmp) return;
+        applyEditorChange(replaceCourseKmp(track, patchKmpCameraHeaderField(track.kmp, field, value)));
+      }}
+      onChangeCameraViewPosition={(side, position) => patchSelectedEntity((kmp, entity) => patchKmpCameraViewPosition(kmp, entity, side, position))}
+      onChangeRespawnField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpRespawnField(kmp, entity, field, value))}
+      onChangeCannonField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpCannonField(kmp, entity, field, value))}
+      onChangeBattleFinishField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpBattleFinishField(kmp, entity, field, value))}
+      onChangeStageField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpStageField(kmp, entity, field, value))}
+      onChangeStageFlareColor={(channelIndex, value) => patchSelectedEntity((kmp, entity) => patchKmpStageFlareColor(kmp, entity, channelIndex, value))}
+      onChangeRotation={(rotation) => patchSelectedEntity((kmp, entity) => patchKmpEntityRotation(kmp, entity, rotation))}
+      onChangeScale={(scale) => patchSelectedEntity((kmp, entity) => patchKmpEntityScale(kmp, entity, scale))}
+      onChangeObjectId={(objectId) => patchSelectedEntity((kmp, entity) => patchKmpGobjObjectId(kmp, entity, objectId))}
+      onChangeRouteIndex={(routeIndex) => patchSelectedEntity((kmp, entity) => patchKmpEntityRouteIndex(kmp, entity, routeIndex))}
+      onChangeObjectSetting={(settingIndex, value) => patchSelectedEntity((kmp, entity) => patchKmpGobjSetting(kmp, entity, settingIndex, value))}
+      onChangePresenceFlags={(value) => patchSelectedEntity((kmp, entity) => patchKmpGobjPresenceFlags(kmp, entity, value))}
+    />
+  ) : null;
+
   return (
     <main
       ref={appShellRef}
@@ -2092,59 +2144,11 @@ export function App() {
           Open .szs
           <input hidden type="file" accept=".szs" onChange={(event) => void openFiles(event.currentTarget.files)} />
         </label>
-        <label className="button">
-          <Database size={16} />
-          Common
-          <input hidden type="file" accept=".szs,.bin" onChange={(event) => void openCommon(event.currentTarget.files)} />
-        </label>
-        <div className="segmented">
-          <button className={tool === 'translate' ? 'active' : ''} onClick={() => setTool('translate')} title="Translate">
-            <Move3D size={16} />
-          </button>
-          <button className={tool === 'rotate' ? 'active' : ''} onClick={() => setTool('rotate')} title="Rotate">
-            <RotateCcw size={16} />
-          </button>
-          <button className={tool === 'scale' ? 'active' : ''} onClick={() => setTool('scale')} title="Scale">
-            <Scale3D size={16} />
-          </button>
-        </div>
-        <div className="segmented viewModeSegmented" aria-label="Viewport view mode">
-          <button className={viewMode === 'normal' ? 'active' : ''} onClick={() => setViewMode('normal')} title="Normal view">
-            Normal
-          </button>
-          <button className={viewMode === 'dev' ? 'active' : ''} onClick={() => setViewMode('dev')} title="Collision dev view">
-            Dev
-          </button>
-          <button className={viewMode === 'topdown' ? 'active' : ''} onClick={() => setViewMode('topdown')} title="Top-down view">
-            Top
-          </button>
-          <button className={viewMode === 'ortho' ? 'active' : ''} onClick={() => setViewMode('ortho')} title="Orthographic view">
-            Ortho
-          </button>
-        </div>
-        <button className={collisionVisible ? 'button active' : 'button'} onClick={() => setCollisionVisible((value) => !value)}>
-          <Eye size={16} />
-          Collision
-        </button>
-        <button className="button" disabled={!canCopySelection()} onClick={copySelectedEntity} title="Copy selection (Ctrl/Cmd+C)">
-          <Copy size={16} />
-          Copy
-        </button>
-        <button className="button" disabled={!canCopySelection()} onClick={duplicateSelectedEntity} title="Duplicate selection (Ctrl/Cmd+D)">
-          <Copy size={16} />
-          Duplicate
-        </button>
-        <button className="button" disabled={!hasClipboardEntity || !track?.kmp} onClick={() => pasteClipboardEntity()} title="Paste copied entity (Ctrl/Cmd+V)">
-          <ClipboardPaste size={16} />
-          Paste
-        </button>
-        <button className="button" disabled={historyState.undo === 0} onClick={undoEdit} title="Undo (Ctrl/Cmd+Z)">
+        <button className="button buttonIconOnly" disabled={historyState.undo === 0} onClick={undoEdit} title="Undo (Ctrl/Cmd+Z)" aria-label="Undo">
           <Undo2 size={16} />
-          Undo
         </button>
-        <button className="button" disabled={historyState.redo === 0} onClick={redoEdit} title="Redo (Ctrl/Cmd+Shift+Z / Ctrl/Cmd+Y)">
+        <button className="button buttonIconOnly" disabled={historyState.redo === 0} onClick={redoEdit} title="Redo (Ctrl/Cmd+Shift+Z / Ctrl/Cmd+Y)" aria-label="Redo">
           <Redo2 size={16} />
-          Redo
         </button>
         <button
           className={inspectorOpen ? 'button active' : 'button'}
@@ -2218,6 +2222,12 @@ export function App() {
           tool={tool}
           viewMode={viewMode}
           collisionVisible={collisionVisible}
+          onChangeTool={setTool}
+          onChangeViewMode={setViewMode}
+          onChangeCollisionVisible={(visible) => {
+            setCollisionVisible(visible);
+            if (visible && viewMode !== 'dev') setViewMode('dev');
+          }}
           getEntityLabel={entityLabel}
           onSelect={(id, options) => selectEntity(id, options?.additive)}
           onSelectMany={(ids, options) => selectEntities(ids, options?.additive)}
@@ -2253,119 +2263,97 @@ export function App() {
               <PanelRightClose size={16} />
             </button>
           </div>
-          {selectedEntities.length > 1 && (
-            <BatchSelectionPanel
-              count={selectedEntities.length}
-              offset={batchOffset}
-              onChangeOffset={setBatchOffset}
-              onApplyOffset={offsetSelectedEntities}
-              objectOptions={canBatchReplaceObjects ? objectOptions : []}
-              objectId={batchObjectId}
-              onChangeObjectId={setBatchObjectId}
-              onApplyObjectId={batchObjectId !== null ? () => replaceSelectedObjectTypes(batchObjectId) : undefined}
-              onDelete={deleteSelectedEntity}
-            />
-          )}
-          {selected ? (
-            <Inspector
-              entity={selected}
-              label={entityLabel(selected)}
-              pathInfo={selectedPathInfo}
-              cameraHeader={cameraHeader}
-              referenceCounts={referenceCounts}
-              areaInspectorResources={areaInspectorResources}
-              objectProfile={selectedObjectProfile}
-              objectOptions={objectOptions}
-              objectVariantOptions={selectedObjectVariantOptions}
-              onChangePosition={(position) => patchSelectedEntity((kmp, entity) => patchKmpEntityPosition(kmp, entity, position))}
-              onDelete={selected.section === 'STGI' ? undefined : deleteSelectedEntity}
-              onMoveEarlier={selected.section === 'STGI' ? undefined : () => moveSelectedEntity(-1)}
-              onMoveLater={selected.section === 'STGI' ? undefined : () => moveSelectedEntity(1)}
-              onChangeCheckpointEndpoint={(side, position) => patchSelectedEntity((kmp, entity) => patchKmpCheckpointEndpoint(kmp, entity, side, position))}
-              onChangeCheckpointField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpCheckpointField(kmp, entity, field, value))}
-              onChangePointDeviation={(value) => patchSelectedEntity((kmp, entity) => patchKmpPointDeviation(kmp, entity, value))}
-              onChangePathGroupLinks={(side, links) => {
-                if (!track.kmp || !selectedPathInfo) return;
-                applyEditorChange(replaceCourseKmp(track, patchKmpPathGroupLinks(track.kmp, selectedPathInfo.groupSection, selectedPathInfo.groupIndex, side, links)));
-              }}
-              onSplitPathGroup={selectedPathInfo && selectedPathInfo.localIndex < selectedPathInfo.groupSize - 1 ? splitSelectedPathGroup : undefined}
-              onMergePathGroup={selectedPathInfo && selectedPathInfo.nextGroups.length === 1 ? mergeSelectedPathGroup : undefined}
-              onChangePointSetting={(settingIndex, value) => patchSelectedEntity((kmp, entity) => patchKmpPointSetting(kmp, entity, settingIndex, value))}
-              onChangePotiRouteSetting={(settingIndex, value) => patchSelectedEntity((kmp, entity) => patchKmpPotiRouteSetting(kmp, entity, settingIndex, value))}
-              onChangePotiPointSetting={(settingIndex, value) => patchSelectedEntity((kmp, entity) => patchKmpPotiPointSetting(kmp, entity, settingIndex, value))}
-              onAddPotiNode={() => addPotiNode(selected)}
-              onCreateObjectRoute={() => createObjectRoute(selected)}
-              onResetObjectBehavior={() => resetObjectBehavior(selected)}
-              onClearObjectRoute={() => clearObjectRoute(selected)}
-              onSelectObjectRoute={() => selectObjectRoute(selected)}
-              onApplySafeFallingRockDefaults={() => applySafeFallingRockDefaults(selected)}
-              onCreateCannonPointFromObject={() => createCannonPointFromObject(selected)}
-              onApplyRoulettePlatformDefaults={() => applyRoulettePlatformDefaults(selected)}
-              onChangeAreaField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpAreaField(kmp, entity, field, value))}
-              onChangeCameraField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpCameraField(kmp, entity, field, value))}
-              onChangeCameraHeaderField={(field, value) => {
-                if (!track.kmp) return;
-                applyEditorChange(replaceCourseKmp(track, patchKmpCameraHeaderField(track.kmp, field, value)));
-              }}
-              onChangeCameraViewPosition={(side, position) => patchSelectedEntity((kmp, entity) => patchKmpCameraViewPosition(kmp, entity, side, position))}
-              onChangeRespawnField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpRespawnField(kmp, entity, field, value))}
-              onChangeCannonField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpCannonField(kmp, entity, field, value))}
-              onChangeBattleFinishField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpBattleFinishField(kmp, entity, field, value))}
-              onChangeStageField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpStageField(kmp, entity, field, value))}
-              onChangeStageFlareColor={(channelIndex, value) => patchSelectedEntity((kmp, entity) => patchKmpStageFlareColor(kmp, entity, channelIndex, value))}
-              onChangeRotation={(rotation) => patchSelectedEntity((kmp, entity) => patchKmpEntityRotation(kmp, entity, rotation))}
-              onChangeScale={(scale) => patchSelectedEntity((kmp, entity) => patchKmpEntityScale(kmp, entity, scale))}
-              onChangeObjectId={(objectId) => patchSelectedEntity((kmp, entity) => patchKmpGobjObjectId(kmp, entity, objectId))}
-              onChangeRouteIndex={(routeIndex) => patchSelectedEntity((kmp, entity) => patchKmpEntityRouteIndex(kmp, entity, routeIndex))}
-              onChangeObjectSetting={(settingIndex, value) => patchSelectedEntity((kmp, entity) => patchKmpGobjSetting(kmp, entity, settingIndex, value))}
-              onChangePresenceFlags={(value) => patchSelectedEntity((kmp, entity) => patchKmpGobjPresenceFlags(kmp, entity, value))}
-            />
+          <div className="segmented inspectorSections" role="tablist" aria-label="Inspector sections">
+            <button
+              type="button"
+              className={inspectorSection === 'object' ? 'active' : ''}
+              onClick={() => setInspectorSection('object')}
+              role="tab"
+              aria-selected={inspectorSection === 'object'}
+            >
+              Object Settings
+            </button>
+            <button
+              type="button"
+              className={inspectorSection === 'track' ? 'active' : ''}
+              onClick={() => setInspectorSection('track')}
+              role="tab"
+              aria-selected={inspectorSection === 'track'}
+            >
+              Track Settings
+            </button>
+          </div>
+          {inspectorSection === 'object' ? (
+            <>
+              {selectedEntities.length > 1 && (
+                <BatchSelectionPanel
+                  count={selectedEntities.length}
+                  offset={batchOffset}
+                  onChangeOffset={setBatchOffset}
+                  onApplyOffset={offsetSelectedEntities}
+                  objectOptions={canBatchReplaceObjects ? objectOptions : []}
+                  objectId={batchObjectId}
+                  onChangeObjectId={setBatchObjectId}
+                  onApplyObjectId={batchObjectId !== null ? () => replaceSelectedObjectTypes(batchObjectId) : undefined}
+                  onDelete={deleteSelectedEntity}
+                />
+              )}
+              {selectedInspector && selectedInspectorSection === 'object' ? (
+                selectedInspector
+              ) : selected?.section === 'STGI' ? (
+                <p className="muted">Track settings are in the Track Settings section above.</p>
+              ) : (
+                <p className="muted">Select an object, route node, checkpoint, start point, camera, cannon point, or respawn point in the viewport.</p>
+              )}
+              {selectedEntities.length > 1 && <p className="muted">{selectedEntities.length} selected. Inspector is showing the primary selection, with batch tools above.</p>}
+            </>
           ) : (
-            <p className="muted">Select an object, route node, checkpoint, start point, camera, cannon point, or respawn point in the viewport.</p>
-          )}
-          {selectedEntities.length > 1 && <p className="muted">{selectedEntities.length} selected. Inspector is showing the primary selection, with batch tools above.</p>}
-          {track?.kmp && <KmpOverview kmp={track.kmp} onSelect={(id, options) => selectEntity(id, options?.additive)} />}
-          {track && (
-            <PostEffectsPanel
-              resources={postEffectResources}
-              onCreateFog={createFogPostEffectFile}
-              onChangeFogPreset={updateFogPreset}
-              onAddBloom={addBloomPostEffectFile}
-              onChangeBloomFile={updateBloomPostEffectFile}
-              onCreateDof={createDofPostEffectFile}
-              onChangeDofFile={updateDofPostEffectFile}
-              onCreateBlight={createBlightPostEffectFile}
-              onChangeBlight={updateBlightPostEffectFile}
-            />
-          )}
-          <h2>Validation</h2>
-          <div className="validationSummary">
-            <span className={`validationBadge${validationCounts.errorCount > 0 ? ' error' : ''}`}>{validationCounts.errorCount} errors</span>
-            <span className={`validationBadge${validationCounts.warningCount > 0 ? ' warning' : ''}`}>{validationCounts.warningCount} warnings</span>
-          </div>
-          <div className="validationList">
-            {validation.length === 0 && <p className="muted">No validation issues for the loaded data.</p>}
-            {validation.map((item, index) => {
-              const presented = presentValidationIssue(item.message);
-              return (
-              <div className={`validationIssue ${item.level}`} key={`${item.message}-${index}`}>
-                <TriangleAlert size={14} />
-                <div className="validationCopy">
-                  <strong>{presented.summary}</strong>
-                  {presented.detail && <span>{presented.detail}</span>}
-                </div>
+            <>
+              {selectedInspector && selectedInspectorSection === 'track' && selectedInspector}
+              {track?.kmp && <KmpOverview kmp={track.kmp} onSelect={(id, options) => selectEntity(id, options?.additive)} />}
+              {track && (
+                <PostEffectsPanel
+                  resources={postEffectResources}
+                  onCreateFog={createFogPostEffectFile}
+                  onChangeFogPreset={updateFogPreset}
+                  onAddBloom={addBloomPostEffectFile}
+                  onChangeBloomFile={updateBloomPostEffectFile}
+                  onCreateDof={createDofPostEffectFile}
+                  onChangeDofFile={updateDofPostEffectFile}
+                  onCreateBlight={createBlightPostEffectFile}
+                  onChangeBlight={updateBlightPostEffectFile}
+                />
+              )}
+              <h2>Validation</h2>
+              <div className="validationSummary">
+                <span className={`validationBadge${validationCounts.errorCount > 0 ? ' error' : ''}`}>{validationCounts.errorCount} errors</span>
+                <span className={`validationBadge${validationCounts.warningCount > 0 ? ' warning' : ''}`}>{validationCounts.warningCount} warnings</span>
               </div>
-            )})}
-            {track?.warnings.map((warning, index) => (
-              <div className="validationIssue warning" key={`${warning}-${index}`}>
-                <TriangleAlert size={14} />
-                <div className="validationCopy">
-                  <strong>Track load warning</strong>
-                  <span>{warning}</span>
-                </div>
+              <div className="validationList">
+                {validation.length === 0 && <p className="muted">No validation issues for the loaded data.</p>}
+                {validation.map((item, index) => {
+                  const presented = presentValidationIssue(item.message);
+                  return (
+                  <div className={`validationIssue ${item.level}`} key={`${item.message}-${index}`}>
+                    <TriangleAlert size={14} />
+                    <div className="validationCopy">
+                      <strong>{presented.summary}</strong>
+                      {presented.detail && <span>{presented.detail}</span>}
+                    </div>
+                  </div>
+                )})}
+                {track?.warnings.map((warning, index) => (
+                  <div className="validationIssue warning" key={`${warning}-${index}`}>
+                    <TriangleAlert size={14} />
+                    <div className="validationCopy">
+                      <strong>Track load warning</strong>
+                      <span>{warning}</span>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </>
+          )}
         </aside>
       </div>
 

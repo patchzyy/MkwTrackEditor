@@ -69,6 +69,12 @@ input {
   padding: 0 10px;
 }
 
+.buttonIconOnly {
+  width: 32px;
+  justify-content: center;
+  padding: 0;
+}
+
 .button:hover,
 .segmented button:hover,
 .button.active,
@@ -103,12 +109,6 @@ input {
 
 .segmented button:last-child {
   border-radius: 0 6px 6px 0;
-}
-
-.viewModeSegmented button {
-  width: auto;
-  min-width: 0;
-  padding: 0 10px;
 }
 
 .status {
@@ -201,6 +201,14 @@ input {
   overflow: hidden;
 }
 
+.placeAssetsCollapsed .placeAssetsHeader {
+  justify-content: center;
+}
+
+.placeAssetsCollapsed .placeAssetsHeader > div {
+  display: none;
+}
+
 .placeAssetsCollapsed .placeAssetsBody,
 .placeAssetsCollapsed .panelSubtle {
   display: none;
@@ -240,6 +248,10 @@ input {
 .selectionHud,
 .rendererStatus {
   pointer-events: none;
+}
+
+.viewportToolbar {
+  pointer-events: auto;
 }
 
 .viewportTopRightStack {
@@ -390,9 +402,9 @@ input {
   top: 12px;
   left: 12px;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   max-width: calc(100% - 24px);
-  padding: 7px 9px;
+  padding: 7px 8px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 6px;
   color: #c3ccd8;
@@ -407,6 +419,37 @@ input {
   border-radius: 5px;
   background: #26303d;
   color: #f5f7fb;
+}
+
+.viewportToolSegmented button {
+  width: 34px;
+}
+
+.viewportModeSelect {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
+.viewportModeSelect span {
+  color: #9faaba;
+}
+
+.viewportModeSelect select {
+  height: 30px;
+  border: 1px solid #343d4a;
+  border-radius: 6px;
+  padding: 0 28px 0 9px;
+  color: #eef3fb;
+  background: #202630;
+  cursor: pointer;
+}
+
+.viewportModeSelect select:focus {
+  border-color: #5fd6ff;
+  outline: none;
 }
 
 .selectionHud {
@@ -515,6 +558,18 @@ input {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.inspectorSections {
+  display: flex;
+  width: 100%;
+  margin: 0 0 14px;
+}
+
+.inspectorSections button {
+  flex: 1;
+  width: auto;
+  padding: 0 12px;
 }
 
 .iconButton {
