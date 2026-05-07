@@ -2098,7 +2098,6 @@ class MultiObjectRenderer extends GobjPreviewRenderer {
 class RoutedMultiModelRenderer extends GobjPreviewRenderer {
     protected readonly scratchPosition = vec3.create();
     protected readonly timeline: RouteMotionTimeline;
-    private readonly positionOffset = vec3.create();
     protected initialFrame: number;
     private routeYawOffset: number;
 
@@ -2131,7 +2130,6 @@ class RoutedMultiModelRenderer extends GobjPreviewRenderer {
 
     protected recomputeReference(): void {
         const initialPose = this.timeline.evaluate(this.initialFrame);
-        vec3.sub(this.positionOffset, getGobjPosition(vec3.create(), this.gobj), initialPose.position);
         const initialRouteYaw = this.alignYaw ? computeRouteYaw(initialPose.tangent) : 0;
         this.routeYawOffset = this.gobj.rotationY - initialRouteYaw;
     }
@@ -2142,7 +2140,7 @@ class RoutedMultiModelRenderer extends GobjPreviewRenderer {
     }
 
     protected updateModelMatrixFromPose(pose: RouteMotionPose): void {
-        vec3.add(this.scratchPosition, pose.position, this.positionOffset);
+        vec3.copy(this.scratchPosition, pose.position);
         this.scratchPosition[1] += this.extraYOffset;
         const yaw = this.alignYaw ? computeRouteYaw(pose.tangent) + this.routeYawOffset + this.extraYaw : this.gobj.rotationY + this.extraYaw;
         computeModelMatrixSRT(
@@ -2323,7 +2321,6 @@ class RoutedDossunPairRenderer extends GobjPreviewRenderer {
     private readonly point1 = vec3.create();
     private readonly point2 = vec3.create();
     private readonly initialTangent = vec3.create();
-    private readonly positionOffset = vec3.create();
     private readonly splitDistance: number;
     private readonly liftHeight: number;
     private readonly phase0Frames: number;
@@ -2387,7 +2384,6 @@ class RoutedDossunPairRenderer extends GobjPreviewRenderer {
     }
 
     private recomputeReference(): void {
-        vec3.sub(this.positionOffset, getGobjPosition(vec3.create(), this.gobj), this.point0);
         this.routeYawOffset = this.gobj.rotationY - computeRouteYaw(this.initialTangent);
     }
 
@@ -2452,7 +2448,6 @@ class RoutedDossunPairRenderer extends GobjPreviewRenderer {
         for (let i = 0; i < this.modelInstances.length; i++) {
             const sign = signs[i] ?? 1;
             vec3.scaleAndAdd(this.scratchPosition, center, this.splitAxis, splitOffset * sign);
-            vec3.add(this.scratchPosition, this.scratchPosition, this.positionOffset);
             const lift = this.liftHeight * (sign === activeSign ? activeLiftT : 1);
             computeModelMatrixSRT(
                 this.modelMatrix,
@@ -2479,7 +2474,6 @@ function easeInOutSine(t: number): number {
 
 class RoutedItemboxGroupRenderer extends GobjPreviewRenderer {
     private readonly scratchPosition = vec3.create();
-    private readonly positionOffset = vec3.create();
 
     constructor(
         gobj: GOBJ,
@@ -2498,8 +2492,6 @@ class RoutedItemboxGroupRenderer extends GobjPreviewRenderer {
     }
 
     private recomputeReference(): void {
-        const initialPose = this.timeline.evaluate(0);
-        vec3.sub(this.positionOffset, getGobjPosition(vec3.create(), this.gobj), initialPose.position);
     }
 
     public override setEditorTransform(translation: { x: number; y: number; z: number }, rotation: { x: number; y: number; z: number }, scale: { x: number; y: number; z: number }): void {
@@ -2518,7 +2510,7 @@ class RoutedItemboxGroupRenderer extends GobjPreviewRenderer {
                 continue;
 
             const pose = this.timeline.evaluate(localFrame);
-            vec3.add(this.scratchPosition, pose.position, this.positionOffset);
+            vec3.copy(this.scratchPosition, pose.position);
             this.scratchPosition[1] += this.yOffset;
             computeModelMatrixSRT(
                 this.modelMatrix,
@@ -2543,7 +2535,6 @@ class RoutedItemboxGroupRenderer extends GobjPreviewRenderer {
 
 class RoutedSinItemboxRenderer extends GobjPreviewRenderer {
     private readonly scratchPosition = vec3.create();
-    private readonly positionOffset = vec3.create();
 
     constructor(
         public modelInstance: MDL0ModelInstance,
@@ -2578,8 +2569,6 @@ class RoutedSinItemboxRenderer extends GobjPreviewRenderer {
     }
 
     private recomputeReference(): void {
-        const initialSample = this.evaluatePath(0);
-        vec3.sub(this.positionOffset, getGobjPosition(vec3.create(), this.gobj), initialSample.position);
     }
 
     public override setEditorTransform(translation: { x: number; y: number; z: number }, rotation: { x: number; y: number; z: number }, scale: { x: number; y: number; z: number }): void {
@@ -2592,7 +2581,7 @@ class RoutedSinItemboxRenderer extends GobjPreviewRenderer {
             return;
 
         const sample = this.evaluatePath(viewerInput.time * 0.06);
-        vec3.add(this.scratchPosition, sample.position, this.positionOffset);
+        vec3.copy(this.scratchPosition, sample.position);
         this.scratchPosition[1] += this.yOffset;
         computeModelMatrixSRT(
             this.modelMatrix,
@@ -2614,7 +2603,6 @@ class RoutedSinItemboxRenderer extends GobjPreviewRenderer {
 
 class RoutedItemboxLineRenderer extends GobjPreviewRenderer {
     private readonly scratchPosition = vec3.create();
-    private readonly positionOffset = vec3.create();
 
     constructor(
         gobj: GOBJ,
@@ -2635,8 +2623,6 @@ class RoutedItemboxLineRenderer extends GobjPreviewRenderer {
     }
 
     private recomputeReference(): void {
-        const initialPose = this.blockTimeline.evaluate(0);
-        vec3.sub(this.positionOffset, getGobjPosition(vec3.create(), this.gobj), initialPose.position);
     }
 
     public override setEditorTransform(translation: { x: number; y: number; z: number }, rotation: { x: number; y: number; z: number }, scale: { x: number; y: number; z: number }): void {
@@ -2645,7 +2631,7 @@ class RoutedItemboxLineRenderer extends GobjPreviewRenderer {
     }
 
     private computePlacementMatrix(position: vec3, yOffset: number): void {
-        vec3.add(this.scratchPosition, position, this.positionOffset);
+        vec3.copy(this.scratchPosition, position);
         this.scratchPosition[1] += yOffset;
         computeModelMatrixSRT(
             this.modelMatrix,
@@ -3313,7 +3299,13 @@ class MarioKartWiiSceneDesc implements Viewer.SceneDesc {
         } else if (objName === `DKrockGC`) {
             spawnSimpleObject(`DKrockGC`);
         } else if (objName === `sanbo`) {
-            spawnSimpleObject(`sanbo`);
+            const route = getRoute();
+            if (route !== null && route.points.length >= 2) {
+                const timeline = createTimeline(route, makeMotionMode(route), () => Math.max(1, gobj.objectArg0 || route.setting1 || 1));
+                renderer.baseObjects.push(new RoutedSingleModelRenderer(createModelInstance(`sanbo`), gobj, timeline, true));
+            } else {
+                spawnSimpleObject(`sanbo`);
+            }
         } else if (objName === `choropu2`) {
             spawnSimpleObject(`choropu`);
         } else if (objName === `TruckWagon`) {
