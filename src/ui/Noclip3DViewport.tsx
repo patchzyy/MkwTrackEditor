@@ -219,6 +219,8 @@ interface TrackViewBounds {
   radius: number;
 }
 
+const CAMERA_WORLD_UP = vec3.fromValues(0, 1, 0);
+
 interface DragState {
   kind: 'entity';
   id: string;
@@ -423,21 +425,12 @@ function getInitialCameraFrame(track: TrackDocument): CameraFrame {
 }
 
 function applyFPSCameraFrame(controller: FPSCameraController, frame: CameraFrame) {
-  const forward = vec3.sub(vec3.create(), frame.target, frame.eye);
-  const distance = vec3.length(forward);
-  if (distance > 0.0001) vec3.scale(forward, forward, 1 / distance);
-  else vec3.set(forward, 0, 0, -1);
-  vec3.copy(controller.translation, frame.target);
-  controller.txVel = 0;
-  controller.tyVel = 0;
-  controller.xVel = 0;
-  controller.yVel = 0;
-  controller.orbitXVel = 0;
-  controller.shouldOrbit = false;
-  controller.z = -Math.max(distance, 1);
-  controller.zTarget = controller.z;
-  controller.x = Math.atan2(forward[2], forward[0]);
-  controller.y = Math.acos(Math.max(-1, Math.min(1, forward[1])));
+  const camera = controller.camera;
+  if (!camera) return;
+  mat4.targetTo(camera.worldMatrix, frame.eye, frame.target, CAMERA_WORLD_UP);
+  vec3.zero(camera.linearVelocity);
+  camera.worldMatrixUpdated();
+  controller.cameraUpdateForced();
   controller.forceUpdate = true;
 }
 

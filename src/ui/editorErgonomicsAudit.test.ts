@@ -108,10 +108,10 @@ describe('editor ergonomics audit', () => {
     expect(viewportSource).toContain('const deltaDegrees = -normalizeAngle(angle - drag.startAngle) * (180 / Math.PI);');
     expect(viewportSource).toContain('if (selectedIdRef.current && hasCameraPositionChanged(cameraPosition, overlayCameraPositionRef.current)) {');
     expect(viewportSource).toContain('const baseLength = Math.max(180, Math.min(900, scaleLength || 260));');
-    expect(viewportSource).toContain('const distanceLength = Math.max(170, distance * 0.08);');
+    expect(viewportSource).toContain('const distanceLength = Math.max(30, distance * 0.08);');
     expect(viewportSource).toContain('function applyFPSCameraFrame(controller: FPSCameraController, frame: CameraFrame) {');
-    expect(viewportSource).toContain('vec3.copy(controller.translation, frame.target);');
-    expect(viewportSource).toContain('controller.z = -Math.max(distance, 1);');
+    expect(viewportSource).toContain('mat4.targetTo(camera.worldMatrix, frame.eye, frame.target, CAMERA_WORLD_UP);');
+    expect(viewportSource).toContain('controller.cameraUpdateForced();');
     expect(viewportSource).toContain('controller.update(viewer.inputManager, 0, 0);');
     expect(viewportSource).toContain("const CAMERA_MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD'");
     expect(viewportSource).toContain("document.documentElement.dataset.viewportCameraLook = active ? 'active' : 'inactive';");
