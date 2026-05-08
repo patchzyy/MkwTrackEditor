@@ -765,17 +765,12 @@ type BrowserFolder =
   | { id: BrowserFolderId; label: string; detail: string; kind: 'brres'; items: string[] };
 
 type InspectorSection = 'object' | 'track';
-type OutlinerGroup = { key: string; label: string; entities: KmpEntity[] };
 
 export function App() {
   const CONTENT_BROWSER_COLLAPSED_HEIGHT = 46;
   const CONTENT_BROWSER_DEFAULT_HEIGHT = 248;
   const CONTENT_BROWSER_MIN_HEIGHT = 140;
   const WORKSPACE_MIN_HEIGHT = 160;
-  const OUTLINER_DEFAULT_HEIGHT = 280;
-  const OUTLINER_MIN_HEIGHT = 120;
-  const DETAILS_MIN_HEIGHT = 160;
-  const INSPECTOR_PANE_RESIZE_HANDLE_SIZE = 10;
   const PLACE_ASSETS_COLLAPSED_WIDTH = 52;
   const PLACE_ASSETS_DEFAULT_WIDTH = 220;
   const PLACE_ASSETS_MIN_WIDTH = 160;
@@ -802,12 +797,8 @@ export function App() {
   const [browserQuery, setBrowserQuery] = useState('');
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [inspectorSection, setInspectorSection] = useState<InspectorSection>('object');
-  const [outlinerHeight, setOutlinerHeight] = useState(OUTLINER_DEFAULT_HEIGHT);
-  const [outlinerQuery, setOutlinerQuery] = useState('');
-  const [outlinerCollapsedSections, setOutlinerCollapsedSections] = useState<Record<string, boolean>>({});
   const [inspectorWidth, setInspectorWidth] = useState(INSPECTOR_DEFAULT_WIDTH);
   const [sidebarResizing, setSidebarResizing] = useState<'placeAssets' | 'inspector' | null>(null);
-  const [inspectorPaneResizing, setInspectorPaneResizing] = useState(false);
   const [collisionVisible, setCollisionVisible] = useState(false);
   const [status, setStatus] = useState('No track loaded');
   const [commonArchive, setCommonArchive] = useState<CommonResourceArchive | null>(null);
@@ -826,10 +817,8 @@ export function App() {
   const shellBodyRef = useRef<HTMLDivElement | null>(null);
   const topBarRef = useRef<HTMLElement | null>(null);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
-  const inspectorPanelsRef = useRef<HTMLDivElement | null>(null);
   const browserResizeRef = useRef<{ startY: number; startHeight: number } | null>(null);
   const sidebarResizeRef = useRef<{ side: 'placeAssets' | 'inspector'; startX: number; startWidth: number } | null>(null);
-  const inspectorPaneResizeRef = useRef<{ startY: number; startHeight: number } | null>(null);
   const trackStateRef = useRef<TrackDocument | null>(track);
   const selectedIdStateRef = useRef<string | null>(selectedId);
   const selectedIdsStateRef = useRef<string[]>(selectedIds);
@@ -1044,66 +1033,16 @@ export function App() {
   }, [inspectorOpen, inspectorWidth, placeAssetsOpen, placeAssetsWidth]);
 
   useEffect(() => {
-    const handlePointerMove = (event: PointerEvent) => {
-      const resize = inspectorPaneResizeRef.current;
-      const panels = inspectorPanelsRef.current;
-      if (!resize || !panels) return;
-      const maxHeight = Math.max(
-        OUTLINER_MIN_HEIGHT,
-        Math.floor(panels.getBoundingClientRect().height - DETAILS_MIN_HEIGHT - INSPECTOR_PANE_RESIZE_HANDLE_SIZE),
-      );
-      const nextHeight = Math.max(
-        OUTLINER_MIN_HEIGHT,
-        Math.min(maxHeight, Math.round(resize.startHeight + (event.clientY - resize.startY))),
-      );
-      setOutlinerHeight(nextHeight);
-    };
-
-    const stopResize = () => {
-      if (!inspectorPaneResizeRef.current) return;
-      inspectorPaneResizeRef.current = null;
-      setInspectorPaneResizing(false);
-    };
-
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', stopResize);
-    window.addEventListener('pointercancel', stopResize);
-    return () => {
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', stopResize);
-      window.removeEventListener('pointercancel', stopResize);
-    };
-  }, []);
-
-  useEffect(() => {
-    const panels = inspectorPanelsRef.current;
-    if (!panels || typeof ResizeObserver === 'undefined') return;
-
-    const clampOutlinerHeight = () => {
-      const maxHeight = Math.max(
-        OUTLINER_MIN_HEIGHT,
-        Math.floor(panels.getBoundingClientRect().height - DETAILS_MIN_HEIGHT - INSPECTOR_PANE_RESIZE_HANDLE_SIZE),
-      );
-      setOutlinerHeight((current) => Math.min(current, maxHeight));
-    };
-
-    clampOutlinerHeight();
-    const observer = new ResizeObserver(clampOutlinerHeight);
-    observer.observe(panels);
-    return () => observer.disconnect();
-  }, [browserHeight, browserOpen, inspectorOpen]);
-
-  useEffect(() => {
-    if (!browserResizing && !sidebarResizing && !inspectorPaneResizing) return;
+    if (!browserResizing && !sidebarResizing) return;
     const previousCursor = document.body.style.cursor;
     const previousUserSelect = document.body.style.userSelect;
-    document.body.style.cursor = browserResizing || inspectorPaneResizing ? 'ns-resize' : 'ew-resize';
+    document.body.style.cursor = browserResizing ? 'ns-resize' : 'ew-resize';
     document.body.style.userSelect = 'none';
     return () => {
       document.body.style.cursor = previousCursor;
       document.body.style.userSelect = previousUserSelect;
     };
-  }, [browserResizing, inspectorPaneResizing, sidebarResizing]);
+  }, [browserResizing, sidebarResizing]);
 
   useEffect(() => {
     if (canBatchReplaceObjects) {
@@ -1135,14 +1074,6 @@ export function App() {
     if (side === 'placeAssets') setPlaceAssetsOpen(true);
     else setInspectorOpen(true);
     setSidebarResizing(side);
-  }
-
-  function beginInspectorPaneResize(event: React.PointerEvent<HTMLElement>) {
-    inspectorPaneResizeRef.current = {
-      startY: event.clientY,
-      startHeight: outlinerHeight,
-    };
-    setInspectorPaneResizing(true);
   }
 
   const workspaceStyle: CSSProperties = {
@@ -2232,14 +2163,6 @@ export function App() {
     setStatus(`Exported ${link.download} (${bytes.length.toLocaleString()} bytes).`);
   }
 
-  const outlinerGroups = useMemo(
-    () => buildOutlinerGroups(track?.kmp?.entities ?? [], outlinerQuery, entityLabel),
-    [outlinerQuery, track?.kmp?.entities, objFlow],
-  );
-  const selectedOutlinerCount = useMemo(
-    () => outlinerGroups.reduce((sum, group) => sum + group.entities.filter((entity) => selectedIds.includes(entity.id)).length, 0),
-    [outlinerGroups, selectedIds],
-  );
   const trackSummary = useMemo(() => {
     if (!track?.kmp) return null;
     return {
@@ -2248,15 +2171,6 @@ export function App() {
       routeCount: track.kmp.routes.length,
     };
   }, [track?.kmp]);
-  function toggleOutlinerSection(section: string) {
-    setOutlinerCollapsedSections((current) => ({ ...current, [section]: !current[section] }));
-  }
-  function collapseAllOutlinerSections() {
-    setOutlinerCollapsedSections(Object.fromEntries(outlinerGroups.map((group) => [group.key, true])));
-  }
-  function expandAllOutlinerSections() {
-    setOutlinerCollapsedSections(Object.fromEntries(outlinerGroups.map((group) => [group.key, false])));
-  }
 
   const selectedInspectorSection: InspectorSection = selected?.section === 'STGI' ? 'track' : 'object';
   const selectedInspector = selected ? (
@@ -2459,7 +2373,7 @@ export function App() {
           />
         </div>
 
-        <aside className={inspectorPaneResizing ? 'inspector resizingPanes' : 'inspector'}>
+        <aside className="inspector">
           {inspectorOpen && <div className="sidebarResizeHandle sidebarResizeHandleLeft" onPointerDown={(event) => beginSidebarResize('inspector', event)} />}
           <div className="panelHeader">
             <h2>Scene</h2>
@@ -2467,36 +2381,7 @@ export function App() {
               <PanelRightClose size={16} />
             </button>
           </div>
-          <div ref={inspectorPanelsRef} className="rightSidebarPanels">
-            <section className="sidebarPane outlinerPane" style={{ height: `${outlinerHeight}px` }}>
-              <div className="paneHeader">
-                <h2>Outliner</h2>
-                <span className="paneMeta">{track?.kmp ? `${track.kmp.entities.length} entities` : 'No track loaded'}</span>
-              </div>
-              <div className="paneBody">
-                <OutlinerPanel
-                  groups={outlinerGroups}
-                  query={outlinerQuery}
-                  onChangeQuery={setOutlinerQuery}
-                  selectedId={selectedId}
-                  selectedIds={selectedIds}
-                  collapsedSections={outlinerCollapsedSections}
-                  onToggleSection={toggleOutlinerSection}
-                  onSelect={selectEntity}
-                  selectedCount={selectedOutlinerCount}
-                  getEntityLabel={entityLabel}
-                  onExpandAll={expandAllOutlinerSections}
-                  onCollapseAll={collapseAllOutlinerSections}
-                />
-              </div>
-            </section>
-            <div
-              className="inspectorPaneResizeHandle"
-              onPointerDown={beginInspectorPaneResize}
-              role="separator"
-              aria-label="Resize outliner and details"
-              aria-orientation="horizontal"
-            />
+          <div className="rightSidebarPanels">
             <section className="sidebarPane detailsPane">
               <div className="paneHeader">
                 <h2>Details</h2>
@@ -2559,7 +2444,7 @@ export function App() {
                     ) : selected?.section === 'STGI' ? (
                       <p className="muted">Track settings are in the Track Settings section below.</p>
                     ) : (
-                      <p className="muted">Select an object, route node, checkpoint, start point, camera, cannon point, or respawn point in the viewport or outliner.</p>
+                      <p className="muted">Select an object, route node, checkpoint, start point, camera, cannon point, or respawn point in the viewport.</p>
                     )}
                     {selectedEntities.length > 1 && <p className="muted">{selectedEntities.length} selected. Details are showing the primary selection, with batch tools above.</p>}
                   </>
@@ -3073,95 +2958,6 @@ function DetailsSummaryBar({ items }: { items: Array<{ label: string; value: str
         </div>
       ))}
     </div>
-  );
-}
-
-function OutlinerPanel({
-  groups,
-  query,
-  onChangeQuery,
-  selectedId,
-  selectedIds,
-  collapsedSections,
-  onToggleSection,
-  onSelect,
-  selectedCount,
-  getEntityLabel,
-  onCollapseAll,
-  onExpandAll,
-}: {
-  groups: OutlinerGroup[];
-  query: string;
-  onChangeQuery: (value: string) => void;
-  selectedId: string | null;
-  selectedIds: string[];
-  collapsedSections: Record<string, boolean>;
-  onToggleSection: (section: string) => void;
-  onSelect: (id: string, additive?: boolean) => void;
-  selectedCount: number;
-  getEntityLabel: (entity: KmpEntity) => string;
-  onCollapseAll: () => void;
-  onExpandAll: () => void;
-}) {
-  const totalCount = groups.reduce((sum, group) => sum + group.entities.length, 0);
-  return (
-    <>
-      <div className="outlinerToolbar">
-        <input
-          className="outlinerSearch"
-          type="search"
-          placeholder="Search entities"
-          value={query}
-          onChange={(event) => onChangeQuery(event.currentTarget.value)}
-        />
-        <div className="outlinerActions">
-          <button className="inlineAction" type="button" onClick={onExpandAll}>
-            Expand All
-          </button>
-          <button className="inlineAction" type="button" onClick={onCollapseAll}>
-            Collapse All
-          </button>
-        </div>
-        <span className="outlinerMeta">{totalCount} shown · {selectedCount} selected</span>
-      </div>
-      <div className="outlinerTree">
-        {groups.length === 0 ? (
-          <p className="muted">{query.trim() ? 'No matching entities in this track.' : 'Load a track to browse its entities.'}</p>
-        ) : (
-          groups.map((group) => {
-            const collapsed = collapsedSections[group.key] ?? false;
-            return (
-              <section className="outlinerGroup" key={group.key}>
-                <button className="outlinerGroupButton" type="button" onClick={() => onToggleSection(group.key)}>
-                  {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-                  <strong>{group.label}</strong>
-                  <span>{group.entities.length}</span>
-                </button>
-                {!collapsed && (
-                  <div className="outlinerGroupItems">
-                    {group.entities.map((entity) => {
-                      const active = selectedIds.includes(entity.id);
-                      const primary = selectedId === entity.id;
-                      return (
-                        <button
-                          key={entity.id}
-                          type="button"
-                          className={`outlinerItem${active ? ' isSelected' : ''}${primary ? ' isPrimary' : ''}`}
-                          onClick={(event) => onSelect(entity.id, event.ctrlKey || event.metaKey || event.shiftKey)}
-                        >
-                          <span className="outlinerItemTitle">{outlinerEntityTitle(entity, getEntityLabel)}</span>
-                          <span className="outlinerItemMeta">{outlinerEntitySubtitle(entity)}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </section>
-            );
-          })
-        )}
-      </div>
-    </>
   );
 }
 
@@ -7903,72 +7699,6 @@ function KmpOverview({ kmp, onSelect }: { kmp: KmpDocument; onSelect: (id: strin
       </div>
     </>
   );
-}
-
-function buildOutlinerGroups(entities: KmpEntity[], query: string, getEntityLabel: (entity: KmpEntity) => string): OutlinerGroup[] {
-  const filteredEntities = entities.filter((entity) => outlinerEntitySearchText(entity, getEntityLabel).includes(query.trim().toLowerCase()));
-  const groups = new Map<string, OutlinerGroup>();
-  for (const entity of filteredEntities) {
-    const key = entity.section;
-    const existing = groups.get(key);
-    if (existing) existing.entities.push(entity);
-    else groups.set(key, { key, label: friendlySectionLabel(entity.section), entities: [entity] });
-  }
-  return [...groups.values()].sort((a, b) => outlinerSectionSortValue(a.key) - outlinerSectionSortValue(b.key) || a.label.localeCompare(b.label));
-}
-
-function outlinerEntityTitle(entity: KmpEntity, getEntityLabel: (entity: KmpEntity) => string): string {
-  if (entity.section === 'STGI') return 'Track Settings';
-  if (entity.objectId !== undefined) return getEntityLabel(entity);
-  if (entity.routePoint) return `${friendlySectionSingularLabel(entity.section)} ${entity.routePoint.pointIndex}`;
-  return describeEntity(entity);
-}
-
-function outlinerEntitySubtitle(entity: KmpEntity): string {
-  if (entity.routePoint) return `Route ${entity.routePoint.routeIndex} · ${entity.section}`;
-  if (entity.routeIndex !== undefined && entity.routeIndex !== 0xffff) return `Path ${entity.routeIndex} · ${entity.section} #${entity.index}`;
-  return `${entity.section} #${entity.index}`;
-}
-
-function outlinerEntitySearchText(entity: KmpEntity, getEntityLabel: (entity: KmpEntity) => string): string {
-  return [
-    getEntityLabel(entity),
-    outlinerEntityTitle(entity, getEntityLabel),
-    outlinerEntitySubtitle(entity),
-    friendlySectionLabel(entity.section),
-  ]
-    .join(' ')
-    .toLowerCase();
-}
-
-function outlinerSectionSortValue(section: string): number {
-  return [
-    'STGI',
-    'KTPT',
-    'ENPT',
-    'ITPT',
-    'CKPT',
-    'POTI',
-    'GOBJ',
-    'AREA',
-    'CAME',
-    'JGPT',
-    'CNPT',
-    'MSPT',
-  ].indexOf(section) === -1 ? 99 : [
-    'STGI',
-    'KTPT',
-    'ENPT',
-    'ITPT',
-    'CKPT',
-    'POTI',
-    'GOBJ',
-    'AREA',
-    'CAME',
-    'JGPT',
-    'CNPT',
-    'MSPT',
-  ].indexOf(section);
 }
 
 function friendlySectionLabel(section: string): string {

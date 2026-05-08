@@ -22,15 +22,10 @@ describe('editor ergonomics audit', () => {
     expect(appSource).toContain('BatchSelectionPanel');
     expect(appSource).toContain('Fill Between');
     expect(appSource).toContain("const [inspectorSection, setInspectorSection] = useState<InspectorSection>('object');");
-    expect(appSource).toContain("const [outlinerQuery, setOutlinerQuery] = useState('');");
     expect(appSource).toContain('Object Settings');
     expect(appSource).toContain('Track Settings');
-    expect(appSource).toContain('Outliner');
     expect(appSource).toContain('Details');
-    expect(appSource).toContain('OutlinerPanel');
     expect(appSource).toContain('DetailsSummaryBar');
-    expect(appSource).toContain('Expand All');
-    expect(appSource).toContain('Collapse All');
     expect(appSource).toContain('detailsSectionHeader');
     expect(appSource).toContain('Route / Point Data');
     expect(appSource).toContain('Object Setup');
