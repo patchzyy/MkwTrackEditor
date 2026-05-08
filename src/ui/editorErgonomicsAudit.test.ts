@@ -115,6 +115,9 @@ describe('editor ergonomics audit', () => {
     expect(viewportSource).toContain('const position = placeFromScreen(event.clientX, event.clientY, 0, isCollisionSnapModifier(event));');
     expect(viewportSource).toContain('getVisibleEntitiesForRouteFilter(track.kmp.entities, routeVisibilityRef.current, track.kmp, routeUsage)');
     expect(viewportSource).toContain('routeVisibilityRef.current,');
+    expect(viewportSource).toContain('const selectedPotiRouteIndex = getSelectedPotiRouteIndex(selected);');
+    expect(viewportSource).toContain('function getSelectedPotiRouteIndex(selected: KmpEntity): number | null {');
+    expect(viewportSource).toContain('if (selected.routeIndex !== undefined && selected.routeIndex !== 0xffff) return selected.routeIndex;');
     expect(viewportSource).toContain('const MAX_CAMERA_LOOK_DELTA_PX = 240;');
     expect(viewportSource).toContain('document.addEventListener(\'pointerlockchange\', handlePointerLockChange);');
     expect(viewportSource).toContain('if (cameraLook.skipNextDelta || cameraLook.pointerLocked !== pointerLocked) {');

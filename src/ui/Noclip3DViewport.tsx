@@ -345,7 +345,7 @@ type DofMode = 'full' | 'reduced' | 'off';
 const MKW_RENDER_SCALE = 0.1;
 const ENTITY_DRAG_START_THRESHOLD_PX = 4;
 const MAX_CAMERA_LOOK_DELTA_PX = 240;
-const ROUTE_INSERT_SNAP_MAX_SCREEN_DISTANCE_PX = 18;
+const ROUTE_INSERT_SNAP_MAX_DISTANCE = 900;
 const CAMERA_MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyQ', 'KeyE', 'PageUp', 'PageDown', 'Space', 'KeyC', 'ControlLeft', 'ControlRight'] as const;
 const startSlotPixelCenterX = 59;
 const startSlotWidePixelWidth = 50;
@@ -2083,17 +2083,18 @@ function getRouteInsertCandidate(
   if (!kmp || !selectedId) return null;
   const selected = kmp.entities.find((entity) => entity.id === selectedId);
   if (!selected) return null;
-  if (selected.routePoint) {
-    const route = kmp.routes[selected.routePoint.routeIndex];
+  const selectedPotiRouteIndex = getSelectedPotiRouteIndex(selected);
+  if (selectedPotiRouteIndex !== null) {
+    const route = kmp.routes[selectedPotiRouteIndex];
     if (!route || route.points.length === 0) return null;
-    const segment = getNearestRouteInsertSegment(route.points.map((point) => point.position), cursorPosition, clientX, clientY, canvas, viewer);
-    if (!segment) return null;
+    const placement = getNearestPotiRouteInsertPlacement(route.points.map((point) => point.position), cursorPosition, clientX, clientY, canvas, viewer);
+    if (!placement) return null;
     return {
-      position: segment.snapped ? segment.position : cursorPosition,
+      position: placement.position,
       target: {
         section: 'POTI',
         routeIndex: route.index,
-        afterPointIndex: segment.snapped ? segment.afterPointIndex : selected.routePoint.pointIndex,
+        afterPointIndex: placement.afterPointIndex,
       },
     };
   }
@@ -2106,7 +2107,7 @@ function getRouteInsertCandidate(
     .slice(group.startIndex, group.startIndex + group.pointCount)
     .map((entity) => entity.position);
   if (groupPoints.length === 0) return null;
-  const segment = getNearestRouteInsertSegment(groupPoints, cursorPosition, clientX, clientY, canvas, viewer);
+  const segment = getNearestRouteInsertSegment(groupPoints, cursorPosition);
   if (!segment) return null;
   return {
     position: segment.snapped ? segment.position : cursorPosition,
@@ -2126,69 +2127,97 @@ function getRouteInsertCandidate(
   };
 }
 
+function getSelectedPotiRouteIndex(selected: KmpEntity): number | null {
+  if (selected.routePoint) return selected.routePoint.routeIndex;
+  if (selected.routeIndex !== undefined && selected.routeIndex !== 0xffff) return selected.routeIndex;
+  return null;
+}
+
+function getNearestPotiRouteInsertPlacement(
+  points: readonly Vec3[],
+  cursorPosition: Vec3,
+  _clientX: number,
+  _clientY: number,
+  _canvas: HTMLCanvasElement,
+  _viewer: Viewer,
+): { afterPointIndex: number; position: Vec3 } | null {
+  if (points.length === 0) return null;
+  const segment = points.length > 1 ? getNearestRouteInsertSegment(points, cursorPosition) : null;
+  if (segment?.snapped) return { afterPointIndex: segment.afterPointIndex, position: segment.position };
+  if (points.length === 1) return { afterPointIndex: 0, position: cursorPosition };
+
+  const nearestPointIndex = getNearestRoutePointIndex(points, cursorPosition);
+  if (nearestPointIndex === null) {
+    return {
+      afterPointIndex: segment?.afterPointIndex ?? (points.length - 1),
+      position: cursorPosition,
+    };
+  }
+
+  return {
+    afterPointIndex: getNearestPointInsertAfterIndex(points, nearestPointIndex, cursorPosition),
+    position: cursorPosition,
+  };
+}
+
+function getNearestRoutePointIndex(
+  points: readonly Vec3[],
+  cursorPosition: Vec3,
+): number | null {
+  let bestIndex: number | null = null;
+  let bestDistanceSq = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < points.length; i++) {
+    const offset = subVec3(points[i], cursorPosition);
+    const distanceSq = dot(offset, offset);
+    if (distanceSq < bestDistanceSq) {
+      bestDistanceSq = distanceSq;
+      bestIndex = i;
+    }
+  }
+  return bestIndex;
+}
+
+function getNearestPointInsertAfterIndex(
+  points: readonly Vec3[],
+  pointIndex: number,
+  cursorPosition: Vec3,
+): number {
+  if (points.length <= 1) return 0;
+  if (pointIndex <= 0) {
+    return dot(subVec3(cursorPosition, points[0]), subVec3(points[1], points[0])) < 0 ? -1 : 0;
+  }
+  if (pointIndex >= points.length - 1) {
+    const lastIndex = points.length - 1;
+    return dot(subVec3(cursorPosition, points[lastIndex]), subVec3(points[lastIndex], points[lastIndex - 1])) > 0 ? lastIndex : lastIndex - 1;
+  }
+
+  const previousProjection = projectPointOntoSegment(points[pointIndex - 1], points[pointIndex], cursorPosition);
+  const nextProjection = projectPointOntoSegment(points[pointIndex], points[pointIndex + 1], cursorPosition);
+  const previousOffset = subVec3(previousProjection, cursorPosition);
+  const nextOffset = subVec3(nextProjection, cursorPosition);
+  if (dot(previousOffset, previousOffset) <= dot(nextOffset, nextOffset)) return pointIndex - 1;
+  return pointIndex;
+}
+
 function getNearestRouteInsertSegment(
   points: readonly Vec3[],
-  _cursorPosition: Vec3,
-  clientX: number,
-  clientY: number,
-  canvas: HTMLCanvasElement,
-  viewer: Viewer,
+  cursorPosition: Vec3,
 ): { afterPointIndex: number; position: Vec3; snapped: boolean } | null {
   if (points.length <= 1) return null;
-  let best: { afterPointIndex: number; position: Vec3; screenDistanceSq: number } | null = null;
+  let best: { afterPointIndex: number; position: Vec3; distanceSq: number } | null = null;
   for (let i = 0; i < points.length - 1; i++) {
-    const screenProjection = projectCursorOntoRouteSegment(points[i], points[i + 1], clientX, clientY, canvas, viewer);
-    if (!screenProjection) continue;
-    const projected = interpolateVec3(points[i], points[i + 1], screenProjection.t);
-    const screenDistanceSq = screenProjection.distanceSq;
-    if (!best || screenDistanceSq < best.screenDistanceSq) {
-      best = { afterPointIndex: i, position: projected, screenDistanceSq };
+    const projected = projectPointOntoSegment(points[i], points[i + 1], cursorPosition);
+    const offset = subVec3(projected, cursorPosition);
+    const distanceSq = dot(offset, offset);
+    if (!best || distanceSq < best.distanceSq) {
+      best = { afterPointIndex: i, position: projected, distanceSq };
     }
   }
   if (!best) return null;
   return {
     afterPointIndex: best.afterPointIndex,
     position: best.position,
-    snapped: best.screenDistanceSq <= ROUTE_INSERT_SNAP_MAX_SCREEN_DISTANCE_PX * ROUTE_INSERT_SNAP_MAX_SCREEN_DISTANCE_PX,
-  };
-}
-
-function projectCursorOntoRouteSegment(
-  a: Vec3,
-  b: Vec3,
-  clientX: number,
-  clientY: number,
-  canvas: HTMLCanvasElement,
-  viewer: Viewer,
-): { x: number; y: number; t: number; distanceSq: number } | null {
-  const a2 = projectWorldToClient(a, canvas, viewer);
-  const b2 = projectWorldToClient(b, canvas, viewer);
-  if (!a2 || !b2) return null;
-  const segment2d = { x: b2.x - a2.x, y: b2.y - a2.y };
-  const lengthSq = segment2d.x * segment2d.x + segment2d.y * segment2d.y;
-  if (lengthSq <= 0.000001) {
-    const dx = clientX - a2.x;
-    const dy = clientY - a2.y;
-    return { x: a2.x, y: a2.y, t: 0, distanceSq: dx * dx + dy * dy };
-  }
-  const t = Math.min(1, Math.max(0, ((clientX - a2.x) * segment2d.x + (clientY - a2.y) * segment2d.y) / lengthSq));
-  const x = a2.x + segment2d.x * t;
-  const y = a2.y + segment2d.y * t;
-  const dx = clientX - x;
-  const dy = clientY - y;
-  return {
-    x,
-    y,
-    t,
-    distanceSq: dx * dx + dy * dy,
-  };
-}
-
-function interpolateVec3(a: Vec3, b: Vec3, t: number): Vec3 {
-  return {
-    x: a.x + (b.x - a.x) * t,
-    y: a.y + (b.y - a.y) * t,
-    z: a.z + (b.z - a.z) * t,
+    snapped: best.distanceSq <= ROUTE_INSERT_SNAP_MAX_DISTANCE * ROUTE_INSERT_SNAP_MAX_DISTANCE,
   };
 }
 
