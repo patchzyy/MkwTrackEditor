@@ -765,6 +765,7 @@ type BrowserFolder =
   | { id: BrowserFolderId; label: string; detail: string; kind: 'brres'; items: string[] };
 
 type InspectorSection = 'object' | 'track';
+type EditorModeStub = 'model' | 'visual' | 'kmp' | 'camera';
 
 export function App() {
   const CONTENT_BROWSER_COLLAPSED_HEIGHT = 46;
@@ -788,6 +789,7 @@ export function App() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [tool, setTool] = useState<TransformTool>('translate');
   const [viewMode, setViewMode] = useState<ViewMode>('normal');
+  const [editorMode, setEditorMode] = useState<EditorModeStub>('model');
   const [browserOpen, setBrowserOpen] = useState(true);
   const [browserHeight, setBrowserHeight] = useState(CONTENT_BROWSER_DEFAULT_HEIGHT);
   const [browserResizing, setBrowserResizing] = useState(false);
@@ -2307,6 +2309,21 @@ export function App() {
           Export
         </button>
         <span className="status">{status}</span>
+        <div className="topBarModeGroup" role="group" aria-label="Editor mode">
+          <span className="topBarModeLabel">Mode</span>
+          <button className={editorMode === 'model' ? 'button active' : 'button'} type="button" onClick={() => setEditorMode('model')}>
+            Model
+          </button>
+          <button className={editorMode === 'visual' ? 'button active' : 'button'} type="button" onClick={() => setEditorMode('visual')}>
+            Visual
+          </button>
+          <button className={editorMode === 'kmp' ? 'button active' : 'button'} type="button" onClick={() => setEditorMode('kmp')}>
+            KMP
+          </button>
+          <button className={editorMode === 'camera' ? 'button active' : 'button'} type="button" onClick={() => setEditorMode('camera')}>
+            Camera
+          </button>
+        </div>
       </header>
 
       <div ref={shellBodyRef} className={inspectorOpen ? 'shellBody' : 'shellBody inspectorCollapsed'} style={workspaceStyle}>

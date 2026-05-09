@@ -2971,12 +2971,30 @@ class MarioKartWiiSceneDesc implements Viewer.SceneDesc {
         } else if (objName === `skyship`) {
             spawnSimpleObject(`skyship`);
         } else if (objName === `penguin_s`) {
-            spawnSimpleObject(`penguin_s`);
+            const route = getRoute();
+            if (route !== null && route.points.length >= 2) {
+                const timeline = createTimeline(route, makeMotionMode(route), () => Math.max(1, gobj.objectArg0), (point) => point.setting1);
+                renderer.baseObjects.push(new RoutedSingleModelRenderer(createModelInstance(`penguin_s`), gobj, timeline, true));
+            } else {
+                spawnSimpleObject(`penguin_s`);
+            }
             // wiki says they should be creating a mirrored one below it, for the fake reflection but it isnt
         } else if (objName === `penguin_m`) {
-            spawnSimpleObject(`penguin_m`);
+            const route = getRoute();
+            if (route !== null && route.points.length >= 2) {
+                const timeline = createTimeline(route, makeMotionMode(route), () => Math.max(1, gobj.objectArg0), (point) => point.setting1);
+                renderer.baseObjects.push(new RoutedSingleModelRenderer(createModelInstance(`penguin_m`), gobj, timeline, true));
+            } else {
+                spawnSimpleObject(`penguin_m`);
+            }
         } else if (objName === `penguin_l`) {
-            spawnSimpleObject(`penguin_l`);
+            const route = getRoute();
+            if (route !== null && route.points.length >= 2) {
+                const timeline = createTimeline(route, makeMotionMode(route), () => Math.max(1, gobj.objectArg0), (point) => point.setting1);
+                renderer.baseObjects.push(new RoutedSingleModelRenderer(createModelInstance(`penguin_l`), gobj, timeline, true));
+            } else {
+                spawnSimpleObject(`penguin_l`);
+            }
         } else if (objName === `castleballoon1`) {
             spawnSimpleObject(`castleballoon1`);
         } else if (objName === `dossunc`) {

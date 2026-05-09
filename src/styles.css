@@ -112,11 +112,24 @@ input {
 }
 
 .status {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   color: #9faaba;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.topBarModeGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.topBarModeLabel {
+  color: #9faaba;
+  font-size: 12px;
 }
 
 .shellBody {
