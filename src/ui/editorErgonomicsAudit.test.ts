@@ -31,6 +31,8 @@ describe('editor ergonomics audit', () => {
     expect(appSource).toContain('Object Setup');
     expect(appSource).toContain('Route Binding');
     expect(appSource).toContain('Path Group');
+    expect(appSource).toContain('function getSelectionIdAfterRoutePointDeletion(before: KmpDocument, after: KmpDocument, deleted: KmpEntity): string | null {');
+    expect(appSource).toContain('const nextPointIndex = Math.max(0, Math.min(deleted.routePoint.pointIndex - 1, route.points.length - 1));');
     expect(appSource).toContain("selected.section === 'STGI' ? 'track' : 'object'");
     expect(appSource).toContain("{inspectorSection === 'object' ? (");
     expect(appSource).toContain('Post Effects');

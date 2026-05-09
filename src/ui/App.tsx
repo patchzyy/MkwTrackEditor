@@ -1240,6 +1240,23 @@ export function App() {
     return document.entities.find((entity) => entity.section === template.section && entity.index === template.index) ?? null;
   }
 
+  function getSelectionIdAfterRoutePointDeletion(before: KmpDocument, after: KmpDocument, deleted: KmpEntity): string | null {
+    if (deleted.routePoint) {
+      const route = after.routes[deleted.routePoint.routeIndex];
+      if (!route || route.points.length === 0) return null;
+      const nextPointIndex = Math.max(0, Math.min(deleted.routePoint.pointIndex - 1, route.points.length - 1));
+      const nextId = `POTI-${deleted.routePoint.routeIndex}-${nextPointIndex}`;
+      return after.entities.some((entity) => entity.id === nextId) ? nextId : null;
+    }
+    if (deleted.section !== 'ENPT' && deleted.section !== 'ITPT' && deleted.section !== 'CKPT') return null;
+    const graph = before.pathGraphs.find((candidate) => candidate.pointSection === deleted.section);
+    const group = graph?.groups.find((candidate) => deleted.index >= candidate.startIndex && deleted.index < candidate.startIndex + candidate.pointCount);
+    if (!group || group.pointCount <= 1) return null;
+    const nextIndex = group.startIndex + Math.max(0, deleted.index - group.startIndex - 1);
+    const nextId = `${deleted.section}-${nextIndex}`;
+    return after.entities.some((entity) => entity.id === nextId) ? nextId : null;
+  }
+
   function getDeletionOrder(a: KmpEntity, b: KmpEntity): number {
     if (a.routePoint && b.routePoint) {
       if (a.routePoint.routeIndex !== b.routePoint.routeIndex) return b.routePoint.routeIndex - a.routePoint.routeIndex;
@@ -1901,7 +1918,16 @@ export function App() {
         deletedCount++;
       }
       if (deletedCount === 0) return;
-      applyEditorChange(replaceCourseKmp(track, current.original), null, true, []);
+      const nextSelectedId =
+        deletedCount === 1 && deletable.length === 1
+          ? getSelectionIdAfterRoutePointDeletion(track.kmp, current, deletable[0])
+          : null;
+      applyEditorChange(
+        replaceCourseKmp(track, current.original),
+        nextSelectedId,
+        true,
+        nextSelectedId ? [nextSelectedId] : [],
+      );
       setStatus(deletedCount === 1 ? `Deleted ${label}.` : `Deleted ${deletedCount} selected elements.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
