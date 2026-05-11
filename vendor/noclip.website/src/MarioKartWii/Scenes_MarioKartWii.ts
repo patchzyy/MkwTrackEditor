@@ -426,6 +426,33 @@ class MarioKartWiiRenderer {
         return updated;
     }
 
+    public updateEditorBrresNodeTransform(_archivePath: string, modelName: string, nodeId: number, translation: { x: number; y: number; z: number }, rotation: { x: number; y: number; z: number }, scale: { x: number; y: number; z: number }): boolean {
+        for (const object of this.baseObjects) {
+            const modelInstances = getModelInstances(object);
+            for (let i = 0; i < modelInstances.length; i++) {
+                const modelInstance = modelInstances[i];
+                if (modelInstance.mdl0Model.mdl0.name !== modelName)
+                    continue;
+                const node = modelInstance.mdl0Model.mdl0.nodes.find((node) => node.id === nodeId);
+                if (node === undefined)
+                    continue;
+
+                node.scale[0] = scale.x;
+                node.scale[1] = scale.y;
+                node.scale[2] = scale.z;
+                node.rotation[0] = rotation.x;
+                node.rotation[1] = rotation.y;
+                node.rotation[2] = rotation.z;
+                node.translation[0] = translation.x;
+                node.translation[1] = translation.y;
+                node.translation[2] = translation.z;
+                computeModelMatrixSRT(node.modelMatrix, scale.x, scale.y, scale.z, rotation.x * MathConstants.DEG_TO_RAD, rotation.y * MathConstants.DEG_TO_RAD, rotation.z * MathConstants.DEG_TO_RAD, translation.x, translation.y, translation.z);
+                return true;
+            }
+        }
+        return false;
+    }
+
     public hasEditorGobjIndex(index: number): boolean {
         for (const object of this.baseObjects) {
             if (object instanceof GobjPreviewRenderer && object.gobj.editorIndex === index)

@@ -79,6 +79,18 @@ import {
 } from '../lib/posteffects';
 import { loadPersistedCommonSzs, savePersistedCommonSzs } from '../lib/persistedCommon';
 import { describeEntity, exportTrack, loadTrackBytes, loadTrackFile, replaceArchiveFile, replaceCourseKmp, validateExportBytes, validateTrack, type TrackDocument } from '../lib/track';
+import {
+  buildEditorProjectState,
+  patchBrresNodeTransform,
+  type BrresEditorNode,
+  type BrresTransform,
+  type EditorProjectState,
+} from '../lib/brresEditor';
+import {
+  toSceneNodeViewportTransformSelection,
+  toSceneNodeViewportTransformSelections,
+  type ViewportTransformSelection,
+} from '../lib/brresRenderAdapter';
 import { parseU8 } from '../lib/u8';
 import { comparePlaceableCourseAssetPriority, dedupePlaceableCourseAssetsForBrowser } from './browserAssetDedupe';
 import { buildFillBetweenPositions, getFillBetweenSelection } from './fillBetween';
@@ -734,7 +746,7 @@ const kmpPointCatalog: Array<{ section: AppendableKmpSection; label: string; cat
 
 type BrowserObject = (typeof objectCatalog)[number] | ObjFlowEntry;
 type BrowserAssetItem = BrowserObject | PlaceableCourseAssetRecord;
-type BrowserFolderId = 'featured' | 'kmp' | 'enemies' | 'nature' | 'gameplay' | 'props' | 'common' | 'track';
+type BrowserFolderId = 'featured' | 'kmp' | 'enemies' | 'nature' | 'gameplay' | 'props' | 'common' | 'track' | 'archiveNodes';
 interface CourseAssetRecord {
   id: string;
   source: 'courseArchive' | 'sharedObjectDir';
@@ -762,6 +774,7 @@ interface CourseAssetDatabase {
 type BrowserFolder =
   | { id: BrowserFolderId; label: string; detail: string; kind: 'kmp'; items: typeof kmpPointCatalog }
   | { id: BrowserFolderId; label: string; detail: string; kind: 'object'; items: BrowserAssetItem[] }
+  | { id: BrowserFolderId; label: string; detail: string; kind: 'archiveNode'; items: BrresEditorNode[] }
   | { id: BrowserFolderId; label: string; detail: string; kind: 'brres'; items: string[] };
 
 type InspectorSection = 'object' | 'track';
@@ -785,6 +798,7 @@ export function App() {
   const smokeReportRef = useRef<string | null>(null);
   const smokeUndoRedoStartedRef = useRef(false);
   const [track, setTrack] = useState<TrackDocument | null>(null);
+  const [projectState, setProjectState] = useState<EditorProjectState | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [tool, setTool] = useState<TransformTool>('translate');
@@ -860,6 +874,33 @@ export function App() {
   const areaInspectorResources = useMemo(() => getAreaInspectorResources(analysisTrack), [analysisTrack]);
   const postEffectResources = useMemo(() => getTrackPostEffectResources(analysisTrack), [analysisTrack]);
   const selectedObjectProfile = useMemo(() => (selected?.section === 'GOBJ' ? getObjectInspectorProfile(selected, objFlow) : null), [objFlow, selected]);
+  const selectedArchiveNode = useMemo(
+    () => projectState?.archiveNodes.find((node) => node.id === selectedId) ?? null,
+    [projectState, selectedId],
+  );
+  const viewportTransformSelection = useMemo(
+    () => (editorMode === 'model' && selectedArchiveNode ? toSceneNodeViewportTransformSelection(selectedArchiveNode) : null),
+    [editorMode, selectedArchiveNode],
+  );
+  const viewportTransformSelections = useMemo(
+    () => (editorMode === 'model' ? toSceneNodeViewportTransformSelections(projectState?.sceneNodes ?? []) : []),
+    [editorMode, projectState],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!track) {
+      setProjectState(null);
+      return;
+    }
+    void buildEditorProjectState(track).then((state) => {
+      if (!cancelled) setProjectState(state);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [track]);
+
   useEffect(() => {
     if (!selected) return;
     setInspectorSection(selected.section === 'STGI' ? 'track' : 'object');
@@ -923,8 +964,10 @@ export function App() {
     const props = [...objects.filter((object) => classifyObjectFolder(object) === 'props'), ...placeableCourseAssets.filter((asset) => classifyObjectFolder(asset) === 'props')].slice(0, 72);
     const common = [...objects, ...placeableCourseAssets].slice(0, 240);
     const trackAssets = track?.brresFiles.slice(0, 48) ?? [];
+    const archiveNodes = projectState?.sceneNodes ?? [];
     return [
       { id: 'featured', label: 'Common', detail: `${featured.length} highlighted objects`, kind: 'object', items: featured },
+      { id: 'archiveNodes', label: 'Model Nodes', detail: track ? `${archiveNodes.length} movable BRRES nodes` : 'Load a track to list model nodes', kind: 'archiveNode', items: archiveNodes },
       { id: 'kmp', label: 'Track Data', detail: `${kmpPointCatalog.length} editable track records`, kind: 'kmp', items: kmpPointCatalog },
       { id: 'enemies', label: 'Enemies', detail: `${enemies.length} common enemies`, kind: 'object', items: enemies },
       { id: 'nature', label: 'Nature', detail: `${nature.length} trees and foliage`, kind: 'object', items: nature },
@@ -933,7 +976,7 @@ export function App() {
       { id: 'common', label: 'All Objects', detail: `${common.length} placeable game objects`, kind: 'object', items: common },
       { id: 'track', label: 'Track Meshes', detail: track ? `${trackAssets.length} track asset files` : 'Load a track to list track assets', kind: 'brres', items: trackAssets },
     ].filter((folder) => folder.items.length > 0 || folder.id === 'track');
-  }, [commonArchive, courseAssetDb, objFlow, realObjectCatalog, track]);
+  }, [commonArchive, courseAssetDb, objFlow, projectState, realObjectCatalog, track]);
   const activeBrowserFolder = browserFolders.find((folder) => folder.id === browserFolder) ?? browserFolders[0] ?? null;
   const filteredBrowserFolder = useMemo(() => filterBrowserFolder(activeBrowserFolder, browserQuery), [activeBrowserFolder, browserQuery]);
   trackStateRef.current = track;
@@ -1228,6 +1271,25 @@ export function App() {
       if (!next.includes(id)) next.push(id);
     }
     applySelection(next, uniqueIds.at(-1) ?? next.at(-1) ?? null);
+  }
+
+  function selectViewportTransformSelection(id: string | null) {
+    applySelection(id ? [id] : [], id);
+  }
+
+  function updateViewportTransformSelection(selection: ViewportTransformSelection, patch: Partial<BrresTransform>) {
+    if (!track) return;
+    const node = projectState?.archiveNodes.find((candidate) => candidate.id === selection.id);
+    if (!node) return;
+    const data = findArchiveData(track, node.archivePath);
+    if (!data) return;
+    const transform: BrresTransform = {
+      scale: patch.scale ?? selection.scale ?? node.transform.scale,
+      rotation: patch.rotation ?? selection.rotation ?? node.transform.rotation,
+      translation: patch.translation ?? selection.position,
+    };
+    applyEditorChange(replaceArchiveFile(track, node.archivePath, patchBrresNodeTransform(data, node, transform)), node.id, true, [node.id]);
+    setStatus(`Updated ${node.name} in ${friendlyTrackAssetName(node.archivePath)}.`);
   }
 
   function findMatchingEntity(document: KmpDocument, template: KmpEntity): KmpEntity | null {
@@ -2374,6 +2436,9 @@ export function App() {
             track={track}
             selectedId={selectedId}
             selectedIds={selectedIds}
+            transformSelection={viewportTransformSelection}
+            transformSelections={viewportTransformSelections}
+            showKmpEditorOverlay={editorMode !== 'model'}
             fillBetweenPreviewPositions={fillBetweenPreviewPositions}
             smokeCommonUrl={smokeCommonUrl}
             commonArchiveUrl={commonArchiveUrl}
@@ -2389,9 +2454,13 @@ export function App() {
             getEntityLabel={entityLabel}
             onSelect={(id, options) => selectEntity(id, options?.additive)}
             onSelectMany={(ids, options) => selectEntities(ids, options?.additive)}
+            onSelectTransformSelection={selectViewportTransformSelection}
             onMoveEntity={moveEntity}
             onRotateEntity={rotateEntity}
             onScaleEntity={scaleEntity}
+            onMoveTransformSelection={(selection, position) => updateViewportTransformSelection(selection, { translation: position })}
+            onRotateTransformSelection={(selection, rotation) => updateViewportTransformSelection(selection, { rotation })}
+            onScaleTransformSelection={(selection, scale) => updateViewportTransformSelection(selection, { scale })}
             onMoveCheckpointEndpoint={moveCheckpointEndpoint}
             onAddObject={addObject}
             onAddKmpPoint={addKmpPoint}
@@ -2452,6 +2521,16 @@ export function App() {
                 </div>
                 {inspectorSection === 'object' ? (
                   <>
+                    {selectedArchiveNode && editorMode === 'model' && (
+                      <DetailsSummaryBar
+                        items={[
+                          { label: 'Selection', value: selectedArchiveNode.name },
+                          { label: 'Model', value: selectedArchiveNode.modelName },
+                          { label: 'Archive', value: friendlyTrackAssetName(selectedArchiveNode.archivePath) },
+                          { label: 'Node', value: `#${selectedArchiveNode.nodeId}` },
+                        ]}
+                      />
+                    )}
                     {selected && selectedInspectorSection === 'object' && (
                       <DetailsSummaryBar
                         items={[
@@ -2637,6 +2716,22 @@ export function App() {
                   </div>
                 ),
               )}
+            {filteredBrowserFolder?.kind === 'archiveNode' &&
+              filteredBrowserFolder.items.map((node) => (
+                <button
+                  className={node.id === selectedId ? 'assetTile selected' : 'assetTile'}
+                  key={node.id}
+                  type="button"
+                  onClick={() => {
+                    setEditorMode('model');
+                    selectViewportTransformSelection(node.id);
+                  }}
+                >
+                  <div className="thumbnail brres">Node</div>
+                  <strong>{node.name}</strong>
+                  <span>{`${node.modelName} - ${friendlyTrackAssetName(node.archivePath)}`}</span>
+                </button>
+              ))}
             {filteredBrowserFolder?.kind === 'brres' &&
               filteredBrowserFolder.items.map((path) => (
                 <div className="assetTile" key={path}>
@@ -7903,7 +7998,7 @@ function objectResources(object: (typeof objectCatalog)[number] | ObjFlowEntry):
   return 'resources' in object ? getObjFlowResourceNames(object) : [];
 }
 
-function classifyObjectFolder(object: BrowserAssetItem): Exclude<BrowserFolderId, 'featured' | 'kmp' | 'common' | 'track'> {
+function classifyObjectFolder(object: BrowserAssetItem): Exclude<BrowserFolderId, 'featured' | 'kmp' | 'common' | 'track' | 'archiveNodes'> {
   const text = browserItemSearchText(object);
   if (/(kuribo|goomba|choropu|pakkun|killer|wanwan|heyho|nokonoko|koopa|sanbo|crab|fish|enemy|boss)/.test(text)) return 'enemies';
   if (/(tree|wood|bush|grass|flower|plant|leaf|palm|forest|kinoko|mushroom|cactus)/.test(text)) return 'nature';

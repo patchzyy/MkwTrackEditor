@@ -10,6 +10,11 @@ import type { Destroyable, SceneContext } from '../../vendor/noclip.website/src/
 import { InitErrorCode, initializeViewerWebGL2, resizeCanvas, type SceneGfx, type Viewer } from '../../vendor/noclip.website/src/viewer';
 import { createSceneFromU8Buffer } from '../../vendor/noclip.website/src/rres/scenes';
 import { buildPublicAssetUrl } from '../lib/assetPaths';
+import {
+  syncBrresViewportTransformSelectionPreview,
+  type BrresViewportPreviewScene,
+  type ViewportTransformSelection,
+} from '../lib/brresRenderAdapter';
 import { buildU8 } from '../lib/u8';
 import type { AppendableKmpSection, KmpDocument, KmpEntity, KmpRouteInsertTarget, Vec3 } from '../lib/kmp';
 import { raycastDown, raycastMesh, snapPointToTriangleFeature } from '../lib/kcl';
@@ -20,6 +25,9 @@ interface Noclip3DViewportProps {
   track: TrackDocument | null;
   selectedId: string | null;
   selectedIds: string[];
+  transformSelection?: ViewportTransformSelection | null;
+  transformSelections?: ViewportTransformSelection[];
+  showKmpEditorOverlay?: boolean;
   fillBetweenPreviewPositions?: Vec3[];
   smokeCommonUrl?: string | null;
   commonArchiveUrl?: string | null;
@@ -36,6 +44,10 @@ interface Noclip3DViewportProps {
   onMoveEntity: (entity: KmpEntity, position: Vec3) => void;
   onRotateEntity?: (entity: KmpEntity, rotation: Vec3) => void;
   onScaleEntity?: (entity: KmpEntity, scale: Vec3) => void;
+  onSelectTransformSelection?: (id: string | null) => void;
+  onMoveTransformSelection?: (selection: ViewportTransformSelection, position: Vec3) => void;
+  onRotateTransformSelection?: (selection: ViewportTransformSelection, rotation: Vec3) => void;
+  onScaleTransformSelection?: (selection: ViewportTransformSelection, scale: Vec3) => void;
   onMoveCheckpointEndpoint?: (entity: KmpEntity, side: 'left' | 'right', position: Vec3) => void;
   onAddObject?: (objectId: number, position: Vec3) => void;
   onAddKmpPoint?: (section: AppendableKmpSection, position: Vec3) => void;
@@ -46,6 +58,7 @@ interface Noclip3DViewportProps {
 
 export type TransformTool = 'translate' | 'rotate' | 'scale';
 export type ViewMode = 'normal' | 'dev' | 'topdown' | 'ortho';
+export type { ViewportTransformSelection } from '../lib/brresRenderAdapter';
 
 type GizmoAxis = 'x' | 'y' | 'z';
 type GizmoPlane = 'xy' | 'xz' | 'yz';
@@ -209,6 +222,12 @@ interface EntityTransformPreview {
   scale?: Vec3;
 }
 
+interface TransformSelectionTarget {
+  kind: 'kmp' | 'external';
+  selection: ViewportTransformSelection;
+  entity?: KmpEntity;
+}
+
 interface CameraFrame {
   eye: vec3;
   target: vec3;
@@ -324,6 +343,9 @@ type PendingInteractionCommit =
   | { kind: 'moveEntity'; entity: KmpEntity; position: Vec3 }
   | { kind: 'rotateEntity'; entity: KmpEntity; rotation: Vec3 }
   | { kind: 'scaleEntity'; entity: KmpEntity; scale: Vec3 }
+  | { kind: 'moveTransformSelection'; selection: ViewportTransformSelection; position: Vec3 }
+  | { kind: 'rotateTransformSelection'; selection: ViewportTransformSelection; rotation: Vec3 }
+  | { kind: 'scaleTransformSelection'; selection: ViewportTransformSelection; scale: Vec3 }
   | { kind: 'moveCheckpointEndpoint'; entity: KmpEntity; side: 'left' | 'right'; position: Vec3 };
 
 interface MarqueeSelectionState {
@@ -438,6 +460,9 @@ export function Noclip3DViewport({
   track,
   selectedId,
   selectedIds,
+  transformSelection = null,
+  transformSelections = [],
+  showKmpEditorOverlay = true,
   fillBetweenPreviewPositions = [],
   smokeCommonUrl = null,
   commonArchiveUrl = null,
@@ -454,6 +479,10 @@ export function Noclip3DViewport({
   onMoveEntity,
   onRotateEntity,
   onScaleEntity,
+  onSelectTransformSelection,
+  onMoveTransformSelection,
+  onRotateTransformSelection,
+  onScaleTransformSelection,
   onMoveCheckpointEndpoint,
   onAddObject,
   onAddKmpPoint,
@@ -536,8 +565,16 @@ export function Noclip3DViewport({
   const onMoveEntityRef = useRef(onMoveEntity);
   const onRotateEntityRef = useRef(onRotateEntity);
   const onScaleEntityRef = useRef(onScaleEntity);
+  const transformSelectionRef = useRef<ViewportTransformSelection | null>(transformSelection);
+  const transformSelectionsRef = useRef<ViewportTransformSelection[]>(transformSelections);
+  const showKmpEditorOverlayRef = useRef(showKmpEditorOverlay);
+  const onSelectTransformSelectionRef = useRef(onSelectTransformSelection);
+  const onMoveTransformSelectionRef = useRef(onMoveTransformSelection);
+  const onRotateTransformSelectionRef = useRef(onRotateTransformSelection);
+  const onScaleTransformSelectionRef = useRef(onScaleTransformSelection);
   const onMoveCheckpointEndpointRef = useRef(onMoveCheckpointEndpoint);
   const selected = track?.kmp?.entities.find((entity) => entity.id === selectedId) ?? null;
+  const selectionHudLabel = transformSelection?.label ?? (selected ? getEntityLabel(selected) : null);
   const sceneKey = track ? getSceneKey(track) : null;
   const gobjSignature = track ? getGobjSignature(track) : 'nogobj';
   const routeItems = track ? getRouteVisibilityItems(track) : [];
@@ -553,6 +590,13 @@ export function Noclip3DViewport({
   onMoveEntityRef.current = onMoveEntity;
   onRotateEntityRef.current = onRotateEntity;
   onScaleEntityRef.current = onScaleEntity;
+  transformSelectionRef.current = transformSelection;
+  transformSelectionsRef.current = transformSelections;
+  showKmpEditorOverlayRef.current = showKmpEditorOverlay;
+  onSelectTransformSelectionRef.current = onSelectTransformSelection;
+  onMoveTransformSelectionRef.current = onMoveTransformSelection;
+  onRotateTransformSelectionRef.current = onRotateTransformSelection;
+  onScaleTransformSelectionRef.current = onScaleTransformSelection;
   onMoveCheckpointEndpointRef.current = onMoveCheckpointEndpoint;
 
   useEffect(() => {
@@ -820,7 +864,24 @@ export function Noclip3DViewport({
 
   useEffect(() => {
     syncSceneOverlay(track, selectedId);
-  }, [fillBetweenPreviewPositions, previewTransform, routeInsertPreview, track?.kmp, track?.kcl, selectedId, selectedIds, hoveredId, hoveredHandle, collisionVisible, tool, routeVisibility, viewMode]);
+  }, [
+    fillBetweenPreviewPositions,
+    previewTransform,
+    routeInsertPreview,
+    track?.kmp,
+    track?.kcl,
+    selectedId,
+    selectedIds,
+    transformSelection,
+    transformSelections,
+    showKmpEditorOverlay,
+    hoveredId,
+    hoveredHandle,
+    collisionVisible,
+    tool,
+    routeVisibility,
+    viewMode,
+  ]);
 
   useEffect(() => {
     const updateFromLastPointer = (altKey: boolean) => {
@@ -1109,11 +1170,30 @@ export function Noclip3DViewport({
       onScaleEntityRef.current?.(pending.entity, pending.scale);
       return;
     }
+    if (pending.kind === 'moveTransformSelection') {
+      onMoveTransformSelectionRef.current?.(pending.selection, pending.position);
+      return;
+    }
+    if (pending.kind === 'rotateTransformSelection') {
+      onRotateTransformSelectionRef.current?.(pending.selection, pending.rotation);
+      return;
+    }
+    if (pending.kind === 'scaleTransformSelection') {
+      onScaleTransformSelectionRef.current?.(pending.selection, pending.scale);
+      return;
+    }
     onMoveCheckpointEndpointRef.current?.(pending.entity, pending.side, pending.position);
   }
 
   function scheduleInteractionCommit(pending: PendingInteractionCommit) {
     pendingInteractionCommitRef.current = pending;
+    if (
+      pending.kind === 'moveTransformSelection' ||
+      pending.kind === 'rotateTransformSelection' ||
+      pending.kind === 'scaleTransformSelection'
+    ) {
+      return;
+    }
     if (interactionCommitFrameRef.current !== null) return;
     interactionCommitFrameRef.current = requestAnimationFrame(() => {
       interactionCommitFrameRef.current = null;
@@ -1141,11 +1221,11 @@ export function Noclip3DViewport({
     const entity = trackRef.current?.kmp?.entities.find((candidate) => candidate.id === drag.id);
     if (!entity) return;
     if (tool === 'translate') {
-      const next = placeFromScreen(clientX, clientY, entity.position.y, snapToFeatures);
-      if (next) {
-        setDragPreview({ id: entity.id, position: next, rotation: entity.rotation, scale: entity.scale });
-        syncRenderedGobjTransform(entity, next, entity.rotation, entity.scale);
-        scheduleInteractionCommit({ kind: 'moveEntity', entity, position: next });
+      const position = placeFromScreen(clientX, clientY, entity.position.y, snapToFeatures);
+      if (position) {
+        setDragPreview({ id: entity.id, position, rotation: entity.rotation, scale: entity.scale });
+        syncRenderedGobjTransform(entity, position, entity.rotation, entity.scale);
+        scheduleInteractionCommit({ kind: 'moveEntity', entity, position });
       }
       return;
     }
@@ -1180,7 +1260,8 @@ export function Noclip3DViewport({
     } | null;
     const scenePick = pickSceneHandle(scene, event.clientX, event.clientY, event.currentTarget);
     const pickedHandle = pickToGizmoHandle(scenePick);
-    const entity = pickEntityFromPick(scenePick) ?? pickEntityFromScreenPosition(event.clientX, event.clientY);
+    const transformTarget = pickTransformSelectionFromPick(scenePick);
+    const entity = transformTarget?.entity ?? pickEntityFromPick(scenePick) ?? pickEntityFromScreenPosition(event.clientX, event.clientY);
     if (additiveSelection && !scenePick && !entity) {
       event.preventDefault();
       event.stopPropagation();
@@ -1193,43 +1274,43 @@ export function Noclip3DViewport({
     if (additiveSelection && scenePick && scenePick.kind !== 'point') return;
     if (event.shiftKey) return;
     if (scenePick?.kind === 'center') {
-      const drag = entity && viewerRef.current ? createCenterGizmoDragState(entity, toolRef.current, event.clientX, event.clientY, event.currentTarget, viewerRef.current) : null;
-      if (!entity || !drag) return;
+      const drag = transformTarget && viewerRef.current ? createCenterGizmoDragState(transformTarget.selection, toolRef.current, event.clientX, event.clientY, event.currentTarget, viewerRef.current) : null;
+      if (!transformTarget || !drag) return;
       event.preventDefault();
       event.stopPropagation();
-      onSelect(entity.id);
+      if (transformTarget.kind === 'kmp' && transformTarget.entity) onSelect(transformTarget.entity.id);
       onInteractionStart?.();
       setActiveGizmoHandle(pickedHandle);
       setHoveredGizmoHandle(pickedHandle);
-      setDragPreview({ id: entity.id, position: entity.position, rotation: entity.rotation, scale: entity.scale });
+      setDragPreview({ id: transformTarget.selection.id, position: transformTarget.selection.position, rotation: transformTarget.selection.rotation, scale: transformTarget.selection.scale });
       draggingEntityRef.current = drag;
       event.currentTarget.setPointerCapture(event.pointerId);
       return;
     }
     if (scenePick?.kind === 'plane') {
-      const drag = entity && viewerRef.current ? createPlaneGizmoDragState(entity, scenePick.plane, toolRef.current, event.clientX, event.clientY, event.currentTarget, viewerRef.current) : null;
-      if (!entity || !drag) return;
+      const drag = transformTarget && viewerRef.current ? createPlaneGizmoDragState(transformTarget.selection, scenePick.plane, toolRef.current, event.clientX, event.clientY, event.currentTarget, viewerRef.current) : null;
+      if (!transformTarget || !drag) return;
       event.preventDefault();
       event.stopPropagation();
-      onSelect(entity.id);
+      if (transformTarget.kind === 'kmp' && transformTarget.entity) onSelect(transformTarget.entity.id);
       onInteractionStart?.();
       setActiveGizmoHandle(pickedHandle);
       setHoveredGizmoHandle(pickedHandle);
-      setDragPreview({ id: entity.id, position: entity.position, rotation: entity.rotation, scale: entity.scale });
+      setDragPreview({ id: transformTarget.selection.id, position: transformTarget.selection.position, rotation: transformTarget.selection.rotation, scale: transformTarget.selection.scale });
       draggingEntityRef.current = drag;
       event.currentTarget.setPointerCapture(event.pointerId);
       return;
     }
     if (scenePick?.kind === 'axis') {
-      const drag = entity && viewerRef.current ? createGizmoDragState(entity, scenePick.axis, toolRef.current, event.clientX, event.clientY, event.currentTarget, viewerRef.current) : null;
-      if (!entity || !drag) return;
+      const drag = transformTarget && viewerRef.current ? createGizmoDragState(transformTarget.selection, scenePick.axis, toolRef.current, event.clientX, event.clientY, event.currentTarget, viewerRef.current) : null;
+      if (!transformTarget || !drag) return;
       event.preventDefault();
       event.stopPropagation();
-      onSelect(entity.id);
+      if (transformTarget.kind === 'kmp' && transformTarget.entity) onSelect(transformTarget.entity.id);
       onInteractionStart?.();
       setActiveGizmoHandle(pickedHandle);
       setHoveredGizmoHandle(pickedHandle);
-      setDragPreview({ id: entity.id, position: entity.position, rotation: entity.rotation, scale: entity.scale });
+      setDragPreview({ id: transformTarget.selection.id, position: transformTarget.selection.position, rotation: transformTarget.selection.rotation, scale: transformTarget.selection.scale });
       draggingEntityRef.current = drag;
       event.currentTarget.setPointerCapture(event.pointerId);
       return;
@@ -1320,10 +1401,11 @@ export function Noclip3DViewport({
   }
 
 function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDragState, snapToFeatures = false) {
-  const entity = trackRef.current?.kmp?.entities.find((candidate) => candidate.id === drag.id);
+  const target = findTransformSelectionById(drag.id);
   const viewer = viewerRef.current;
   const canvas = canvasRef.current;
-  if (!entity || !viewer || !canvas) return;
+  if (!target || !viewer || !canvas) return;
+  const selection = target.selection;
   if (drag.mode === 'angular') {
     const hit = intersectScreenWithPlane(clientX, clientY, canvas, viewer, drag.center, drag.planeNormal);
     if (!hit) return;
@@ -1331,9 +1413,14 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
     if (angle === null) return;
     const deltaDegrees = -normalizeAngle(angle - drag.startAngle) * (180 / Math.PI);
     const rotation = addAxisDelta(drag.rotation, drag.axis, deltaDegrees);
-    setDragPreview({ id: entity.id, position: entity.position, rotation, scale: entity.scale });
-    syncRenderedGobjTransform(entity, entity.position, rotation, entity.scale);
-    scheduleInteractionCommit({ kind: 'rotateEntity', entity, rotation });
+    setDragPreview({ id: selection.id, position: selection.position, rotation, scale: selection.scale });
+    if (target.kind === 'kmp' && target.entity) {
+      syncRenderedGobjTransform(target.entity, selection.position, rotation, selection.scale);
+      scheduleInteractionCommit({ kind: 'rotateEntity', entity: target.entity, rotation });
+    } else {
+      syncRenderedTransformSelection(selection, selection.position, rotation, selection.scale);
+      scheduleInteractionCommit({ kind: 'rotateTransformSelection', selection, rotation });
+    }
     return;
   }
   if (drag.mode === 'planar') {
@@ -1345,9 +1432,14 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
       z: drag.position.z + (hit.z - drag.startHit.z) / MKW_RENDER_SCALE,
     };
     if (snapToFeatures) position = snapDraggedPositionToCollision(position);
-    setDragPreview({ id: entity.id, position, rotation: entity.rotation, scale: entity.scale });
-    syncRenderedGobjTransform(entity, position, entity.rotation, entity.scale);
-    scheduleInteractionCommit({ kind: 'moveEntity', entity, position });
+    setDragPreview({ id: selection.id, position, rotation: selection.rotation, scale: selection.scale });
+    if (target.kind === 'kmp' && target.entity) {
+      syncRenderedGobjTransform(target.entity, position, selection.rotation, selection.scale);
+      scheduleInteractionCommit({ kind: 'moveEntity', entity: target.entity, position });
+    } else {
+      syncRenderedTransformSelection(selection, position, selection.rotation, selection.scale);
+      scheduleInteractionCommit({ kind: 'moveTransformSelection', selection, position });
+    }
     return;
   }
   if (drag.mode === 'uniformScale') {
@@ -1361,9 +1453,14 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
       y: drag.scale.y * factor,
       z: drag.scale.z * factor,
     };
-    setDragPreview({ id: entity.id, position: entity.position, rotation: entity.rotation, scale });
-    syncRenderedGobjTransform(entity, entity.position, entity.rotation, scale);
-    scheduleInteractionCommit({ kind: 'scaleEntity', entity, scale });
+    setDragPreview({ id: selection.id, position: selection.position, rotation: selection.rotation, scale });
+    if (target.kind === 'kmp' && target.entity) {
+      syncRenderedGobjTransform(target.entity, selection.position, selection.rotation, scale);
+      scheduleInteractionCommit({ kind: 'scaleEntity', entity: target.entity, scale });
+    } else {
+      syncRenderedTransformSelection(selection, selection.position, selection.rotation, scale);
+      scheduleInteractionCommit({ kind: 'scaleTransformSelection', selection, scale });
+    }
     return;
   }
   if (drag.mode === 'planarScale') {
@@ -1384,9 +1481,14 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
         : drag.plane === 'xz'
           ? { x: drag.scale.x * factorU, y: drag.scale.y, z: drag.scale.z * factorV }
           : { x: drag.scale.x, y: drag.scale.y * factorU, z: drag.scale.z * factorV };
-    setDragPreview({ id: entity.id, position: entity.position, rotation: entity.rotation, scale });
-    syncRenderedGobjTransform(entity, entity.position, entity.rotation, scale);
-    scheduleInteractionCommit({ kind: 'scaleEntity', entity, scale });
+    setDragPreview({ id: selection.id, position: selection.position, rotation: selection.rotation, scale });
+    if (target.kind === 'kmp' && target.entity) {
+      syncRenderedGobjTransform(target.entity, selection.position, selection.rotation, scale);
+      scheduleInteractionCommit({ kind: 'scaleEntity', entity: target.entity, scale });
+    } else {
+      syncRenderedTransformSelection(selection, selection.position, selection.rotation, scale);
+      scheduleInteractionCommit({ kind: 'scaleTransformSelection', selection, scale });
+    }
     return;
   }
   const hit = intersectScreenWithPlane(clientX, clientY, canvas, viewer, drag.planePoint, drag.planeNormal);
@@ -1395,17 +1497,27 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
   if (toolRef.current === 'translate') {
     let position = addAxisDelta(drag.position, drag.axis, worldDelta);
     if (snapToFeatures) position = snapDraggedPositionToCollision(position);
-    setDragPreview({ id: entity.id, position, rotation: entity.rotation, scale: entity.scale });
-    syncRenderedGobjTransform(entity, position, entity.rotation, entity.scale);
-    scheduleInteractionCommit({ kind: 'moveEntity', entity, position });
+    setDragPreview({ id: selection.id, position, rotation: selection.rotation, scale: selection.scale });
+    if (target.kind === 'kmp' && target.entity) {
+      syncRenderedGobjTransform(target.entity, position, selection.rotation, selection.scale);
+      scheduleInteractionCommit({ kind: 'moveEntity', entity: target.entity, position });
+    } else {
+      syncRenderedTransformSelection(selection, position, selection.rotation, selection.scale);
+      scheduleInteractionCommit({ kind: 'moveTransformSelection', selection, position });
+    }
     return;
   }
   if (toolRef.current === 'scale' && drag.scale) {
     const factor = Math.max(0.05, 1 + worldDelta / 350);
     const scale = multiplyAxis(drag.scale, drag.axis, factor);
-    setDragPreview({ id: entity.id, position: entity.position, rotation: entity.rotation, scale });
-    syncRenderedGobjTransform(entity, entity.position, entity.rotation, scale);
-    scheduleInteractionCommit({ kind: 'scaleEntity', entity, scale });
+    setDragPreview({ id: selection.id, position: selection.position, rotation: selection.rotation, scale });
+    if (target.kind === 'kmp' && target.entity) {
+      syncRenderedGobjTransform(target.entity, selection.position, selection.rotation, scale);
+      scheduleInteractionCommit({ kind: 'scaleEntity', entity: target.entity, scale });
+    } else {
+      syncRenderedTransformSelection(selection, selection.position, selection.rotation, scale);
+      scheduleInteractionCommit({ kind: 'scaleTransformSelection', selection, scale });
+    }
   }
 }
 
@@ -1459,7 +1571,12 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
       return;
     }
     const scenePick = pickSceneHandle(scene, event.clientX, event.clientY, canvas);
-    const picked = pickEntityFromPick(scenePick) ?? pickEntityFromScreenPosition(event.clientX, event.clientY);
+    const pickedTransformSelection = pickTransformSelectionFromPick(scenePick);
+    if (pickedTransformSelection?.kind === 'external') {
+      onSelectTransformSelectionRef.current?.(pickedTransformSelection.selection.id);
+      return;
+    }
+    const picked = pickedTransformSelection?.entity ?? pickEntityFromPick(scenePick) ?? pickEntityFromScreenPosition(event.clientX, event.clientY);
     onSelect(picked?.id ?? null, { additive: isAdditiveSelectionModifier(event) });
   }
 
@@ -1495,7 +1612,39 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     return trackRef.current?.kmp?.entities.find((entity) => entity.id === pick.id) ?? null;
   }
 
+  function toEntityTransformSelection(entity: KmpEntity): ViewportTransformSelection {
+    return {
+      id: entity.id,
+      label: getEntityLabel(entity),
+      position: entity.position,
+      rotation: entity.rotation,
+      scale: entity.scale,
+    };
+  }
+
+  function pickTransformSelectionFromPick(pick: SceneOverlayPick | null): TransformSelectionTarget | null {
+    if (!pick) return null;
+    if (transformSelectionRef.current && pick.id === transformSelectionRef.current.id) {
+      return { kind: 'external', selection: transformSelectionRef.current };
+    }
+    const external = transformSelectionsRef.current.find((candidate) => candidate.id === pick.id);
+    if (external) return { kind: 'external', selection: external };
+    const entity = pickEntityFromPick(pick);
+    if (!entity) return null;
+    return { kind: 'kmp', entity, selection: toEntityTransformSelection(entity) };
+  }
+
+  function findTransformSelectionById(id: string): TransformSelectionTarget | null {
+    if (transformSelectionRef.current?.id === id) return { kind: 'external', selection: transformSelectionRef.current };
+    const external = transformSelectionsRef.current.find((candidate) => candidate.id === id);
+    if (external) return { kind: 'external', selection: external };
+    const entity = trackRef.current?.kmp?.entities.find((candidate) => candidate.id === id);
+    if (!entity) return null;
+    return { kind: 'kmp', entity, selection: toEntityTransformSelection(entity) };
+  }
+
   function pickEntityFromScreenPosition(clientX: number, clientY: number): KmpEntity | null {
+    if (!showKmpEditorOverlayRef.current) return null;
     const track = trackRef.current;
     const viewer = viewerRef.current;
     const canvas = canvasRef.current;
@@ -1523,6 +1672,11 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     scene?.updateEditorGobjTransform?.(entity.index, position, rotation, scale);
   }
 
+  function syncRenderedTransformSelection(selection: ViewportTransformSelection, position: Vec3, rotation?: Vec3, scale?: Vec3) {
+    const scene = sceneRef.current as SceneGfx & BrresViewportPreviewScene | null;
+    syncBrresViewportTransformSelectionPreview(scene, selection, position, rotation, scale);
+  }
+
   function syncSceneOverlay(nextTrack: TrackDocument | null, nextSelectedId: string | null) {
     const scene = sceneRef.current as SceneGfx & {
       setEditorOverlayData?: (data: SceneOverlayData) => void;
@@ -1533,6 +1687,9 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
         nextTrack,
         nextSelectedId,
         selectedIdsRef.current,
+        transformSelectionRef.current,
+        transformSelectionsRef.current,
+        showKmpEditorOverlayRef.current,
         fillBetweenPreviewPositions,
         previewTransform,
         hoveredIdRef.current,
@@ -1554,8 +1711,9 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     } | null;
     const scenePick = pickSceneHandle(scene, clientX, clientY, canvas);
     setHoveredGizmoHandle(pickToGizmoHandle(scenePick));
-    const hovered = pickEntityFromPick(scenePick) ?? pickEntityFromScreenPosition(clientX, clientY);
-    const nextHoveredId = hovered?.id ?? null;
+    const hoveredTransformSelection = pickTransformSelectionFromPick(scenePick);
+    const hovered = hoveredTransformSelection?.entity ?? pickEntityFromPick(scenePick) ?? pickEntityFromScreenPosition(clientX, clientY);
+    const nextHoveredId = hoveredTransformSelection?.selection.id ?? hovered?.id ?? null;
     if (nextHoveredId !== hoveredIdRef.current) setHoveredId(nextHoveredId);
   }
 
@@ -1767,7 +1925,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
         />
       )}
       <div className="rendererStatus">{status}</div>
-      {selected && <div className="selectionHud">{getEntityLabel(selected)}</div>}
+      {selectionHudLabel && <div className="selectionHud">{selectionHudLabel}</div>}
     </section>
   );
 }
@@ -1814,6 +1972,9 @@ function buildSceneOverlayData(
   track: TrackDocument | null,
   selectedId: string | null,
   selectedIds: string[],
+  transformSelection: ViewportTransformSelection | null,
+  transformSelections: ViewportTransformSelection[],
+  showKmpEditorOverlay: boolean,
   fillBetweenPreviewPositions: Vec3[],
   previewTransform: EntityTransformPreview | null,
   hoveredId: string | null,
@@ -1826,16 +1987,26 @@ function buildSceneOverlayData(
   cameraPosition: Vec3 | null,
   routeInsertPreview: RouteInsertPreview | null,
 ): SceneOverlayData {
-  if (!track?.kmp) return { tool, points: [], lines: [], centerHandle: null, axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [], startSlots: [], fillBetweenPreview: [], routeDeviationSegments: [], routeDeviationCaps: [] };
+  if (!track?.kmp && !transformSelection) return { tool, points: [], lines: [], centerHandle: null, axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [], startSlots: [], fillBetweenPreview: [], routeDeviationSegments: [], routeDeviationCaps: [] };
+  const kmp = track?.kmp ?? null;
   const showCollision = viewMode === 'dev' && collisionVisible;
-  const selectedSet = new Set(selectedIds);
-  if (selectedId) selectedSet.add(selectedId);
-  const routeUsage = getPotiRouteUsage(track.kmp);
-  const forcedVisibleObjectRoutes = getForcedVisibleObjectRoutes(track.kmp, selectedSet, routeUsage);
-  const visibleEntities = getVisibleEntitiesForRouteFilter(track.kmp.entities, routeVisibility, track.kmp, routeUsage, forcedVisibleObjectRoutes);
-  const invalidIds = collectInvalidEntityIds(track);
-  const selectedPreview = previewTransform && previewTransform.id === selectedId ? previewTransform : null;
-  const selectedPosition = selectedPreview?.position ?? (selectedId ? track.kmp.entities.find((entity) => entity.id === selectedId)?.position : null);
+  const showKmpData = !!kmp && showKmpEditorOverlay;
+  const selectedSet = new Set(showKmpData ? selectedIds : []);
+  if (showKmpData && selectedId) selectedSet.add(selectedId);
+  const routeUsage = getPotiRouteUsage(kmp);
+  const forcedVisibleObjectRoutes = showKmpData ? getForcedVisibleObjectRoutes(kmp, selectedSet, routeUsage) : new Set<number>();
+  const visibleEntities = showKmpData && kmp ? getVisibleEntitiesForRouteFilter(kmp.entities, routeVisibility, kmp, routeUsage, forcedVisibleObjectRoutes) : [];
+  const invalidIds = showKmpData && track ? collectInvalidEntityIds(track) : new Set<string>();
+  const selectedEntity = showKmpData && kmp && selectedId ? kmp.entities.find((entity) => entity.id === selectedId) ?? null : null;
+  const activeSelection = transformSelection ?? (selectedEntity ? {
+    id: selectedEntity.id,
+    label: selectedEntity.id,
+    position: selectedEntity.position,
+    rotation: selectedEntity.rotation,
+    scale: selectedEntity.scale,
+  } : null);
+  const selectedPreview = previewTransform && previewTransform.id === activeSelection?.id ? previewTransform : null;
+  const selectedPosition = selectedPreview?.position ?? activeSelection?.position ?? null;
 
   const applyPreviewPosition = (entity: KmpEntity): Vec3 => (
     previewTransform && previewTransform.id === entity.id ? previewTransform.position : entity.position
@@ -1860,6 +2031,17 @@ function buildSceneOverlayData(
       hovered: entity.id === hoveredId && entity.id !== selectedId,
       invalid: false,
     }));
+  for (const external of transformSelections) {
+    points.push({
+      id: external.id,
+      section: 'MODEL_NODE',
+      position: previewTransform && previewTransform.id === external.id ? previewTransform.position : external.position,
+      markerText: undefined,
+      selected: transformSelection?.id === external.id,
+      hovered: hoveredId === external.id && transformSelection?.id !== external.id,
+      invalid: false,
+    });
+  }
   if (routeInsertPreview) {
     points.push({
       id: '__route-insert-preview__',
@@ -1948,7 +2130,7 @@ function buildSceneOverlayData(
   const planes: SceneOverlayPlane[] = [];
   const checkpointEndpoints: SceneOverlayCheckpointEndpoint[] = [];
   const collisionTriangles: SceneOverlayCollisionTriangle[] =
-    showCollision && track.kcl
+    showCollision && track?.kcl
       ? track.kcl.triangles.map((triangle) => ({
           a: triangle.a,
           b: triangle.b,
@@ -1956,21 +2138,20 @@ function buildSceneOverlayData(
           typeIndex: triangle.flag & 0x1f,
         }))
       : [];
-  const selected = selectedId ? track.kmp.entities.find((entity) => entity.id === selectedId) ?? null : null;
   const checkpointWalls =
-    selected?.section === 'CKPT'
+    selectedEntity?.section === 'CKPT'
       ? visibleEntities
           .filter((entity): entity is KmpEntity & { section: 'CKPT'; checkpoint: NonNullable<KmpEntity['checkpoint']> } => entity.section === 'CKPT' && !!entity.checkpoint)
           .map((entity) => ({
             id: entity.id,
             left: entity.checkpoint.left,
             right: entity.checkpoint.right,
-            topY: getCheckpointWallTopY(track),
-            selected: entity.id === selected.id,
+            topY: getCheckpointWallTopY(track!),
+            selected: entity.id === selectedEntity.id,
             invalid: invalidIds.has(entity.id),
           }))
       : [];
-  const startSlots = buildRaceStartSlots(track.kmp, visibleEntities, selectedSet, hoveredId);
+  const startSlots = showKmpData && kmp ? buildRaceStartSlots(kmp, visibleEntities, selectedSet, hoveredId) : [];
   const fillBetweenPreview = fillBetweenPreviewPositions.map((position, index) => ({ position, index }));
   const areaVolumes: SceneOverlayAreaVolume[] = visibleEntities
     .filter((entity): entity is KmpEntity & { section: 'AREA'; area: NonNullable<KmpEntity['area']>; rotation: Vec3; scale: Vec3 } => (
@@ -1990,80 +2171,80 @@ function buildSceneOverlayData(
       hovered: entity.id === hoveredId && entity.id !== selectedId,
       invalid: invalidIds.has(entity.id),
     }));
-  const selectedHiddenByRouteFilter = !!selected && !isEntityVisibleForRouteFilter(selected, routeVisibility, track.kmp, routeUsage, forcedVisibleObjectRoutes);
-  if (selected && selectedPosition && !selectedHiddenByRouteFilter) {
-    const length = getGizmoLength(selected, cameraPosition);
+  const selectedHiddenByRouteFilter = !!selectedEntity && !isEntityVisibleForRouteFilter(selectedEntity, routeVisibility, kmp!, routeUsage, forcedVisibleObjectRoutes);
+  if (activeSelection && selectedPosition && !selectedHiddenByRouteFilter) {
+    const length = getGizmoLength(activeSelection.position, cameraPosition, activeSelection.scale);
     const planeSize = length * 0.28;
     centerHandle = {
-      ownerId: selected.id,
+      ownerId: activeSelection.id,
       position: selectedPosition,
-      hovered: gizmoHandleEquals(hoveredHandle, { kind: 'center', id: selected.id }),
-      active: gizmoHandleEquals(activeHandle, { kind: 'center', id: selected.id }),
+      hovered: gizmoHandleEquals(hoveredHandle, { kind: 'center', id: activeSelection.id }),
+      active: gizmoHandleEquals(activeHandle, { kind: 'center', id: activeSelection.id }),
     };
     axes.push(
       {
-        ownerId: selected.id,
+        ownerId: activeSelection.id,
         axis: 'x',
         a: selectedPosition,
         b: { x: selectedPosition.x + length, y: selectedPosition.y, z: selectedPosition.z },
-        hovered: gizmoHandleEquals(hoveredHandle, { kind: 'axis', id: selected.id, axis: 'x' }),
-        active: gizmoHandleEquals(activeHandle, { kind: 'axis', id: selected.id, axis: 'x' }),
+        hovered: gizmoHandleEquals(hoveredHandle, { kind: 'axis', id: activeSelection.id, axis: 'x' }),
+        active: gizmoHandleEquals(activeHandle, { kind: 'axis', id: activeSelection.id, axis: 'x' }),
       },
       {
-        ownerId: selected.id,
+        ownerId: activeSelection.id,
         axis: 'y',
         a: selectedPosition,
         b: { x: selectedPosition.x, y: selectedPosition.y + length, z: selectedPosition.z },
-        hovered: gizmoHandleEquals(hoveredHandle, { kind: 'axis', id: selected.id, axis: 'y' }),
-        active: gizmoHandleEquals(activeHandle, { kind: 'axis', id: selected.id, axis: 'y' }),
+        hovered: gizmoHandleEquals(hoveredHandle, { kind: 'axis', id: activeSelection.id, axis: 'y' }),
+        active: gizmoHandleEquals(activeHandle, { kind: 'axis', id: activeSelection.id, axis: 'y' }),
       },
       {
-        ownerId: selected.id,
+        ownerId: activeSelection.id,
         axis: 'z',
         a: selectedPosition,
         b: { x: selectedPosition.x, y: selectedPosition.y, z: selectedPosition.z + length },
-        hovered: gizmoHandleEquals(hoveredHandle, { kind: 'axis', id: selected.id, axis: 'z' }),
-        active: gizmoHandleEquals(activeHandle, { kind: 'axis', id: selected.id, axis: 'z' }),
+        hovered: gizmoHandleEquals(hoveredHandle, { kind: 'axis', id: activeSelection.id, axis: 'z' }),
+        active: gizmoHandleEquals(activeHandle, { kind: 'axis', id: activeSelection.id, axis: 'z' }),
       },
     );
     if (tool === 'translate' || tool === 'scale') {
       planes.push(
         {
-          ownerId: selected.id,
+          ownerId: activeSelection.id,
           plane: 'xy',
           a: selectedPosition,
           b: { x: selectedPosition.x + planeSize, y: selectedPosition.y, z: selectedPosition.z },
           c: { x: selectedPosition.x + planeSize, y: selectedPosition.y + planeSize, z: selectedPosition.z },
           d: { x: selectedPosition.x, y: selectedPosition.y + planeSize, z: selectedPosition.z },
-          hovered: gizmoHandleEquals(hoveredHandle, { kind: 'plane', id: selected.id, plane: 'xy' }),
-          active: gizmoHandleEquals(activeHandle, { kind: 'plane', id: selected.id, plane: 'xy' }),
+          hovered: gizmoHandleEquals(hoveredHandle, { kind: 'plane', id: activeSelection.id, plane: 'xy' }),
+          active: gizmoHandleEquals(activeHandle, { kind: 'plane', id: activeSelection.id, plane: 'xy' }),
         },
         {
-          ownerId: selected.id,
+          ownerId: activeSelection.id,
           plane: 'xz',
           a: selectedPosition,
           b: { x: selectedPosition.x + planeSize, y: selectedPosition.y, z: selectedPosition.z },
           c: { x: selectedPosition.x + planeSize, y: selectedPosition.y, z: selectedPosition.z + planeSize },
           d: { x: selectedPosition.x, y: selectedPosition.y, z: selectedPosition.z + planeSize },
-          hovered: gizmoHandleEquals(hoveredHandle, { kind: 'plane', id: selected.id, plane: 'xz' }),
-          active: gizmoHandleEquals(activeHandle, { kind: 'plane', id: selected.id, plane: 'xz' }),
+          hovered: gizmoHandleEquals(hoveredHandle, { kind: 'plane', id: activeSelection.id, plane: 'xz' }),
+          active: gizmoHandleEquals(activeHandle, { kind: 'plane', id: activeSelection.id, plane: 'xz' }),
         },
         {
-          ownerId: selected.id,
+          ownerId: activeSelection.id,
           plane: 'yz',
           a: selectedPosition,
           b: { x: selectedPosition.x, y: selectedPosition.y + planeSize, z: selectedPosition.z },
           c: { x: selectedPosition.x, y: selectedPosition.y + planeSize, z: selectedPosition.z + planeSize },
           d: { x: selectedPosition.x, y: selectedPosition.y, z: selectedPosition.z + planeSize },
-          hovered: gizmoHandleEquals(hoveredHandle, { kind: 'plane', id: selected.id, plane: 'yz' }),
-          active: gizmoHandleEquals(activeHandle, { kind: 'plane', id: selected.id, plane: 'yz' }),
+          hovered: gizmoHandleEquals(hoveredHandle, { kind: 'plane', id: activeSelection.id, plane: 'yz' }),
+          active: gizmoHandleEquals(activeHandle, { kind: 'plane', id: activeSelection.id, plane: 'yz' }),
         },
       );
     }
-    if (selected.checkpoint) {
+    if (selectedEntity?.checkpoint) {
       checkpointEndpoints.push(
-        { id: selected.id, side: 'left', position: selected.checkpoint.left },
-        { id: selected.id, side: 'right', position: selected.checkpoint.right },
+        { id: selectedEntity.id, side: 'left', position: selectedEntity.checkpoint.left },
+        { id: selectedEntity.id, side: 'right', position: selectedEntity.checkpoint.right },
       );
     }
   }
@@ -2503,7 +2684,7 @@ function collectInvalidEntityIds(track: TrackDocument): Set<string> {
 }
 
 function createGizmoDragState(
-  entity: KmpEntity,
+  selection: ViewportTransformSelection,
   axis: GizmoAxis,
   tool: TransformTool,
   clientX: number,
@@ -2511,9 +2692,9 @@ function createGizmoDragState(
   canvas: HTMLCanvasElement,
   viewer: Viewer,
 ): GizmoDragState | null {
-  if (tool === 'rotate' && entity.rotation) return createAngularGizmoDragState(entity, axis, clientX, clientY, canvas, viewer);
+  if (tool === 'rotate' && selection.rotation) return createAngularGizmoDragState(selection, axis, clientX, clientY, canvas, viewer);
   const axisDirection = axisDirectionFor(axis);
-  const planePoint = scaleVec3(entity.position, MKW_RENDER_SCALE);
+  const planePoint = scaleVec3(selection.position, MKW_RENDER_SCALE);
   const cameraForward = getCameraForward(canvas, viewer);
   const planeNormal = getAxisDragPlaneNormal(axisDirection, cameraForward);
   if (!planeNormal) return null;
@@ -2522,59 +2703,59 @@ function createGizmoDragState(
   return {
     kind: 'gizmo',
     mode: 'linear',
-    id: entity.id,
+    id: selection.id,
     axis,
-    position: entity.position,
+    position: selection.position,
     axisOrigin: planePoint,
     axisDirection,
     planePoint,
     planeNormal,
     startAxisOffset: dot(subVec3(hit, planePoint), axisDirection),
-    rotation: entity.rotation,
-    scale: entity.scale,
+    rotation: selection.rotation,
+    scale: selection.scale,
   };
 }
 
 function createCenterGizmoDragState(
-  entity: KmpEntity,
+  selection: ViewportTransformSelection,
   tool: TransformTool,
   clientX: number,
   clientY: number,
   canvas: HTMLCanvasElement,
   viewer: Viewer,
 ): GizmoDragState | null {
-  const planePoint = scaleVec3(entity.position, MKW_RENDER_SCALE);
+  const planePoint = scaleVec3(selection.position, MKW_RENDER_SCALE);
   const planeNormal = getCameraForward(canvas, viewer);
   const hit = intersectScreenWithPlane(clientX, clientY, canvas, viewer, planePoint, planeNormal);
   if (!hit) return null;
-  if (tool === 'scale' && entity.scale) {
+  if (tool === 'scale' && selection.scale) {
     const startRadius = Math.max(1, Math.hypot(hit.x - planePoint.x, hit.y - planePoint.y, hit.z - planePoint.z));
     return {
       kind: 'gizmo',
       mode: 'uniformScale',
-      id: entity.id,
-      center: entity.position,
+      id: selection.id,
+      center: selection.position,
       planeNormal,
       startHit: hit,
       startRadius,
-      scale: entity.scale,
+      scale: selection.scale,
     };
   }
   return {
     kind: 'gizmo',
     mode: 'planar',
-    id: entity.id,
-    position: entity.position,
+    id: selection.id,
+    position: selection.position,
     planePoint,
     planeNormal,
     startHit: hit,
-    rotation: entity.rotation,
-    scale: entity.scale,
+    rotation: selection.rotation,
+    scale: selection.scale,
   };
 }
 
 function createPlaneGizmoDragState(
-  entity: KmpEntity,
+  selection: ViewportTransformSelection,
   plane: GizmoPlane,
   tool: TransformTool,
   clientX: number,
@@ -2582,11 +2763,11 @@ function createPlaneGizmoDragState(
   canvas: HTMLCanvasElement,
   viewer: Viewer,
 ): GizmoDragState | null {
-  const planePoint = scaleVec3(entity.position, MKW_RENDER_SCALE);
+  const planePoint = scaleVec3(selection.position, MKW_RENDER_SCALE);
   const planeNormal = plane === 'xy' ? { x: 0, y: 0, z: 1 } : plane === 'xz' ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 };
   const hit = intersectScreenWithPlane(clientX, clientY, canvas, viewer, planePoint, planeNormal);
   if (!hit) return null;
-  if (tool === 'scale' && entity.scale) {
+  if (tool === 'scale' && selection.scale) {
     const local = {
       x: (hit.x - planePoint.x) / MKW_RENDER_SCALE,
       y: (hit.y - planePoint.y) / MKW_RENDER_SCALE,
@@ -2595,55 +2776,55 @@ function createPlaneGizmoDragState(
     return {
       kind: 'gizmo',
       mode: 'planarScale',
-      id: entity.id,
+      id: selection.id,
       plane,
-      center: entity.position,
+      center: selection.position,
       planePoint,
       planeNormal,
       startU: plane === 'xy' || plane === 'xz' ? local.x : local.y,
       startV: plane === 'xy' ? local.y : local.z,
-      scale: entity.scale,
+      scale: selection.scale,
     };
   }
   return {
     kind: 'gizmo',
     mode: 'planar',
-    id: entity.id,
-    position: entity.position,
+    id: selection.id,
+    position: selection.position,
     planePoint,
     planeNormal,
     startHit: hit,
-    rotation: entity.rotation,
-    scale: entity.scale,
+    rotation: selection.rotation,
+    scale: selection.scale,
   };
 }
 
 function createAngularGizmoDragState(
-  entity: KmpEntity,
+  selection: ViewportTransformSelection,
   axis: GizmoAxis,
   clientX: number,
   clientY: number,
   canvas: HTMLCanvasElement,
   viewer: Viewer,
 ): GizmoDragState | null {
-  const center = scaleVec3(entity.position, MKW_RENDER_SCALE);
+  const center = scaleVec3(selection.position, MKW_RENDER_SCALE);
   const planeNormal = axisDirectionFor(axis);
   const hit = intersectScreenWithPlane(clientX, clientY, canvas, viewer, center, planeNormal);
-  if (!hit || !entity.rotation) return null;
+  if (!hit || !selection.rotation) return null;
   const { x: angleBasisX, y: angleBasisY } = getRotateRingBasis(axis);
   const startAngle = ringAngleForHit(hit, center, angleBasisX, angleBasisY);
   if (startAngle === null) return null;
   return {
     kind: 'gizmo',
     mode: 'angular',
-    id: entity.id,
+    id: selection.id,
     axis,
     center,
     planeNormal,
     angleBasisX,
     angleBasisY,
     startAngle,
-    rotation: entity.rotation,
+    rotation: selection.rotation,
   };
 }
 
@@ -2743,13 +2924,13 @@ function pickRadius(entity: KmpEntity): number {
   return 260;
 }
 
-function getGizmoLength(entity: KmpEntity, cameraPosition: Vec3 | null): number {
-  const scaleLength = entity.scale ? Math.max(entity.scale.x, entity.scale.y, entity.scale.z) * 1.1 : 0;
+function getGizmoLength(position: Vec3, cameraPosition: Vec3 | null, scale?: Vec3): number {
+  const scaleLength = scale ? Math.max(scale.x, scale.y, scale.z) * 1.1 : 0;
   const baseLength = Math.max(180, Math.min(900, scaleLength || 260));
   if (!cameraPosition) return baseLength;
-  const dx = entity.position.x - cameraPosition.x;
-  const dy = entity.position.y - cameraPosition.y;
-  const dz = entity.position.z - cameraPosition.z;
+  const dx = position.x - cameraPosition.x;
+  const dy = position.y - cameraPosition.y;
+  const dz = position.z - cameraPosition.z;
   const distance = Math.hypot(dx, dy, dz);
   const distanceLength = Math.max(30, distance * 0.08);
   return Math.max(600, Math.min(1800, Math.max(baseLength, distanceLength)));

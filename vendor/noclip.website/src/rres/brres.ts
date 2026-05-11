@@ -686,12 +686,13 @@ function parseInputVertexBuffers(buffer: ArrayBufferSlice, vtxPosResDic: ResDicE
 
 export interface MDL0_ShapeEntry {
     name: string;
+    sourceOffset: number;
     mtxIdx: number;
     loadedVertexLayout: LoadedVertexLayout;
     loadedVertexData: LoadedVertexData;
 };
 
-function parseMDL0_ShapeEntry(buffer: ArrayBufferSlice, inputBuffers: InputVertexBuffers): MDL0_ShapeEntry {
+function parseMDL0_ShapeEntry(buffer: ArrayBufferSlice, inputBuffers: InputVertexBuffers, sourceOffset: number): MDL0_ShapeEntry {
     const view = buffer.createDataView();
 
     const mtxIdx = view.getInt32(0x08);
@@ -853,7 +854,7 @@ function parseMDL0_ShapeEntry(buffer: ArrayBufferSlice, inputBuffers: InputVerte
     if (loadedVertexData.totalVertexCount !== numVertices)
         console.warn("Vertex count mismatch", loadedVertexData.totalVertexCount, numVertices);
 
-    return { name, mtxIdx, loadedVertexLayout, loadedVertexData };
+    return { name, sourceOffset, mtxIdx, loadedVertexLayout, loadedVertexData };
 }
 
 export enum NodeFlags {
@@ -883,6 +884,9 @@ export interface MDL0_NodeEntry {
     flags: NodeFlags;
     billboardMode: BillboardMode;
     billboardRefNodeId: number;
+    scale: vec3;
+    rotation: vec3;
+    translation: vec3;
     modelMatrix: mat4;
     bbox: AABB | null;
     visible: boolean;
@@ -890,9 +894,10 @@ export interface MDL0_NodeEntry {
     forwardBindPose: mat4;
     inverseBindPose: mat4;
     userData: ResUserData | null;
+    sourceOffset: number;
 }
 
-function parseMDL0_NodeEntry(buffer: ArrayBufferSlice, entryOffs: number, baseOffs: number): MDL0_NodeEntry {
+function parseMDL0_NodeEntry(buffer: ArrayBufferSlice, entryOffs: number, baseOffs: number, sourceOffset: number): MDL0_NodeEntry {
     const view = buffer.createDataView();
     const nameOffs = view.getUint32(0x08);
     const name = readString(buffer, nameOffs);
@@ -914,6 +919,9 @@ function parseMDL0_NodeEntry(buffer: ArrayBufferSlice, entryOffs: number, baseOf
     const translationX = view.getFloat32(0x38);
     const translationY = view.getFloat32(0x3C);
     const translationZ = view.getFloat32(0x40);
+    const scale = vec3.fromValues(scaleX, scaleY, scaleZ);
+    const rotation = vec3.fromValues(view.getFloat32(0x2C), view.getFloat32(0x30), view.getFloat32(0x34));
+    const translation = vec3.fromValues(translationX, translationY, translationZ);
 
     computeModelMatrixSRT(modelMatrix, scaleX, scaleY, scaleZ, rotationX, rotationY, rotationZ, translationX, translationY, translationZ);
 
@@ -989,7 +997,7 @@ function parseMDL0_NodeEntry(buffer: ArrayBufferSlice, entryOffs: number, baseOf
 
     const visible = !!(flags & NodeFlags.VISIBLE);
 
-    return { name, id, userData, mtxId, flags, billboardMode, billboardRefNodeId, modelMatrix, bbox, visible, parentNodeId, forwardBindPose, inverseBindPose };
+    return { name, id, userData, mtxId, flags, billboardMode, billboardRefNodeId, scale, rotation, translation, modelMatrix, bbox, visible, parentNodeId, forwardBindPose, inverseBindPose, sourceOffset };
 }
 
 export enum ByteCodeOp {
@@ -1094,9 +1102,10 @@ export interface DrawOp {
     matId: number;
     shpId: number;
     nodeId: number;
+    sourceOffset: number;
 }
 
-function parseMDL0_DrawBytecode(buffer: ArrayBufferSlice): DrawOp[] {
+function parseMDL0_DrawBytecode(buffer: ArrayBufferSlice, sourceOffset: number): DrawOp[] {
     const view = buffer.createDataView();
 
     const drawOps: DrawOp[] = [];
@@ -1105,12 +1114,14 @@ function parseMDL0_DrawBytecode(buffer: ArrayBufferSlice): DrawOp[] {
         const op: ByteCodeOp = view.getUint8(i);
         if (op === ByteCodeOp.RET) {
             break;
+        } else if (op === ByteCodeOp.NOP) {
+            i += 0x01;
         } else if (op === ByteCodeOp.DRAW) {
             const matId = view.getUint16(i + 0x01);
             const shpId = view.getUint16(i + 0x03);
             const nodeId = view.getUint16(i + 0x05);
+            drawOps.push({ matId, shpId, nodeId, sourceOffset: sourceOffset + i });
             i += 0x08;
-            drawOps.push({ matId, shpId, nodeId });
         } else {
             throw "whoops";
         }
@@ -1125,7 +1136,7 @@ interface MDL0_SceneGraph {
     drawXluOps: DrawOp[];
 }
 
-function parseMDL0_SceneGraph(buffer: ArrayBufferSlice, byteCodeResDic: ResDicEntry[]): MDL0_SceneGraph {
+function parseMDL0_SceneGraph(buffer: ArrayBufferSlice, byteCodeResDic: ResDicEntry[], sourceOffset: number): MDL0_SceneGraph {
     const nodeTreeResDicEntry = assertExists(byteCodeResDic.find((entry) => entry.name === "NodeTree"));
     const nodeTreeBuffer = buffer.subarray(nodeTreeResDicEntry.offs);
     const nodeTreeOps = parseMDL0_NodeTreeBytecode(nodeTreeBuffer);
@@ -1141,14 +1152,14 @@ function parseMDL0_SceneGraph(buffer: ArrayBufferSlice, byteCodeResDic: ResDicEn
     const drawOpaResDicEntry = byteCodeResDic.find((entry => entry.name === "DrawOpa"));
     if (drawOpaResDicEntry) {
         const drawOpaBuffer = buffer.subarray(drawOpaResDicEntry.offs);
-        drawOpaOps = parseMDL0_DrawBytecode(drawOpaBuffer);
+        drawOpaOps = parseMDL0_DrawBytecode(drawOpaBuffer, sourceOffset + drawOpaResDicEntry.offs);
     }
 
     let drawXluOps: DrawOp[] = [];
     const drawXluResDicEntry = byteCodeResDic.find((entry => entry.name === "DrawXlu"));
     if (drawXluResDicEntry) {
         const drawXluBuffer = buffer.subarray(drawXluResDicEntry.offs);
-        drawXluOps = parseMDL0_DrawBytecode(drawXluBuffer);
+        drawXluOps = parseMDL0_DrawBytecode(drawXluBuffer, sourceOffset + drawXluResDicEntry.offs);
     }
 
     return { nodeTreeOps, nodeMixOps, drawOpaOps, drawXluOps };
@@ -1156,6 +1167,8 @@ function parseMDL0_SceneGraph(buffer: ArrayBufferSlice, byteCodeResDic: ResDicEn
 
 export interface MDL0 {
     name: string;
+    sourceOffset: number;
+    resourceSize: number;
     bbox: AABB | null;
     materials: MDL0_MaterialEntry[];
     shapes: MDL0_ShapeEntry[];
@@ -1168,10 +1181,11 @@ export interface MDL0 {
     mtxIdToNodeId: Int32Array;
 }
 
-function parseMDL0(buffer: ArrayBufferSlice): MDL0 {
+function parseMDL0(buffer: ArrayBufferSlice, sourceOffset: number = 0): MDL0 {
     const view = buffer.createDataView();
 
     assert(readString(buffer, 0x00, 0x04) === 'MDL0');
+    const resourceSize = view.getUint32(0x04);
     const version = view.getUint32(0x08);
     const supportedVersions = [ 0x08, 0x09, 0x0A, 0x0B ];
     assert(supportedVersions.includes(version));
@@ -1246,21 +1260,21 @@ function parseMDL0(buffer: ArrayBufferSlice): MDL0 {
     const shapes: MDL0_ShapeEntry[] = [];
     for (let i = 0; i < shpResDic.length; i++) {
         const shpResDicEntry = shpResDic[i];
-        const shape = parseMDL0_ShapeEntry(buffer.subarray(shpResDicEntry.offs), inputBuffers);
+        const shape = parseMDL0_ShapeEntry(buffer.subarray(shpResDicEntry.offs), inputBuffers, sourceOffset + shpResDicEntry.offs);
         assert(shape.name === shpResDicEntry.name);
         shapes.push(shape);
     }
 
     const nodes: MDL0_NodeEntry[] = [];
     for (const nodeResDicEntry of nodeResDic) {
-        const node = parseMDL0_NodeEntry(buffer.subarray(nodeResDicEntry.offs), nodeResDicEntry.offs, nodeResDic[0].offs);
+        const node = parseMDL0_NodeEntry(buffer.subarray(nodeResDicEntry.offs), nodeResDicEntry.offs, nodeResDic[0].offs, sourceOffset + nodeResDicEntry.offs);
         assert(node.name === nodeResDicEntry.name);
         nodes.push(node);
     }
 
-    const sceneGraph = parseMDL0_SceneGraph(buffer, byteCodeResDic);
+    const sceneGraph = parseMDL0_SceneGraph(buffer, byteCodeResDic, sourceOffset);
 
-    return { name, bbox, materials, shapes, nodes, sceneGraph, numWorldMtx, numViewMtx, needNrmMtxArray, needTexMtxArray, mtxIdToNodeId };
+    return { name, sourceOffset, resourceSize, bbox, materials, shapes, nodes, sceneGraph, numWorldMtx, numViewMtx, needNrmMtxArray, needTexMtxArray, mtxIdToNodeId };
 }
 //#endregion
 //#region Animation Core
@@ -2856,7 +2870,7 @@ export function parse(buffer: ArrayBufferSlice): RRES {
         const modelsResDic = parseResDic(buffer, modelsEntry.offs);
         for (let i = 0; i < modelsResDic.length; i++) {
             const modelsEntry = modelsResDic[i];
-            const mdl0_ = parseMDL0(buffer.subarray(modelsEntry.offs));
+            const mdl0_ = parseMDL0(buffer.subarray(modelsEntry.offs), modelsEntry.offs);
             assert(mdl0_.name === modelsEntry.name);
             mdl0.push(mdl0_);
         }
