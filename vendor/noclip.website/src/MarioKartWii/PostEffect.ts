@@ -6,10 +6,10 @@ import ArrayBufferSlice from "../ArrayBufferSlice.js";
 import { Camera } from "../Camera.js";
 import { Color, colorCopy, colorNewCopy, colorNewFromRGBA8, colorScale, OpaqueBlack } from "../Color.js";
 import { copyMegaState, fullscreenMegaState, setAttachmentStateSimple } from "../gfx/helpers/GfxMegaStateDescriptorHelpers.js";
-import { reverseDepthForCompareMode } from "../gfx/helpers/ReversedDepthHelpers.js";
+import { reverseDepthForClearValue, reverseDepthForCompareMode } from "../gfx/helpers/ReversedDepthHelpers.js";
 import { GfxShaderLibrary, glslGenerateFloat } from "../gfx/helpers/GfxShaderLibrary.js";
 import { fillColor, fillMatrix4x2, fillVec4 } from "../gfx/helpers/UniformBufferHelpers.js";
-import { GfxBindingLayoutDescriptor, GfxBlendFactor, GfxBlendMode, GfxCompareMode, GfxDevice, GfxFormat, GfxMipFilterMode, GfxProgram, GfxTexFilterMode, GfxWrapMode } from "../gfx/platform/GfxPlatform.js";
+import { GfxBindingLayoutDescriptor, GfxBlendFactor, GfxBlendMode, GfxClipSpaceNearZ, GfxCompareMode, GfxDevice, GfxFormat, GfxMipFilterMode, GfxProgram, GfxTexFilterMode, GfxWrapMode } from "../gfx/platform/GfxPlatform.js";
 import { GfxRenderCache } from "../gfx/render/GfxRenderCache.js";
 import { GfxrAttachmentSlot, GfxrGraphBuilder, GfxrRenderTargetDescription, GfxrRenderTargetID, GfxrResolveTextureID } from "../gfx/render/GfxRenderGraph.js";
 import { GfxRenderInst, GfxRenderInstManager } from "../gfx/render/GfxRenderInstManager.js";
@@ -667,6 +667,237 @@ export class EggDrawPathDOF {
 
     public getIndTextureMapping(): GXTextureMapping {
         return this.textureMapping[1];
+    }
+}
+
+//#endregion
+
+//#region Fog
+
+/**
+ * `posteffect.bfg` — the course fog table. The game uploads one of these four entries with
+ * `GXSetFog`; `fogType` uses the GX fog-type numbering (see `gx_enum.FogType`).
+ */
+export interface BFGEntry {
+    fogType: number;
+    startZ: number;
+    endZ: number;
+    color: Color;
+    fadeSpeed: number;
+}
+
+const BFG_ENTRY_SIZE = 0x1c;
+
+export function parseBFG(buffer: ArrayBufferSlice): BFGEntry[] {
+    const view = buffer.createDataView();
+    const entries: BFGEntry[] = [];
+    const count = Math.min(4, (buffer.byteLength / BFG_ENTRY_SIZE) | 0);
+    for (let i = 0; i < count; i++) {
+        const base = i * BFG_ENTRY_SIZE;
+        entries.push({
+            fogType: view.getInt32(base + 0x00),
+            startZ: view.getFloat32(base + 0x04),
+            endZ: view.getFloat32(base + 0x08),
+            // The alpha byte is not part of the GX fog colour, so it is deliberately dropped.
+            color: colorNewFromRGBA8((view.getUint32(base + 0x0c) & 0xffffff00) | 0xff),
+            fadeSpeed: view.getFloat32(base + 0x14),
+        });
+    }
+    return entries;
+}
+
+/** GX fog functions, keyed by `fogType & 0x07`. */
+function generateFogFuncGLSL(fogType: number): string | null {
+    switch (fogType & 0x07) {
+    case 0x02: return `t_FogZ`;
+    case 0x04: return `1.0 - exp2(-8.0 * t_FogZ)`;
+    case 0x05: return `1.0 - exp2(-8.0 * t_FogZ * t_FogZ)`;
+    case 0x06: return `1.0 - exp2(-8.0 * (1.0 - t_FogZ))`;
+    case 0x07: return `1.0 - exp2(-8.0 * (1.0 - t_FogZ) * (1.0 - t_FogZ))`;
+    default: return null;
+    }
+}
+
+class EggFogProgram extends DeviceProgram {
+    public static BindingsDefinition = `
+uniform sampler2D u_TextureFramebufferDepth;
+
+layout(std140) uniform ub_Params {
+    vec4 u_FogColor;
+    vec4 u_Misc0;
+    vec4 u_Misc1;
+};
+
+// Reconstructs view distance from the depth sample: 1/dist is affine in the stored depth
+// value for any projective depth mapping, so the two coefficients are fitted on the CPU.
+#define u_DistA      (u_Misc0.x)
+#define u_DistB      (u_Misc0.y)
+#define u_FogStartZ  (u_Misc0.z)
+#define u_FogEndZ    (u_Misc0.w)
+#define u_ClearDepth (u_Misc1.x)
+`;
+
+    public override vert = `
+${EggFogProgram.BindingsDefinition}
+${GfxShaderLibrary.fullscreenVS}
+`;
+
+    constructor(fogFunc: string) {
+        super();
+        this.frag = `
+${EggFogProgram.BindingsDefinition}
+${GfxShaderLibrary.saturate}
+
+in vec2 v_TexCoord;
+
+void main() {
+    float t_Depth = texelFetch(TEXTURE(u_TextureFramebufferDepth), ivec2(gl_FragCoord.xy), 0).r;
+    // Nothing was drawn here, so there is no surface to fog.
+    if (abs(t_Depth - u_ClearDepth) < 0.000001)
+        discard;
+
+    float t_Denom = u_DistA * t_Depth + u_DistB;
+    if (t_Denom <= 0.0)
+        discard;
+    float t_Dist = 1.0 / t_Denom;
+
+    float t_FogZ = saturate((t_Dist - u_FogStartZ) / max(u_FogEndZ - u_FogStartZ, 0.00001));
+    float t_Fog = saturate(${fogFunc});
+    gl_FragColor = vec4(u_FogColor.rgb, t_Fog);
+}
+`;
+    }
+}
+
+const scratchFogVec3 = vec3.create();
+const fogBindingLayouts: GfxBindingLayoutDescriptor[] = [{ numUniformBuffers: 1, numSamplers: 1 }];
+
+/**
+ * Screen-space course fog.
+ *
+ * The Wii game calls `GXSetFog` per material from `posteffect.bfg`; noclip's BRRES materials are
+ * built with fog disabled, so this reproduces it as a fullscreen blend over the main colour target
+ * using the resolved depth buffer. It is only a preview aid — it never touches the track files.
+ */
+export class EggDrawPathFog {
+    private program: GfxProgram | null = null;
+    private programFogType = -1;
+    private entry: BFGEntry | null = null;
+    private enabled = true;
+    private sceneScale: number;
+    private megaState = copyMegaState(fullscreenMegaState);
+    private textureMapping = nArray(1, () => new GXTextureMapping());
+    private color = colorNewCopy(OpaqueBlack);
+
+    constructor(device: GfxDevice, private cache: GfxRenderCache, sceneScale: number) {
+        this.sceneScale = sceneScale;
+        this.textureMapping[0].gfxSampler = cache.createSampler({
+            wrapS: GfxWrapMode.Clamp,
+            wrapT: GfxWrapMode.Clamp,
+            minFilter: GfxTexFilterMode.Point,
+            magFilter: GfxTexFilterMode.Point,
+            mipFilter: GfxMipFilterMode.Nearest,
+            minLOD: 0,
+            maxLOD: 100,
+        });
+        setAttachmentStateSimple(this.megaState, {
+            blendMode: GfxBlendMode.Add,
+            blendSrcFactor: GfxBlendFactor.SrcAlpha,
+            blendDstFactor: GfxBlendFactor.OneMinusSrcAlpha,
+        });
+    }
+
+    /** Selects which of the four `posteffect.bfg` entries drives the preview. `null` disables it. */
+    public setEntry(entry: BFGEntry | null): void {
+        this.entry = entry;
+        if (entry !== null)
+            colorCopy(this.color, entry.color);
+    }
+
+    public getEntry(): BFGEntry | null {
+        return this.entry;
+    }
+
+    public setEnabled(enabled: boolean): void {
+        this.enabled = enabled;
+    }
+
+    public getEnabled(): boolean {
+        return this.enabled;
+    }
+
+    public isActive(): boolean {
+        return this.enabled && this.entry !== null && generateFogFuncGLSL(this.entry.fogType) !== null && this.entry.endZ > this.entry.startZ;
+    }
+
+    private ensureProgram(fogType: number): GfxProgram | null {
+        const fogFunc = generateFogFuncGLSL(fogType);
+        if (fogFunc === null)
+            return null;
+        if (this.program === null || this.programFogType !== fogType) {
+            this.program = this.cache.createProgram(new EggFogProgram(fogFunc));
+            this.programFogType = fogType;
+        }
+        return this.program;
+    }
+
+    /** Depth-buffer value the given view-space distance projects to, in the device's convention. */
+    private calcDepthForDistance(camera: Camera, distance: number): number {
+        vec3.set(scratchFogVec3, 0, 0, -distance);
+        const m = camera.projectionMatrix;
+        const clipZ = m[10] * scratchFogVec3[2] + m[14];
+        const clipW = m[11] * scratchFogVec3[2] + m[15];
+        const ndcZ = clipW !== 0 ? clipZ / clipW : 0;
+        return camera.clipSpaceNearZ === GfxClipSpaceNearZ.NegativeOne ? (ndcZ + 1) * 0.5 : ndcZ;
+    }
+
+    public pushPassesFog(builder: GfxrGraphBuilder, renderInstManager: GfxRenderInstManager, camera: Camera, mainColorTargetID: GfxrRenderTargetID, mainDepthTargetID: GfxrRenderTargetID): void {
+        const entry = this.entry;
+        if (!this.enabled || entry === null)
+            return;
+        const program = this.ensureProgram(entry.fogType);
+        if (program === null || !(entry.endZ > entry.startZ))
+            return;
+
+        // 1/dist is affine in the stored depth, so two probes pin the mapping down exactly.
+        const probe0 = 10, probe1 = 10000;
+        const depth0 = this.calcDepthForDistance(camera, probe0);
+        const depth1 = this.calcDepthForDistance(camera, probe1);
+        const depthSpan = depth0 - depth1;
+        if (!Number.isFinite(depthSpan) || Math.abs(depthSpan) < 1e-9)
+            return;
+        const distA = (1 / probe0 - 1 / probe1) / depthSpan;
+        const distB = 1 / probe0 - distA * depth0;
+        const clearDepth = reverseDepthForClearValue(1.0);
+
+        const cache = renderInstManager.gfxRenderCache;
+        const renderInst = renderInstManager.newRenderInst();
+        renderInst.setAllowSkippingIfPipelineNotReady(false);
+        renderInst.setBindingLayouts(fogBindingLayouts);
+        {
+            let offs = renderInst.allocateUniformBuffer(0, 12);
+            const d = renderInst.mapUniformBufferF32(0);
+            offs += fillColor(d, offs, this.color);
+            offs += fillVec4(d, offs, distA, distB, entry.startZ * this.sceneScale, entry.endZ * this.sceneScale);
+            offs += fillVec4(d, offs, clearDepth, 0, 0, 0);
+        }
+        renderInst.setDrawCount(3);
+        renderInst.setGfxProgram(program);
+        renderInst.setMegaStateFlags(this.megaState);
+
+        builder.pushPass((pass) => {
+            pass.setDebugName('Course Fog');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+
+            const depthResolveTextureID = builder.resolveRenderTarget(mainDepthTargetID);
+            pass.attachResolveTexture(depthResolveTextureID);
+
+            pass.exec((passRenderer, scope) => {
+                this.textureMapping[0].gfxTexture = scope.getResolveTextureForID(depthResolveTextureID);
+                renderInst.setSamplerBindingsFromTextureMappings(this.textureMapping);
+                renderInst.drawOnPass(cache, passRenderer);
+            });
+        });
     }
 }
 
