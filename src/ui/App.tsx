@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { toSceneNodeViewportTransformSelection, toSceneNodeViewportTransformSelections } from '../lib/brresRenderAdapter';
 import { getKmpCameraHeader, type KmpEntity, type Vec3 } from '../lib/kmp';
 import { getPathInfo, getReferenceCounts } from '../lib/kmpEdit';
 import { describeEntity, validateTrack } from '../lib/track';
 import objectNamesById from '../generated/mkwObjectNames.json';
 import { getAreaInspectorResources } from './areas/areaInspectorConfig';
+import { useCameraMode } from './camera/CameraMode';
+import { useKmpMode } from './kmp/KmpMode';
+import { useModelMode } from './model/ModelMode';
+import type { EditorModeContext, ModeUi } from './modes/types';
+import { useVisualMode } from './visual/VisualMode';
 import { ContentBrowser } from './contentBrowser/ContentBrowser';
 import { PlaceAssetsRail } from './contentBrowser/PlaceAssetsRail';
 import { buildFillBetweenPositions, getFillBetweenSelection } from './fillBetween';
@@ -39,7 +43,7 @@ export function App() {
   const [status, setStatus] = useState('No track loaded');
   const [tool, setTool] = useState<TransformTool>('translate');
   const [viewMode, setViewMode] = useState<ViewMode>('normal');
-  const [editorMode, setEditorMode] = useState<EditorModeStub>('model');
+  const [editorMode, setEditorMode] = useState<EditorModeStub>('kmp');
   const [collisionVisible, setCollisionVisible] = useState(false);
   const [inspectorSection, setInspectorSection] = useState<InspectorSection>('object');
   const [batchOffset, setBatchOffset] = useState<Vec3>({ x: 0, y: 0, z: 0 });
@@ -88,14 +92,6 @@ export function App() {
   const selectedArchiveNode = useMemo(
     () => projectState?.archiveNodes.find((node) => node.id === selectedId) ?? null,
     [projectState, selectedId],
-  );
-  const viewportTransformSelection = useMemo(
-    () => (editorMode === 'model' && selectedArchiveNode ? toSceneNodeViewportTransformSelection(selectedArchiveNode) : null),
-    [editorMode, selectedArchiveNode],
-  );
-  const viewportTransformSelections = useMemo(
-    () => (editorMode === 'model' ? toSceneNodeViewportTransformSelections(projectState?.sceneNodes ?? []) : []),
-    [editorMode, projectState],
   );
   const validationCounts = useMemo(() => {
     const errorCount = validation.filter((item) => item.level === 'error').length;
@@ -169,6 +165,34 @@ export function App() {
   const postEffectActions = usePostEffectActions({ track, postEffectResources, selection, history, setStatus });
   const clipboard = useClipboard({ track, selected, selectedEntities, selection, history, setStatus, entityLabel });
   const { downloadExport } = useTrackExport({ track, commonArchive, setStatus });
+
+  // Each editor mode contributes its own panels and viewport props. All four hooks run every
+  // render (hook rules); only the active one returns anything.
+  const modeContext: EditorModeContext = {
+    editorMode,
+    track,
+    trackRef,
+    projectState,
+    objFlow,
+    commonArchive,
+    commonBrresSummaries,
+    selection,
+    history,
+    editActions,
+    selected,
+    selectedEntities,
+    entityLabel,
+    setStatus,
+    tool,
+    viewMode,
+    setEditorMode,
+  };
+  const kmpModeUi = useKmpMode(modeContext);
+  const cameraModeUi = useCameraMode(modeContext);
+  const modelModeUi = useModelMode(modeContext);
+  const visualModeUi = useVisualMode(modeContext);
+  const modeUi: ModeUi =
+    editorMode === 'camera' ? cameraModeUi : editorMode === 'model' ? modelModeUi : editorMode === 'visual' ? visualModeUi : kmpModeUi;
 
   useEffect(() => {
     if (!selected) return;
@@ -265,22 +289,22 @@ export function App() {
 
       <div ref={layout.shellBodyRef} className={layout.inspectorOpen ? 'shellBody' : 'shellBody inspectorCollapsed'} style={layout.workspaceStyle}>
         <div ref={layout.workspaceRef} className={layout.placeAssetsOpen ? 'workspace' : 'workspace placeAssetsCollapsed'}>
-          <PlaceAssetsRail
-            open={layout.placeAssetsOpen}
-            onToggle={() => layout.setPlaceAssetsOpen((value) => !value)}
-            onBeginResize={(event) => layout.beginSidebarResize('placeAssets', event)}
-            quickObjectOptions={quickObjectOptions}
-            objFlow={objFlow}
-            commonArchive={commonArchive}
-            commonBrresSummaries={commonBrresSummaries}
-          />
+          {modeUi.leftPanel ?? (
+            <PlaceAssetsRail
+              open={layout.placeAssetsOpen}
+              onToggle={() => layout.setPlaceAssetsOpen((value) => !value)}
+              onBeginResize={(event) => layout.beginSidebarResize('placeAssets', event)}
+              quickObjectOptions={quickObjectOptions}
+              objFlow={objFlow}
+              commonArchive={commonArchive}
+              commonBrresSummaries={commonBrresSummaries}
+            />
+          )}
           <Noclip3DViewport
             track={track}
             selectedId={selectedId}
             selectedIds={selectedIds}
-            transformSelection={viewportTransformSelection}
-            transformSelections={viewportTransformSelections}
-            showKmpEditorOverlay={editorMode !== 'model'}
+            mode={editorMode}
             fillBetweenPreviewPositions={fillBetweenPreviewPositions}
             smokeCommonUrl={trackDocument.smokeCommonUrl}
             commonArchiveUrl={commonArchiveUrl}
@@ -310,7 +334,7 @@ export function App() {
             onInteractionStart={history.beginEditSession}
             onInteractionEnd={history.endEditSession}
             topRightOverlay={
-              fillBetweenPanelOpen && fillBetweenSelection ? (
+              modeUi.topRightOverlay ?? (fillBetweenPanelOpen && fillBetweenSelection ? (
                 <FillBetweenPanel
                   objectLabel={browserObjectTitle({
                     objectId: fillBetweenSelection.objectId,
@@ -322,8 +346,9 @@ export function App() {
                   onApply={editActions.applyFillBetween}
                   onClose={() => setFillBetweenPanelOpen(false)}
                 />
-              ) : null
+              ) : null)
             }
+            {...modeUi.viewportProps}
           />
         </div>
 
@@ -334,6 +359,7 @@ export function App() {
           inspectorSection={inspectorSection}
           onChangeInspectorSection={setInspectorSection}
           editorMode={editorMode}
+          modeContent={modeUi.inspector}
           track={track}
           trackSummary={trackSummary}
           selected={selected}

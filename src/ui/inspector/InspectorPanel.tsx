@@ -21,6 +21,7 @@ export function InspectorPanel({
   inspectorSection,
   onChangeInspectorSection,
   editorMode,
+  modeContent,
   track,
   trackSummary,
   selected,
@@ -50,6 +51,8 @@ export function InspectorPanel({
   inspectorSection: InspectorSection;
   onChangeInspectorSection: (section: InspectorSection) => void;
   editorMode: EditorModeStub;
+  /** When set, the active editor mode replaces the object/track tabs with its own inspector. */
+  modeContent?: ReactNode;
   track: TrackDocument | null;
   trackSummary: { entityCount: number; groupCount: number; routeCount: number } | null;
   selected: KmpEntity | null;
@@ -88,6 +91,7 @@ export function InspectorPanel({
           <h2>Details</h2>
         </div>
         <div className="paneBody">
+          {modeContent !== undefined && modeContent !== null ? modeContent : (<>
           <div className="segmented inspectorSections" role="tablist" aria-label="Inspector sections">
             <button
               type="button"
@@ -211,6 +215,7 @@ export function InspectorPanel({
               </div>
             </>
           )}
+          </>)}
         </div>
       </section>
     </div>
