@@ -46,7 +46,7 @@ export async function parseNoclipBrresSummary(
   }
   const renderedPreviewDataUrl =
     options.thumbnail === false ? null : await renderThumbnailQuietly(data, options.thumbnail);
-  const modelPreviewDataUrl = renderedPreviewDataUrl ?? createModelPreviewDataUrl(rres.mdl0);
+  const modelPreviewDataUrl = renderedPreviewDataUrl ?? createSoftwareModelPreviewDataUrl(rres.mdl0);
   const texturePreviewDataUrl = modelPreviewDataUrl ? undefined : await createTexturePreviewDataUrl(rres.tex0, GXTexture);
   return {
     models: rres.mdl0.map((model: any) => ({
@@ -97,7 +97,11 @@ interface ModelTriangle {
   c: { x: number; y: number; z: number };
 }
 
-function createModelPreviewDataUrl(models: any[]): string | undefined {
+/**
+ * Software fallback preview: a flat-shaded 2D rasterisation of the model's triangles. Only
+ * used when WebGL2 is unavailable or the GPU thumbnail service could not draw the archive.
+ */
+function createSoftwareModelPreviewDataUrl(models: any[]): string | undefined {
   if (typeof document === 'undefined') return undefined;
   const triangles = collectModelTriangles(models);
   if (triangles.length === 0) return undefined;
