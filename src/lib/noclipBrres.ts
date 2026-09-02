@@ -1,3 +1,5 @@
+import { getBrresThumbnail, type BrresThumbnailOptions } from './thumbnail';
+
 export interface NoclipBrresSummary {
   models: Array<{ name: string; nodes: number; materials: number; shapes: number }>;
   textures: Array<{ name: string; width: number; height: number; format: string }>;
@@ -12,7 +14,18 @@ export interface NoclipBrresSummary {
   };
 }
 
-export async function parseNoclipBrresSummary(data: Uint8Array): Promise<NoclipBrresSummary> {
+export interface NoclipBrresSummaryOptions {
+  /**
+   * Controls the `previewDataUrl` render. Pass `false` to skip the GPU thumbnail entirely
+   * (the CPU fallback is still used), or options to tune size / extra texture archives.
+   */
+  thumbnail?: false | BrresThumbnailOptions;
+}
+
+export async function parseNoclipBrresSummary(
+  data: Uint8Array,
+  options: NoclipBrresSummaryOptions = {},
+): Promise<NoclipBrresSummary> {
   const [{ default: ArrayBufferSlice }, BRRES, GXTexture] = await Promise.all([
     // @ts-ignore noclip source is vendored outside this app's tsconfig surface.
     import('../../vendor/noclip.website/src/ArrayBufferSlice.js'),
@@ -31,8 +44,10 @@ export async function parseNoclipBrresSummary(data: Uint8Array): Promise<NoclipB
       animations: { srt0: [], pat0: [], clr0: [], chr0: [], vis0: [], scn0: [] },
     };
   }
-  const modelPreviewDataUrl = createModelPreviewDataUrl(rres.mdl0);
-  const texturePreviewDataUrl = await createTexturePreviewDataUrl(rres.tex0, GXTexture);
+  const renderedPreviewDataUrl =
+    options.thumbnail === false ? null : await renderThumbnailQuietly(data, options.thumbnail);
+  const modelPreviewDataUrl = renderedPreviewDataUrl ?? createModelPreviewDataUrl(rres.mdl0);
+  const texturePreviewDataUrl = modelPreviewDataUrl ? undefined : await createTexturePreviewDataUrl(rres.tex0, GXTexture);
   return {
     models: rres.mdl0.map((model: any) => ({
       name: model.name,
@@ -56,6 +71,18 @@ export async function parseNoclipBrresSummary(data: Uint8Array): Promise<NoclipB
       scn0: rres.scn0.map((animation: any) => animation.name),
     },
   };
+}
+
+/**
+ * Ask the shared GPU thumbnail service for a render. Any failure (no WebGL2, a model the
+ * renderer chokes on) falls through to the software preview below.
+ */
+async function renderThumbnailQuietly(data: Uint8Array, options?: BrresThumbnailOptions): Promise<string | null> {
+  try {
+    return await getBrresThumbnail(data, options ?? {});
+  } catch {
+    return null;
+  }
 }
 
 interface ProjectedVertex {
