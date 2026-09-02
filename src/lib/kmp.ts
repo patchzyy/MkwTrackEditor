@@ -18,11 +18,67 @@ export type KmpSectionName =
   | 'STGI'
   | string;
 
-export interface Vec3 {
-  x: number;
-  y: number;
-  z: number;
-}
+export type { Vec3 } from './kmpFile';
+import type { Vec3 } from './kmpFile';
+
+/**
+ * The lossless structured KMP model, the path-graph editing helpers and the validation
+ * rules live in their own modules. They are re-exported here so callers that already import
+ * from `./kmp` do not need a second import path.
+ *
+ * `KmpDocument` (this module) is the byte-patching view used by the older UI code paths;
+ * `KmpFile` (`./kmpFile`) is the structured view that round-trips byte-for-byte and is what
+ * new code should use.
+ */
+export {
+  KMP_MAGIC,
+  KMP_NULL_INDEX_8,
+  KMP_NULL_INDEX_16,
+  KMP_RECORD_SIZE,
+  KMP_SECTION_ORDER,
+  AREA_SHAPE_NAMES,
+  AREA_TYPE_NAMES,
+  CAMERA_TYPE_NAMES,
+  CANNON_SHOOT_EFFECT_NAMES,
+  areaShapeName,
+  areaTypeName,
+  cameraTypeName,
+  cameraUsesRoute,
+  cannonShootEffectName,
+  checkpointTypeName,
+  cloneKmpFile,
+  createEmptyKmpFile,
+  createPathGroup,
+  createStageInfo,
+  decodeRespawnExtraData,
+  effectiveSpeedModifier,
+  getStageInfo,
+  isAlwaysPresent,
+  presenceFlagLabels,
+  readKmpFile,
+  totalRoutePointCount,
+  writeKmpFile,
+} from './kmpFile';
+export type {
+  KmpArea,
+  KmpCamera,
+  KmpCannonPoint,
+  KmpCheckpoint,
+  KmpEnemyPoint,
+  KmpFile,
+  KmpItemPoint,
+  KmpKnownSection,
+  KmpObject,
+  KmpPathGroup as KmpPathGroupRecord,
+  KmpRawLayout,
+  KmpRespawnPoint,
+  KmpRoute as KmpRouteRecord,
+  KmpRoutePoint as KmpRoutePointRecord,
+  KmpStageInfo,
+  KmpStartPoint,
+  KmpUnknownSection,
+  KmpBattleFinishPoint,
+} from './kmpFile';
 
 export interface KmpEntity {
   id: string;
