@@ -109,10 +109,10 @@ describe('editor ergonomics audit', () => {
     expect(viewportSource).toContain('function applyFPSCameraFrame(controller: FPSCameraController, frame: CameraFrame) {');
     expect(viewportSource).toContain('mat4.targetTo(camera.worldMatrix, frame.eye, frame.target, CAMERA_WORLD_UP);');
     expect(viewportSource).toContain('controller.cameraUpdateForced();');
-    expect(viewportSource).toContain('controller.update(viewer.inputManager, 0, 0);');
+    expect(viewportSource).toContain('controller.update(viewer.inputManager, 0);');
     expect(viewportSource).toContain("const CAMERA_MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD'");
     expect(viewportSource).toContain("document.documentElement.dataset.viewportCameraLook = active ? 'active' : 'inactive';");
-    expect(viewportSource).toContain('const restoreSuppressedKeys = withSuppressedCameraMovementKeys(result.viewer!);');
+    expect(viewportSource).toContain('const restoreSuppressedKeys = withSuppressedCameraMovementKeys(viewer);');
     expect(viewportSource).toContain('updateActiveDrag(event.clientX, event.clientY, isCollisionSnapModifier(event));');
     expect(viewportSource).toContain('const position = placeFromScreen(event.clientX, event.clientY, 0, isCollisionSnapModifier(event));');
     expect(viewportSource).toContain('getVisibleEntitiesForRouteFilter(track.kmp.entities, routeVisibilityRef.current, track.kmp, routeUsage)');
