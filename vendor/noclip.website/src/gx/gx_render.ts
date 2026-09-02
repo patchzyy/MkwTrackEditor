@@ -522,10 +522,10 @@ function translateGfxMegaState(material: GX_Material.GXMaterial) {
 }
 
 export class GXMaterialHelperGfx {
-    public programKey: number;
-    public megaStateFlags: Partial<GfxMegaStateDescriptor>;
-    public materialParamsBufferSize: number;
-    public drawParamsBufferSize: number;
+    public programKey!: number;
+    public megaStateFlags!: Partial<GfxMegaStateDescriptor>;
+    public materialParamsBufferSize!: number;
+    public drawParamsBufferSize!: number;
     private materialHacks: GX_Material.GXMaterialHacks = {};
     private program: GX_Material.GX_Program | null = null;
     private gfxProgram: GfxProgram | null = null;

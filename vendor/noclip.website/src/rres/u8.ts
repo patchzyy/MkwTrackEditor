@@ -65,7 +65,7 @@ function findChildNodeByParts(dir: U8Dir, parts: string[]): U8Node | null {
 }
 
 export class U8Archive {
-    public root: U8Dir;
+    public root!: U8Dir;
 
     public findDir(path: string): U8Dir | null {
         const child = findChildNodeByParts(this.root, path.split('/'));

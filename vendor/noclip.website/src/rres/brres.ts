@@ -16,6 +16,7 @@ import { colorToRGBA8, colorFromRGBA8, colorNewCopy, White, Color, colorNewFromR
 import { computeModelMatrixSRT, MathConstants, lerp, Vec3UnitY } from '../MathHelpers.js';
 import BitMap from '../BitMap.js';
 import { GXMaterialBuilder } from '../gx/GXMaterialBuilder.js';
+import { AABB } from '../Geometry.js';
 
 type Camera = any;
 type MDL0ModelInstance = any;
@@ -23,18 +24,6 @@ type AnimationController = any;
 
 function getFormatCompFlagsComponentCount(n: number): number {
     return n;
-}
-
-class AABB {
-    constructor(
-        public minX: number,
-        public minY: number,
-        public minZ: number,
-        public maxX: number,
-        public maxY: number,
-        public maxZ: number,
-    ) {
-    }
 }
 
 class GXTextureMapping {

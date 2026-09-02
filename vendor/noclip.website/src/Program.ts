@@ -1,6 +1,5 @@
 
-import CodeEditor from "./CodeEditor.js";
-import { assert, assertExists, nullify } from "./util.js";
+import { assert, nullify } from "./util.js";
 import { GfxVendorInfo, GfxProgram, GfxDevice } from "./gfx/platform/GfxPlatform.js";
 import { preprocessShader_GLSL } from "./gfx/shaderc/GfxShaderCompiler.js";
 
@@ -68,72 +67,5 @@ export class DeviceProgram {
         if (this.name === '(unnamed DeviceProgram)')
             this.name = this.constructor.name;
         this._gfxDevice.setResourceName(program, this.name);
-    }
-
-    private _editShader(n: 'vert' | 'frag' | 'both') {
-        const win = assertExists(window.open('about:blank', undefined, `location=off, resizable, alwaysRaised, left=20, top=20, width=1200, height=900`));
-        const init = () => {
-            const editor = new CodeEditor(win.document);
-            const document = win.document;
-            const title = n === 'vert' ? `${this.name} - Vertex Shader` : `${this.name} - Fragment Shader`;
-            document.title = title;
-            document.body.style.margin = '0';
-            const shader: string = this[n];
-            editor.setValue(shader);
-            editor.setFontSize('16px');
-            let timeout: number = 0;
-
-            const tryCompile = () => {
-                timeout = 0;
-                this[n] = editor.getValue();
-
-                if (this._gfxDevice !== null && this._gfxProgram !== null) {
-                    this.preprocessedVert = '';
-                    this.ensurePreprocessed(this._gfxDevice.queryVendorInfo());
-                    this._gfxDevice.programPatched(this._gfxProgram, this);
-                }
-            };
-
-            editor.onvaluechanged = function(immediate: boolean) {
-                if (timeout > 0)
-                    clearTimeout(timeout);
-
-                if (immediate) {
-                    tryCompile();
-                } else {
-                    // debounce
-                    timeout = window.setTimeout(tryCompile, 500);
-                }
-            };
-            const onresize = win.onresize = () => {
-                editor.setSize(document.body.offsetWidth, window.innerHeight);
-            };
-            onresize();
-            (win as any).editor = editor;
-            (window as any).editor = editor;
-            win.document.body.appendChild(editor.elem);
-            window.addEventListener('beforeunload', () => {
-                win.close();
-            });
-            window.addEventListener('loadNewScene', () => {
-                win.close();
-            });
-        };
-        if (win.document.readyState === 'complete')
-            init();
-        else
-            win.onload = init;
-    }
-
-    public editb() {
-        this._editShader('both');
-    }
-
-    public editv() {
-        this._editShader('vert');
-    }
-
-    public editf() {
-        this._editShader('frag');
     }
 }

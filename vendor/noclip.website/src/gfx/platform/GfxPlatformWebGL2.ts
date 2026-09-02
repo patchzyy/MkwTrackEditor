@@ -536,10 +536,10 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
 
     // GfxLimits
     private _uniformBufferMaxPageByteSize: number;
-    public uniformBufferByteAlignment: number;
-    public uniformBufferMaxPageByteSize: number;
-    public supportedSampleCounts: number[];
-    public occlusionQueriesRecommended: boolean;
+    public uniformBufferByteAlignment!: number;
+    public uniformBufferMaxPageByteSize!: number;
+    public supportedSampleCounts!: number[];
+    public occlusionQueriesRecommended!: boolean;
     public computeShadersSupported: boolean = false;
     public wireframeSupported: boolean = false;
     public vertexBufferMinStride: number = 1;
@@ -1195,11 +1195,6 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
         if (this._resourceCreationTracker !== null)
             this._resourceCreationTracker.trackResourceCreated(queryPool);
         return queryPool;
-    }
-
-    public async createWebXRLayer(webXRSession: XRSession): Promise<XRWebGLLayer> {
-        await this.gl.makeXRCompatible();
-        return new XRWebGLLayer(webXRSession, this.gl, { antialias: false });
     }
 
     public destroyBuffer(o: GfxBuffer): void {

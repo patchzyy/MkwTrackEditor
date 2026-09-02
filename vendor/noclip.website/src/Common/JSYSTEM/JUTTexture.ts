@@ -55,7 +55,7 @@ export function readBTI_Texture(buffer: ArrayBufferSlice, name: string, copyData
 }
 
 export class BTI {
-    public texture: BTI_Texture;
+    public texture!: BTI_Texture;
 
     public static parse(buffer: ArrayBufferSlice, name: string, copyData: boolean = false): BTI {
         const bti = new BTI();
