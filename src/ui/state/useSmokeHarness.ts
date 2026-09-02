@@ -55,7 +55,7 @@ export function useSmokeHarness({
         commonLoadStatus,
         rendererStatus,
         loaded: track !== null,
-        rendered: rendererStatus.includes('sigma'),
+        rendered: rendererStatus.toLowerCase().includes('sigma'),
         hasCommonArchiveLoaded: commonArchive !== null,
         commonObjectCount: commonArchive?.objFlow.entries.length ?? 0,
         commonSummaryCount: Object.keys(commonBrresSummaries).length,
