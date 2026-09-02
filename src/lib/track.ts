@@ -1,16 +1,24 @@
-import { buildU8, parseU8, type U8Entry } from './u8';
-import { decodeYaz0, encodeYaz0Uncompressed, isYaz0 } from './yaz0';
-import { getKmpCameraHeader, parseKmp, type KmpDocument, type KmpEntity } from './kmp';
+import { buildU8, parseU8, parseU8WithLayout, type U8Entry, type U8Layout } from './u8';
+import { decodeYaz0, encodeYaz0, isYaz0 } from './yaz0';
+import { parseKmp, type KmpDocument, type KmpEntity } from './kmp';
+import { readKmpFile, type KmpFile } from './kmpFile';
+import { validateKmpFile, validateTrackFiles, type ObjectResourceLookup, type TrackIssue } from './kmpValidation';
 import { parseKcl, type KclMesh } from './kcl';
 import { parseNoclipBrresSummary, type NoclipBrresSummary } from './noclipBrres';
 import { getObjFlowResourceNames, type CommonResourceArchive } from './objflow';
+
+export type { TrackIssue } from './kmpValidation';
 
 export interface TrackDocument {
   fileName: string;
   sourceId?: string;
   compressed: boolean;
   archiveEntries: U8Entry[];
+  /** Layout of the source archive, so untouched files repack byte-for-byte. */
+  archiveLayout?: U8Layout;
   kmp?: KmpDocument;
+  /** Fully structured, losslessly round-trippable view of `course.kmp`. */
+  kmpFile?: KmpFile;
   kcl?: KclMesh;
   brresFiles: string[];
   brresSummaries: Record<string, NoclipBrresSummary>;
@@ -29,7 +37,7 @@ export interface LoadTrackOptions {
 export async function loadTrackBytes(raw: Uint8Array, fileName: string, options: LoadTrackOptions = {}): Promise<TrackDocument> {
   const compressed = isYaz0(raw);
   const archiveBytes = decodeYaz0(raw);
-  const archiveEntries = parseU8(archiveBytes);
+  const { entries: archiveEntries, layout: archiveLayout } = parseU8WithLayout(archiveBytes);
   const warnings: string[] = [];
   const courseKmp = findFile(archiveEntries, 'course.kmp');
   const courseKcl = findFile(archiveEntries, 'course.kcl');
@@ -38,10 +46,12 @@ export async function loadTrackBytes(raw: Uint8Array, fileName: string, options:
   const brresSummaryLimit = options.brresSummaryLimit ?? 24;
 
   let kmp: KmpDocument | undefined;
+  let kmpFile: KmpFile | undefined;
   let kcl: KclMesh | undefined;
   if (courseKmp?.data) {
     try {
       kmp = parseKmp(courseKmp.data);
+      kmpFile = readKmpFile(courseKmp.data);
       warnings.push(...kmp.warnings);
     } catch (error) {
       warnings.push(`course.kmp could not be parsed: ${error instanceof Error ? error.message : String(error)}`);
@@ -70,7 +80,19 @@ export async function loadTrackBytes(raw: Uint8Array, fileName: string, options:
     }
   }
 
-  return { fileName, sourceId: fingerprintBytes(fileName, archiveBytes), compressed, archiveEntries, kmp, kcl, brresFiles, brresSummaries, warnings };
+  return {
+    fileName,
+    sourceId: fingerprintBytes(fileName, archiveBytes),
+    compressed,
+    archiveEntries,
+    archiveLayout,
+    kmp,
+    kmpFile,
+    kcl,
+    brresFiles,
+    brresSummaries,
+    warnings,
+  };
 }
 
 export function replaceCourseKmp(track: TrackDocument, data: Uint8Array): TrackDocument {
@@ -80,6 +102,7 @@ export function replaceCourseKmp(track: TrackDocument, data: Uint8Array): TrackD
       entry.type === 'file' && entry.path.toLowerCase().endsWith('course.kmp') ? { ...entry, data } : entry,
     ),
     kmp: parseKmp(data),
+    kmpFile: readKmpFile(data),
   };
 }
 
@@ -98,53 +121,81 @@ export function replaceArchiveFile(track: TrackDocument, path: string, data: Uin
 
 export interface ExportTrackOptions {
   common?: CommonResourceArchive | null;
+  /**
+   * How hard the Yaz0 compressor searches for back-references. The default of 16 matches
+   * Nintendo's own compression ratio and takes a few hundred milliseconds for a full track.
+   */
+  compressionSearchDepth?: number;
+  /** Force compression on or off; defaults to matching the source archive. */
+  compress?: boolean;
 }
 
 export function exportTrack(track: TrackDocument, options: ExportTrackOptions = {}): Uint8Array {
-  const archive = buildU8(getExportArchiveEntries(track, options.common));
-  return track.compressed ? encodeYaz0Uncompressed(archive) : archive;
+  const entries = getExportArchiveEntries(track, options.common);
+  // The captured layout only applies when the entry list is unchanged; `buildU8` checks that
+  // and falls back to a freshly computed layout otherwise.
+  const archive = buildU8(entries, track.archiveLayout);
+  const compress = options.compress ?? track.compressed;
+  return compress ? encodeYaz0(archive, { searchDepth: options.compressionSearchDepth ?? 16 }) : archive;
 }
 
-export function validateExportBytes(track: TrackDocument, bytes: Uint8Array, options: ValidateTrackOptions = {}): Array<{ level: 'error' | 'warning'; message: string }> {
-  const results: Array<{ level: 'error' | 'warning'; message: string }> = [];
+/**
+ * Re-opens an exported `.szs` and validates it as if the user had just dropped it in. This
+ * is the last line of defence: it proves the file the user is about to download is one the
+ * editor itself can read back.
+ */
+export function validateExportBytes(track: TrackDocument, bytes: Uint8Array, options: ValidateTrackOptions = {}): TrackIssue[] {
+  const results: TrackIssue[] = [];
   try {
-    if (track.compressed && !isYaz0(bytes)) results.push({ level: 'error', message: 'Export is not Yaz0-compressed although the source track was compressed.' });
+    if (track.compressed && !isYaz0(bytes)) {
+      results.push({ level: 'error', code: 'export.not-compressed', message: 'The exported track is not compressed, although the original track was.' });
+    }
     const entries = parseU8(decodeYaz0(bytes));
     const courseKmp = findFile(entries, 'course.kmp');
     const courseKcl = findFile(entries, 'course.kcl');
-    const courseModel = findFile(entries, 'course_model.brres');
     let kmp: KmpDocument | undefined;
+    let kmpFile: KmpFile | undefined;
     let kcl: KclMesh | undefined;
-    if (!courseModel?.data) results.push({ level: 'error', message: 'Exported archive is missing course_model.brres.' });
-    if (!courseKmp?.data) {
-      results.push({ level: 'error', message: 'Exported archive is missing course.kmp.' });
-    } else {
+    if (courseKmp?.data) {
       try {
         kmp = parseKmp(courseKmp.data);
+        kmpFile = readKmpFile(courseKmp.data);
       } catch (error) {
-        results.push({ level: 'error', message: `Exported course.kmp does not parse: ${error instanceof Error ? error.message : String(error)}` });
+        results.push({
+          level: 'error',
+          code: 'export.kmp-unreadable',
+          message: `The exported track layout cannot be read back: ${error instanceof Error ? error.message : String(error)}`,
+        });
       }
     }
-    if (!courseKcl?.data) {
-      results.push({ level: 'warning', message: 'Exported archive is missing course.kcl.' });
-    } else {
+    if (courseKcl?.data) {
       try {
         kcl = parseKcl(courseKcl.data);
       } catch (error) {
-        results.push({ level: 'error', message: `Exported course.kcl does not parse: ${error instanceof Error ? error.message : String(error)}` });
+        results.push({
+          level: 'error',
+          code: 'export.kcl-unreadable',
+          message: `The exported collision mesh cannot be read back: ${error instanceof Error ? error.message : String(error)}`,
+        });
       }
     }
     const exportedTrack: TrackDocument = {
       ...track,
       archiveEntries: entries,
+      archiveLayout: undefined,
       kmp,
+      kmpFile,
       kcl,
       brresFiles: entries.filter((entry) => entry.type === 'file' && entry.path.toLowerCase().endsWith('.brres')).map((entry) => entry.path),
       warnings: [],
     };
     results.push(...validateTrack(exportedTrack, options));
   } catch (error) {
-    results.push({ level: 'error', message: `Exported SZS could not be reopened: ${error instanceof Error ? error.message : String(error)}` });
+    results.push({
+      level: 'error',
+      code: 'export.unreadable',
+      message: `The exported track could not be re-opened: ${error instanceof Error ? error.message : String(error)}`,
+    });
   }
   return results;
 }
@@ -237,78 +288,56 @@ const ROUTE_REQUIRED_OBJECT_NAMES = new Map<number, string>([
   [0x257, 'RM_ring1'],
 ]);
 
-export function validateTrack(track: TrackDocument, options: ValidateTrackOptions = {}): Array<{ level: 'error' | 'warning'; message: string }> {
-  const results: Array<{ level: 'error' | 'warning'; message: string }> = [];
-  if (!findFile(track.archiveEntries, 'course_model.brres')) results.push({ level: 'error', message: 'course_model.brres is missing.' });
-  if (!findFile(track.archiveEntries, 'course.kmp')) results.push({ level: 'error', message: 'course.kmp is missing.' });
-  if (!findFile(track.archiveEntries, 'course.kcl')) results.push({ level: 'warning', message: 'course.kcl is missing; snapping and collision overlay are unavailable.' });
-  if (!track.kmp) return results;
-
-  const count = (section: string) => track.kmp?.sections.find((candidate) => candidate.name === section)?.count ?? 0;
-  if (count('KTPT') === 0) results.push({ level: 'error', message: 'No start position is defined.' });
-  if (count('CKPT') === 0) results.push({ level: 'error', message: 'Checkpoints are missing.' });
-  if (count('JGPT') === 0) results.push({ level: 'warning', message: 'Respawn points are missing.' });
-  if (count('ENPT') > 0 && count('ENPH') === 0) results.push({ level: 'warning', message: 'Enemy route points exist without enemy path groups.' });
-  if (count('ITPT') > 0 && count('ITPH') === 0) results.push({ level: 'warning', message: 'Item route points exist without item path groups.' });
-  if (count('CKPT') > 0 && count('CKPH') === 0) results.push({ level: 'warning', message: 'Checkpoints exist without checkpoint path groups.' });
-  for (const graph of track.kmp.pathGraphs) {
-    const pointCount = track.kmp.entities.filter((entity) => entity.section === graph.pointSection).length;
-    const groupedPointCount = graph.groups.reduce((sum, group) => sum + group.pointCount, 0);
-    if (groupedPointCount !== pointCount) {
-      results.push({ level: 'warning', message: `${graph.pointSection}/${graph.groupSection} groups cover ${groupedPointCount}/${pointCount} points.` });
-    }
-    if (pointCount > 1 && graph.edges.length === 0) {
-      results.push({ level: 'warning', message: `${graph.pointSection}/${graph.groupSection} has points but no path connections.` });
-      continue;
-    }
-    const connected = connectedPointCount(pointCount, graph.edges);
-    if (connected > 0 && connected < pointCount) {
-      results.push({ level: 'warning', message: `${graph.pointSection}/${graph.groupSection} appears disconnected (${connected}/${pointCount} reachable).` });
-    }
+export function validateTrack(track: TrackDocument, options: ValidateTrackOptions = {}): TrackIssue[] {
+  const archiveFileNames = track.archiveEntries.filter((entry) => entry.type === 'file').map((entry) => entry.path);
+  // Callers that build a TrackDocument by hand may not have populated `kmpFile`, so fall
+  // back to reading it straight out of the archive.
+  const kmpFile = track.kmpFile ?? tryReadCourseKmp(track);
+  if (!kmpFile) {
+    return [
+      ...validateTrackFiles(archiveFileNames),
+      ...(findFile(track.archiveEntries, 'course.kmp')
+        ? [{ level: 'error' as const, code: 'kmp.unreadable', message: 'The track layout data could not be read.' }]
+        : []),
+    ];
   }
 
-  const potiCount = track.kmp.routes.length || count('POTI');
-  const cameraCount = count('CAME');
-  if (cameraCount > 0) {
-    const cameraHeader = getKmpCameraHeader(track.kmp);
-    if (cameraHeader.firstIntroCam !== 0xff && cameraHeader.firstIntroCam >= cameraCount) {
-      results.push({ level: 'warning', message: `CAME intro start references missing camera ${cameraHeader.firstIntroCam}.` });
-    }
-    if (cameraHeader.firstSelectionCam !== 0xff && cameraHeader.firstSelectionCam >= cameraCount) {
-      results.push({ level: 'warning', message: `CAME selection start references missing camera ${cameraHeader.firstSelectionCam}.` });
-    }
+  return [
+    ...validateKmpFile(kmpFile, {
+      archiveFileNames,
+      objects: options.common ? createObjectLookup(options.common) : null,
+      battle: isBattleTrack(kmpFile),
+    }),
+    ...validateObjectPresenceFlags(track, options.common),
+    ...validateItemBoxSettings(track, options.common),
+    ...validateKnownObjectPitfalls(track),
+  ];
+}
+
+function tryReadCourseKmp(track: TrackDocument): KmpFile | undefined {
+  const data = findFile(track.archiveEntries, 'course.kmp')?.data;
+  if (!data) return undefined;
+  try {
+    return readKmpFile(data);
+  } catch {
+    return undefined;
   }
-  const checkpointCount = count('CKPT');
-  const respawnCount = count('JGPT');
-  for (const entity of track.kmp.entities) {
-    if (entity.checkpoint) {
-      if (entity.checkpoint.respawnIndex !== 0xff && entity.checkpoint.respawnIndex >= respawnCount) {
-        results.push({ level: 'warning', message: `Checkpoint ${entity.index} references missing respawn point ${entity.checkpoint.respawnIndex}.` });
-      }
-      if (entity.checkpoint.prev !== 0xff && entity.checkpoint.prev >= checkpointCount) {
-        results.push({ level: 'warning', message: `Checkpoint ${entity.index} references missing previous checkpoint ${entity.checkpoint.prev}.` });
-      }
-      if (entity.checkpoint.next !== 0xff && entity.checkpoint.next >= checkpointCount) {
-        results.push({ level: 'warning', message: `Checkpoint ${entity.index} references missing next checkpoint ${entity.checkpoint.next}.` });
-      }
-    }
-    if (entity.section === 'GOBJ' && entity.routeIndex !== undefined && entity.routeIndex !== 0xffff && entity.routeIndex >= potiCount) {
-      results.push({ level: 'warning', message: `Object ${entity.index} references missing route ${entity.routeIndex}.` });
-    }
-    if (entity.area) {
-      if (entity.area.routeIndex !== 0xff && entity.area.routeIndex >= potiCount) results.push({ level: 'warning', message: `Area ${entity.index} references missing route ${entity.area.routeIndex}.` });
-      if (entity.area.cameraIndex !== 0xff && entity.area.cameraIndex >= cameraCount) results.push({ level: 'warning', message: `Area ${entity.index} references missing camera ${entity.area.cameraIndex}.` });
-    }
-    if (entity.camera) {
-      if (entity.camera.routeIndex !== 0xff && entity.camera.routeIndex >= potiCount) results.push({ level: 'warning', message: `Camera ${entity.index} references missing route ${entity.camera.routeIndex}.` });
-      if (entity.camera.nextCam !== 0xff && entity.camera.nextCam >= cameraCount) results.push({ level: 'warning', message: `Camera ${entity.index} references missing next camera ${entity.camera.nextCam}.` });
-    }
-  }
-  results.push(...validateObjectResources(track, options.common));
-  results.push(...validateObjectPresenceFlags(track, options.common));
-  results.push(...validateItemBoxSettings(track, options.common));
-  results.push(...validateKnownObjectPitfalls(track));
-  return results;
+}
+
+/** Battle arenas have no item route and no checkpoints, but do have battle finish points. */
+function isBattleTrack(file: KmpFile): boolean {
+  return file.itemPoints.length === 0 && file.checkpoints.length === 0 && file.battleFinishPoints.length > 0;
+}
+
+function createObjectLookup(common: CommonResourceArchive): ObjectResourceLookup {
+  return {
+    objectName: (objectId) => common.objFlow.byId.get(objectId)?.name ?? null,
+    objectResources: (objectId) => {
+      const entry = common.objFlow.byId.get(objectId);
+      return entry ? getObjFlowResourceNames(entry) : [];
+    },
+    hasCommonResource: (resourceName) => common.byBaseName.has(resourceName.toLowerCase()),
+  };
 }
 
 export function describeEntity(entity: KmpEntity): string {
@@ -359,39 +388,9 @@ function fingerprintBytes(name: string, data: Uint8Array): string {
   return `${name}:${data.length}:${hash >>> 0}`;
 }
 
-function validateObjectResources(track: TrackDocument, common?: CommonResourceArchive | null): Array<{ level: 'error' | 'warning'; message: string }> {
-  if (!track.kmp) return [];
-  const objectIds = getUsedObjectIds(track.kmp.entities);
-  if (objectIds.length === 0) return [];
-  if (!common) return [{ level: 'warning', message: 'Common.szs is not loaded; object resource validation is unavailable.' }];
-
-  const results: Array<{ level: 'error' | 'warning'; message: string }> = [];
-  const existingBaseNames = new Set(
-    track.archiveEntries
-      .filter((entry) => entry.type === 'file')
-      .map((entry) => entry.path.split('/').pop()?.toLowerCase())
-      .filter((name): name is string => !!name),
-  );
-
-  for (const objectId of objectIds) {
-    const objFlowEntry = common.objFlow.byId.get(objectId);
-    if (!objFlowEntry) {
-      results.push({ level: 'warning', message: `Object ${objectId.toString(16).toUpperCase()} has no ObjFlow definition in Common.szs.` });
-      continue;
-    }
-    for (const resourceName of getObjFlowResourceNames(objFlowEntry)) {
-      const baseName = resourceName.toLowerCase();
-      if (existingBaseNames.has(baseName) || common.byBaseName.has(baseName)) continue;
-      results.push({ level: 'warning', message: `Object ${objectId.toString(16).toUpperCase()} references missing resource ${resourceName}.` });
-    }
-  }
-
-  return results;
-}
-
-function validateObjectPresenceFlags(track: TrackDocument, common?: CommonResourceArchive | null): Array<{ level: 'error' | 'warning'; message: string }> {
+function validateObjectPresenceFlags(track: TrackDocument, common?: CommonResourceArchive | null): TrackIssue[] {
   if (!track.kmp || !common) return [];
-  const results: Array<{ level: 'error' | 'warning'; message: string }> = [];
+  const results: TrackIssue[] = [];
   for (const entity of track.kmp.entities) {
     if (entity.section !== 'GOBJ' || entity.objectId === undefined || entity.presenceFlags === undefined) continue;
     const objFlowEntry = common.objFlow.byId.get(entity.objectId);
@@ -400,44 +399,48 @@ function validateObjectPresenceFlags(track: TrackDocument, common?: CommonResour
     if ((modeFlags & 0x0006) !== 0x0006) {
       results.push({
         level: 'warning',
-        message: `Object ${entity.index} is a gameplay object but is hidden for some multiplayer player counts (${formatPresenceFlagsHex(entity.presenceFlags)}).`,
+        code: 'object.presence-uneven',
+        message: `Object #${entity.index} (${objFlowEntry.name}) affects gameplay but is hidden for some player counts, which gives split-screen players an unfair advantage.`,
+        entityId: entity.id,
       });
     }
   }
   return results;
 }
 
-function validateItemBoxSettings(track: TrackDocument, common?: CommonResourceArchive | null): Array<{ level: 'error' | 'warning'; message: string }> {
+function validateItemBoxSettings(track: TrackDocument, common?: CommonResourceArchive | null): TrackIssue[] {
   if (!track.kmp || !common) return [];
-  const results: Array<{ level: 'error' | 'warning'; message: string }> = [];
+  const results: TrackIssue[] = [];
   for (const entity of track.kmp.entities) {
     if (!isItemBoxObject(entity, common) || !entity.objectSettings) continue;
     const playerSetting = entity.objectSettings[1];
     const cpuSetting = entity.objectSettings[2];
     const timingSetting = entity.objectSettings[5];
     if (!isValidItemBoxItemSetting(playerSetting)) {
-      results.push({ level: 'warning', message: `Object ${entity.index} has unsupported player item-box setting ${formatPresenceFlagsHex(playerSetting)}.` });
+      results.push({ level: 'warning', code: 'itembox.player-item', message: `Item box #${entity.index} gives players an item the game does not recognise.`, entityId: entity.id });
     }
     if (!isValidItemBoxItemSetting(cpuSetting)) {
-      results.push({ level: 'warning', message: `Object ${entity.index} has unsupported CPU item-box setting ${formatPresenceFlagsHex(cpuSetting)}.` });
+      results.push({ level: 'warning', code: 'itembox.cpu-item', message: `Item box #${entity.index} gives computer drivers an item the game does not recognise.`, entityId: entity.id });
     }
     if (!isValidItemBoxTimingSetting(timingSetting)) {
-      results.push({ level: 'warning', message: `Object ${entity.index} has unsupported item-box timing setting ${formatPresenceFlagsHex(timingSetting)}.` });
+      results.push({ level: 'warning', code: 'itembox.timing', message: `Item box #${entity.index} uses a respawn timing the game does not recognise.`, entityId: entity.id });
     }
   }
   return results;
 }
 
-function validateKnownObjectPitfalls(track: TrackDocument): Array<{ level: 'error' | 'warning'; message: string }> {
+function validateKnownObjectPitfalls(track: TrackDocument): TrackIssue[] {
   if (!track.kmp) return [];
-  const results: Array<{ level: 'error' | 'warning'; message: string }> = [];
+  const results: TrackIssue[] = [];
   const objects = track.kmp.entities.filter((entity) => entity.section === 'GOBJ' && entity.objectId !== undefined);
   for (const entity of objects) {
     const routeRequiredName = ROUTE_REQUIRED_OBJECT_NAMES.get(entity.objectId!);
     if (!routeRequiredName || entity.routeIndex === undefined || entity.routeIndex !== 0xffff) continue;
     results.push({
       level: 'warning',
-      message: `Object ${entity.index} (${routeRequiredName}) requires a route but does not have one.`,
+      code: 'object.route-required',
+      message: `Object #${entity.index} (${routeRequiredName}) needs a route to move along but none is assigned.`,
+      entityId: entity.id,
     });
   }
   const slotRestrictedObjects = new Map<number, string>([
@@ -452,20 +455,24 @@ function validateKnownObjectPitfalls(track: TrackDocument): Array<{ level: 'erro
   if (hasChoropu && hasChoropu2) {
     results.push({
       level: 'warning',
-      message: 'Monty Mole variants choropu and choropu2 are both present; vanilla Mario Kart Wii uses the same BRRES file for them and this combination is known to break.',
+      code: 'object.choropu-conflict',
+      message: 'Both Monty Mole variants are placed. They share one model file in the retail game, and using both is known to break.',
     });
   }
 
   for (const entity of objects) {
     if ((entity.objectId === 0x214 || entity.objectId === 0x215) && entity.objectSettings && entity.objectSettings[2] === 0) {
       results.push({
-        level: 'warning',
-        message: `Object ${entity.index} (${entity.objectId === 0x214 ? 'InsekiA' : 'InsekiB'}) has Setting 3 left at 0, which is known to crash vanilla Mario Kart Wii.`,
+        level: 'error',
+        code: 'object.inseki-setting',
+        message: `Object #${entity.index} (${entity.objectId === 0x214 ? 'InsekiA' : 'InsekiB'}) has its third setting left at 0, which crashes the retail game.`,
+        entityId: entity.id,
       });
     }
     if (entity.objectId === 0x206) {
       const centered = Math.abs(entity.position.x) < 0.001 && Math.abs(entity.position.y) < 0.001 && Math.abs(entity.position.z) < 0.001;
-      const unrotated = Math.abs(entity.rotation.x) < 0.001 && Math.abs(entity.rotation.y) < 0.001 && Math.abs(entity.rotation.z) < 0.001;
+      const rotation = entity.rotation ?? { x: 0, y: 0, z: 0 };
+      const unrotated = Math.abs(rotation.x) < 0.001 && Math.abs(rotation.y) < 0.001 && Math.abs(rotation.z) < 0.001;
       const unitScale =
         entity.scale !== undefined &&
         Math.abs(entity.scale.x - 1) < 0.001 &&
@@ -474,7 +481,9 @@ function validateKnownObjectPitfalls(track: TrackDocument): Array<{ level: 'erro
       if (!centered || !unrotated || !unitScale) {
         results.push({
           level: 'warning',
-          message: `Object ${entity.index} (casino_roulette) should stay at world position 0,0,0 with zero rotation and scale 1,1,1 or the rotating-road gimmick can break.`,
+          code: 'object.roulette-transform',
+          message: `Object #${entity.index} (the casino roulette) must stay at position 0,0,0 with no rotation and scale 1 or its rotating road stops working.`,
+          entityId: entity.id,
         });
       }
     }
@@ -484,7 +493,8 @@ function validateKnownObjectPitfalls(track: TrackDocument): Array<{ level: 'erro
   if (slotRestrictedNames.length > 0) {
     results.push({
       level: 'warning',
-      message: `This track uses slot-restricted objects (${slotRestrictedNames.join(', ')}). In vanilla Mario Kart Wii these only work on Daisy Circuit, Moonview Highway, GBA Shy Guy Beach, DS Desert Hills, or Galaxy Colosseum.`,
+      code: 'object.slot-restricted',
+      message: `This track uses objects (${slotRestrictedNames.join(', ')}) that only work on the Daisy Circuit, Moonview Highway, GBA Shy Guy Beach, DS Desert Hills or Galaxy Colosseum track slots.`,
     });
   }
 
@@ -492,7 +502,9 @@ function validateKnownObjectPitfalls(track: TrackDocument): Array<{ level: 'erro
   if (firstBegomanSpike && objects[0] !== firstBegomanSpike) {
     results.push({
       level: 'warning',
-      message: 'begoman_spike must be the first placed game object in the object list or it will not spawn correctly in vanilla Mario Kart Wii.',
+      code: 'object.begoman-order',
+      message: 'The spiked Bomb Boo must be the first object in the list or it will not spawn correctly.',
+      entityId: firstBegomanSpike.id,
     });
   }
 
@@ -502,33 +514,14 @@ function validateKnownObjectPitfalls(track: TrackDocument): Array<{ level: 'erro
       const name = objectId === 0x2e8 ? 'MiiObjD01' : objectId === 0x2e9 ? 'MiiObjD02' : 'MiiObjD03';
       results.push({
         level: 'warning',
-        message: `${name} is placed ${count} times. Vanilla Mario Kart Wii allows at most one instance of this Daisy Circuit Mii audience object before it crashes.`,
+        code: 'object.mii-audience-duplicate',
+        message: `The Daisy Circuit Mii audience object ${name} is placed ${count} times; more than one crashes the retail game.`,
       });
     }
   }
   return results;
 }
 
-function connectedPointCount(pointCount: number, edges: Array<{ from: number; to: number }>): number {
-  if (pointCount === 0) return 0;
-  const adjacency = Array.from({ length: pointCount }, () => new Set<number>());
-  for (const edge of edges) {
-    if (edge.from < 0 || edge.from >= pointCount || edge.to < 0 || edge.to >= pointCount) continue;
-    adjacency[edge.from].add(edge.to);
-    adjacency[edge.to].add(edge.from);
-  }
-  const seen = new Set<number>([0]);
-  const queue = [0];
-  while (queue.length) {
-    const point = queue.shift()!;
-    for (const next of adjacency[point]) {
-      if (seen.has(next)) continue;
-      seen.add(next);
-      queue.push(next);
-    }
-  }
-  return seen.size;
-}
 
 function objectHasGameplayImpact(entry: CommonResourceArchive['objFlow']['entries'][number]): boolean {
   const text = `${entry.name} ${entry.resources}`.toLowerCase();
@@ -550,6 +543,3 @@ function isValidItemBoxTimingSetting(value: number): boolean {
   return value === 0x0000 || value === 0x0002 || value === 0x0003 || value === 0x0004 || value === 0x0005 || value === 0x0006;
 }
 
-function formatPresenceFlagsHex(value: number): string {
-  return `0x${value.toString(16).toUpperCase().padStart(4, '0')}`;
-}
