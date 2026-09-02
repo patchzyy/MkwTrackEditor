@@ -736,3 +736,174 @@ export function addRespawnForCheckpoint(
 export function createEmptyPathGroup(): KmpPathGroup {
   return createPathGroup();
 }
+
+// ---------------------------------------------------------------------------
+// Point factories and generic path editing
+// ---------------------------------------------------------------------------
+
+/** The three point sections that are organised into groups. */
+export type PathPointSection = 'ENPT' | 'ITPT' | 'CKPT';
+
+/** Default width/deviation for a freshly drawn route point, in game units. */
+export const DEFAULT_PATH_POINT_RANGE = 1000;
+
+/** Default width of a checkpoint drawn without an explicit second endpoint. */
+export const DEFAULT_CHECKPOINT_WIDTH = 2400;
+
+/** A new enemy route point. Copies the behaviour settings of `template` when one is given. */
+export function createEnemyPoint(position: Vec3, template?: KmpEnemyPoint): KmpEnemyPoint {
+  return {
+    position: { ...position },
+    range: template?.range ?? DEFAULT_PATH_POINT_RANGE,
+    setting1: template?.setting1 ?? 0,
+    setting2: template?.setting2 ?? 0,
+    setting3: template?.setting3 ?? 0,
+  };
+}
+
+/** A new item route point. */
+export function createItemPoint(position: Vec3, template?: KmpItemPoint): KmpItemPoint {
+  return {
+    position: { ...position },
+    range: template?.range ?? DEFAULT_PATH_POINT_RANGE,
+    setting1: template?.setting1 ?? 0,
+    setting2: template?.setting2 ?? 0,
+  };
+}
+
+/**
+ * A new checkpoint spanning `left` to `right` on the XZ plane. `prev`/`next` are filled in by
+ * {@link setCheckpointGraph} when the graph is written back, so they start out unset.
+ */
+export function createCheckpoint(left: Vec3, right: Vec3, template?: Partial<KmpCheckpoint>): KmpCheckpoint {
+  return {
+    x1: left.x,
+    z1: left.z,
+    x2: right.x,
+    z2: right.z,
+    respawnIndex: template?.respawnIndex ?? KMP_NULL_INDEX_8,
+    type: template?.type ?? KMP_NULL_INDEX_8,
+    prev: KMP_NULL_INDEX_8,
+    next: KMP_NULL_INDEX_8,
+  };
+}
+
+/**
+ * A checkpoint perpendicular to the direction of travel, centred on `center` and `width` units
+ * across. Used when appending to a path where only the new centre is known.
+ */
+export function createCheckpointAcross(center: Vec3, headingDegrees: number, width = DEFAULT_CHECKPOINT_WIDTH): KmpCheckpoint {
+  // `checkpointHeadingDegrees` uses forward = (z2-z1, -(x2-x1)), so the line itself runs along
+  // (-cos, sin) of the heading. Inverting that keeps a round-trip stable.
+  const radians = (headingDegrees * Math.PI) / 180;
+  const dx = -Math.cos(radians) * (width / 2);
+  const dz = Math.sin(radians) * (width / 2);
+  return createCheckpoint(
+    { x: center.x - dx, y: center.y, z: center.z - dz },
+    { x: center.x + dx, y: center.y, z: center.z + dz },
+  );
+}
+
+/** A path-graph edit that works for any point type (split, merge, link, reverse, delete …). */
+export type PathGraphEdit = <TPoint>(graph: PathGraph<TPoint>) => PathGraph<TPoint>;
+
+/**
+ * Applies a point-type-agnostic edit to one of the three grouped path sections and writes the
+ * result back into the file. Keeps callers from repeating the same three-way switch.
+ */
+export function editPathGraph(file: KmpFile, section: PathPointSection, edit: PathGraphEdit): KmpFile {
+  if (section === 'ENPT') return setEnemyPathGraph(file, edit(getEnemyPathGraph(file)));
+  if (section === 'ITPT') return setItemPathGraph(file, edit(getItemPathGraph(file)));
+  return setCheckpointGraph(file, edit(getCheckpointGraph(file)));
+}
+
+/** How many points a grouped path section holds. */
+export function pathPointCount(file: KmpFile, section: PathPointSection): number {
+  if (section === 'ENPT') return file.enemyPoints.length;
+  if (section === 'ITPT') return file.itemPoints.length;
+  return file.checkpoints.length;
+}
+
+/** The group records of a grouped path section. */
+export function pathGroups(file: KmpFile, section: PathPointSection): KmpPathGroup[] {
+  if (section === 'ENPT') return file.enemyGroups;
+  if (section === 'ITPT') return file.itemGroups;
+  return file.checkpointGroups;
+}
+
+/** `(groupIndex, localIndex)` for a flat point index, read straight from the group records. */
+export function locatePointInFile(
+  file: KmpFile,
+  section: PathPointSection,
+  globalIndex: number,
+): { groupIndex: number; localIndex: number } | null {
+  const groups = pathGroups(file, section);
+  for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+    const group = groups[groupIndex];
+    if (globalIndex >= group.start && globalIndex < group.start + group.length) {
+      return { groupIndex, localIndex: globalIndex - group.start };
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Checkpoint conveniences
+// ---------------------------------------------------------------------------
+
+/**
+ * Renumbers the key checkpoints 0, 1, 2 … in the order drivers reach them, keeping which
+ * checkpoints are keys and which are ordinary. This is the fix for "key checkpoints are out of
+ * order", which otherwise makes laps count early or not at all.
+ */
+export function renumberKeyCheckpoints(graph: CheckpointGraph): CheckpointGraph {
+  let nextKey = 0;
+  return {
+    kind: graph.kind,
+    groups: graph.groups.map((group) => ({
+      ...group,
+      prev: [...group.prev],
+      next: [...group.next],
+      points: group.points.map((checkpoint) =>
+        checkpoint.type === KMP_NULL_INDEX_8 ? { ...checkpoint } : { ...checkpoint, type: Math.min(nextKey++, 0xfe) },
+      ),
+    })),
+  };
+}
+
+/** Index of the respawn point closest to a checkpoint's centre, or null when there are none. */
+export function nearestRespawnIndexForCheckpoint(file: KmpFile, checkpointIndex: number): number | null {
+  const checkpoint = file.checkpoints[checkpointIndex];
+  if (!checkpoint || file.respawnPoints.length === 0) return null;
+  const center = checkpointCenter(checkpoint, 0);
+  let best = 0;
+  let bestDistance = Infinity;
+  file.respawnPoints.forEach((respawn, index) => {
+    const dx = respawn.position.x - center.x;
+    const dz = respawn.position.z - center.z;
+    const distance = dx * dx + dz * dz;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = index;
+    }
+  });
+  return best;
+}
+
+/**
+ * Points checkpoints at their nearest respawn. By default only checkpoints without a valid
+ * respawn are touched; pass `{ all: true }` to redo every checkpoint.
+ */
+export function assignNearestRespawns(file: KmpFile, options: { all?: boolean } = {}): { file: KmpFile; changed: number } {
+  if (file.respawnPoints.length === 0) return { file, changed: 0 };
+  let changed = 0;
+  const checkpoints = file.checkpoints.map((checkpoint, index) => {
+    const valid = checkpoint.respawnIndex < file.respawnPoints.length;
+    if (valid && !options.all) return checkpoint;
+    const nearest = nearestRespawnIndexForCheckpoint(file, index);
+    if (nearest === null || nearest === checkpoint.respawnIndex) return checkpoint;
+    changed++;
+    return { ...checkpoint, respawnIndex: nearest };
+  });
+  return { file: changed > 0 ? { ...file, checkpoints } : file, changed };
+}
