@@ -4,11 +4,9 @@ import InputManager from './InputManager.js';
 import { Frustum, AABB } from './Geometry.js';
 import { clampRange, projectionMatrixForFrustum, calcUnitSphericalCoordinates, projectionMatrixForCuboid, lerpAngle, MathConstants, getMatrixAxisY, transformVec3Mat4w1, Vec3Zero, Vec3UnitY, Vec3UnitX, Vec3UnitZ, transformVec3Mat4w0, getMatrixAxisZ, getMatrixAxisX, calcEulerAngleRotationFromSRTMatrix } from './MathHelpers.js';
 import { projectionMatrixConvertClipSpaceNearZ } from './gfx/helpers/ProjectionHelpers.js';
-import { WebXRContext, WebXRInputManager } from './WebXR.js';
 import { assert } from './util.js';
 import { projectionMatrixReverseDepth } from './gfx/helpers/ReversedDepthHelpers.js';
 import { GfxClipSpaceNearZ } from './gfx/platform/GfxPlatform.js';
-import { CameraAnimationManager, InterpolationStep, StudioPanel } from './Studio.js';
 import { GlobalSaveManager } from './SaveManager.js';
 
 // TODO(jstpierre): All of the cameras and camera controllers need a pretty big overhaul.
@@ -413,144 +411,6 @@ export class FPSCameraController implements CameraController {
         this.forceUpdate = false;
 
         return important ? CameraUpdateResult.ImportantChange : updated ? CameraUpdateResult.Changed : CameraUpdateResult.Unchanged;
-    }
-}
-
-export class StudioCameraController extends FPSCameraController {
-    public isAnimationPlaying: boolean = false;
-    private interpStep: InterpolationStep = new InterpolationStep();
-
-    constructor(private animationManager: CameraAnimationManager, private studioPanel: StudioPanel) {
-        super();
-    }
-
-    public override update(inputManager: InputManager, dt: number): CameraUpdateResult {
-        let result;
-
-        if (this.isAnimationPlaying) {
-            result = this.updateAnimation(dt);
-            if (result === CameraUpdateResult.Changed)
-                this.camera.worldMatrixUpdated();
-            // Set result to unchanged to prevent needless savestate creation during playback.
-            result = CameraUpdateResult.Unchanged;
-        } else {
-            result = super.update(inputManager, dt);
-
-            this.studioPanel.drawWorldHelpers(this.camera.clipFromWorldMatrix);
-        }
-
-        return result;
-    }
-
-    public updateAnimation(dt: number): CameraUpdateResult {
-        if (this.animationManager.isAnimationFinished()) {
-            this.studioPanel.stopAnimation();
-            return CameraUpdateResult.Unchanged;
-        }
-
-        this.animationManager.updateElapsedTime(dt);
-        this.animationManager.getAnimFrame(this.interpStep);
-        mat4.targetTo(this.camera.worldMatrix, this.interpStep.pos, this.interpStep.lookAtPos, Vec3UnitY);
-        mat4.rotateZ(this.camera.worldMatrix, this.camera.worldMatrix, this.interpStep.bank);
-        this.studioPanel.onAnimationAdvance(this.animationManager.getElapsedTimeSeconds());
-        return CameraUpdateResult.Changed;
-    }
-
-    public setToPosition(setStep: InterpolationStep): void {
-        mat4.targetTo(this.camera.worldMatrix, setStep.pos, setStep.lookAtPos, Vec3UnitY);
-        mat4.rotateZ(this.camera.worldMatrix, this.camera.worldMatrix, setStep.bank);
-        this.camera.worldMatrixUpdated();
-    }
-}
-
-export class XRCameraController {
-    public cameras: Camera[] = [];
-
-    public offset = vec3.create();
-
-    public worldScale: number = 70; // Roughly the size of Banjo in Banjo Kazooie
-
-    public update(webXRContext: WebXRContext, xrInputManager: WebXRInputManager): boolean {
-        if (!webXRContext.xrSession)
-            return false;
-
-        const cameraMoveSpeed = this.worldScale;
-        const keyMovement = xrInputManager.getTranslationDelta();
-        vec3.scale(keyMovement, keyMovement, cameraMoveSpeed);
-
-        let updated = false;
-        if (!vec3.exactEquals(keyMovement, Vec3Zero)) {            
-            const viewMovementSpace = webXRContext.xrViewerSpace.getOffsetReferenceSpace(
-                new XRRigidTransform(
-                    new DOMPointReadOnly(keyMovement[0], 0, keyMovement[2], 1), {x:0, y:0, z:1.0, w: 1.0}));
-            const pose = webXRContext.currentFrame.getPose(viewMovementSpace, webXRContext.xrLocalSpace);
-
-            if (pose) {
-                this.offset[0] += pose.transform.position.x;
-                this.offset[1] += keyMovement[1];
-                this.offset[2] += pose.transform.position.z;
-            }
-
-            updated = true;
-        }
-
-        // Ensure the number of XR cameras matches the number of views
-        if (webXRContext.views.length !== this.cameras.length) {
-            for (let i = this.cameras.length; i < webXRContext.views.length; i++)
-                this.cameras.push(new Camera());
-            this.cameras.length = webXRContext.views.length;
-        }
-
-        assert(this.cameras.length === webXRContext.views.length);
-        for (let i = 0; i < this.cameras.length; i++) {
-            const camera = this.cameras[i];
-            const xrView = webXRContext.views[i];
-
-            const cameraWorldMatrix = scratchMat4;
-            mat4.copy(cameraWorldMatrix, xrView.transform.matrix);
-            const cameraWorldMatrixTranslation = scratchVec3c;
-            mat4.getTranslation(cameraWorldMatrixTranslation, cameraWorldMatrix);
-            const originalViewTranslation = scratchVec3d;
-            mat4.getTranslation(originalViewTranslation, cameraWorldMatrix);
-
-            // Scale up view position and add offset
-            const cameraScale = scratchVec3e;
-            const cameraOrientation = scratchQuat;
-            mat4.getScaling(cameraScale, cameraWorldMatrix);
-            mat4.getRotation(cameraOrientation, cameraWorldMatrix);
-
-            const cameraAdditionalOffset = scratchVec3f;
-            vec3.copy(cameraAdditionalOffset, this.offset);
-            vec3.sub(cameraAdditionalOffset, cameraAdditionalOffset, originalViewTranslation);
-            vec3.scaleAndAdd(cameraWorldMatrixTranslation, cameraAdditionalOffset, cameraWorldMatrixTranslation, this.worldScale);
-
-            mat4.fromRotationTranslationScale(cameraWorldMatrix, cameraOrientation, cameraWorldMatrixTranslation, cameraScale);
-            
-            camera.isOrthographic = false;
-
-            mat4.copy(camera.worldMatrix, cameraWorldMatrix);
-            camera.worldMatrixUpdated();
-
-            // Unpack the projection matrix to get required parameters for setting clip / frustrum etc...
-            const cameraProjectionMatrix = xrView.projectionMatrix;
-            mat4.copy(camera.projectionMatrix, cameraProjectionMatrix);
-            const fov = 2.0*Math.atan(1.0/cameraProjectionMatrix[5]);
-            const aspect = cameraProjectionMatrix[5] / cameraProjectionMatrix[0];
-
-            // Extract camera properties
-            // TODO(jstpierre): Just trust the original projection matrix
-            camera.fovY = fov;
-            camera.aspect = aspect;
-
-            mat4.copy(camera.projectionMatrix, cameraProjectionMatrix);
-            projectionMatrixReverseDepth(camera.projectionMatrix);
-
-            camera.worldMatrixUpdated();
-
-            updated = true;
-        }
-
-        return updated;
     }
 }
 

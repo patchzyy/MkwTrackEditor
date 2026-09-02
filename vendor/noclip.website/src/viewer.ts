@@ -3,20 +3,22 @@ import * as UI from './ui.js';
 
 import InputManager from './InputManager.js';
 import { SceneDesc, SceneGroup } from "./SceneBase.js";
-import { CameraController, Camera, XRCameraController, CameraUpdateResult } from './Camera.js';
-import { GfxDevice, GfxSwapChain, GfxStatisticsGroup, GfxTexture, makeTextureDescriptor2D, GfxFormat, GfxPlatform } from './gfx/platform/GfxPlatform.js';
+import { CameraController, Camera, CameraUpdateResult } from './Camera.js';
+import { GfxDevice, GfxSwapChain, GfxStatisticsGroup, GfxTexture, GfxPlatform } from './gfx/platform/GfxPlatform.js';
 import { createSwapChainForWebGL2, gfxDeviceGetImpl_GL, GfxPlatformWebGL2Config } from './gfx/platform/GfxPlatformWebGL2.js';
-import { createSwapChainForWebGPU, GfxPlatformWebGPUConfig } from './gfx/platform/GfxPlatformWebGPU.js';
 import { RenderStatistics, RenderStatisticsTracker } from './RenderStatistics.js';
 import { AntialiasingMode } from './gfx/helpers/RenderGraphHelpers.js';
-import { WebXRContext, WebXRInputManager } from './WebXR.js';
 import { IS_DEVELOPMENT } from './BuildVersion.js';
 import { GlobalSaveManager } from './SaveManager.js';
 import { mat4 } from 'gl-matrix';
 
 export interface ViewerUpdateInfo {
     time: number;
-    webXRContext: WebXRContext | null;
+    /**
+     * Vestigial. The WebXR presentation path was removed from this vendored copy of noclip;
+     * callers may keep passing `null` here.
+     */
+    webXRContext?: null;
 }
 
 export interface Texture {
@@ -81,10 +83,8 @@ export function resizeCanvas(canvas: HTMLCanvasElement, width: number, height: n
 
 export class Viewer {
     public inputManager: InputManager;
-    public xrInputManager: WebXRInputManager = new WebXRInputManager();
 
     public cameraController: CameraController | null = null;
-    public xrCameraController: XRCameraController = new XRCameraController();
 
     public camera = new Camera();
 
@@ -176,69 +176,6 @@ export class Viewer {
         this.onstatistics(renderStatistics);
     }
 
-    private xrTempRT: GfxTexture | null = null;
-    private xrTempWidth: number = -1;
-    private xrTempHeight: number = -1;
-
-    private getXRTempRT(width: number, height: number): GfxTexture {
-        if (this.xrTempWidth !== width || this.xrTempHeight !== height) {
-            if (this.xrTempRT !== null)
-                this.gfxDevice.destroyTexture(this.xrTempRT);
-
-            this.xrTempRT = this.gfxDevice.createTexture(makeTextureDescriptor2D(GfxFormat.U8_RGBA_RT, width, height, 1));
-            this.xrTempWidth = width;
-            this.xrTempHeight = height;
-        }
-
-        return this.xrTempRT!;
-    }
-
-    private renderWebXR(webXRContext: WebXRContext) {
-        if (webXRContext.xrSession === null)
-            return;
-
-        const baseLayer = webXRContext.xrSession.renderState.baseLayer;
-        if (baseLayer === undefined)
-            return;
-
-        this.viewerRenderInput.time = this.sceneTime;
-        this.gfxSwapChain.configureSwapChain(baseLayer.framebufferWidth, baseLayer.framebufferHeight, baseLayer.framebuffer);
-        this.gfxDevice.beginFrame();
-
-        const swapChainTex = this.gfxSwapChain.getOnscreenTexture();
-        this.renderStatisticsTracker.beginFrame();
-
-        resetGfxStatisticsGroup(this.statisticsGroup);
-        this.gfxDevice.setStatisticsGroup(this.statisticsGroup);
-
-        for (let i = 0; i < webXRContext.views.length; i++) {
-            this.viewerRenderInput.camera = this.xrCameraController.cameras[i];
-            const xrView: XRView = webXRContext.views[i];
-            const viewport = baseLayer.getViewport(xrView);
-            if (viewport === undefined)
-                continue;
-
-            // Render the viewport to our temp RT.
-            this.viewerRenderInput.backbufferWidth = viewport.width;
-            this.viewerRenderInput.backbufferHeight = viewport.height;
-            const tempRT = this.getXRTempRT(viewport.width, viewport.height);
-            this.viewerRenderInput.onscreenTexture = tempRT;
-            this.renderViewport();
-
-            // Now composite into the backbuffer.
-            this.gfxDevice.copySubTexture2D(swapChainTex, viewport.x, viewport.y, tempRT, 0, 0);
-
-            // Reset the delta time so we don't advance time next render.
-            this.viewerRenderInput.deltaTime = 0;
-        }
-
-        this.gfxDevice.setStatisticsGroup(null);
-        this.gfxDevice.endFrame();
-        const renderStatistics = this.renderStatisticsTracker.endFrame();
-        this.finishRenderStatistics(renderStatistics, this.statisticsGroup);
-        this.onstatistics(renderStatistics);
-    }
-
     private finishRenderStatistics(statistics: RenderStatistics, statisticsGroup: GfxStatisticsGroup): void {
         if (statisticsGroup.drawCallCount)
             statistics.lines.push(`Draw Calls: ${statisticsGroup.drawCallCount}`);
@@ -308,13 +245,7 @@ export class Viewer {
         this.viewerRenderInput.deltaTime += deltaTime;
         this.sceneTime += deltaTime;
 
-        if (updateInfo.webXRContext !== null && updateInfo.webXRContext.views && updateInfo.webXRContext.xrSession) {
-            this.xrInputManager.afterFrame(updateInfo.webXRContext);
-            this.xrCameraController.update(updateInfo.webXRContext, this.xrInputManager);
-            this.renderWebXR(updateInfo.webXRContext);
-        } else {
-            this.render();
-        }
+        this.render();
 
         this.inputManager.afterFrame();
 
@@ -357,19 +288,6 @@ export async function initializeViewerWebGL2(canvas: HTMLCanvasElement): Promise
     const gfxSwapChain = createSwapChainForWebGL2(gl, config);
     const viewer = new Viewer(gfxSwapChain, canvas);
 
-    return { viewer, error: InitErrorCode.SUCCESS };
-}
-
-export async function initializeViewerWebGPU(canvas: HTMLCanvasElement): Promise<ViewerOut> {
-    const config = new GfxPlatformWebGPUConfig();
-    config.trackResources = IS_DEVELOPMENT;
-    config.shaderDebug = IS_DEVELOPMENT;
-
-    const gfxSwapChain = await createSwapChainForWebGPU(canvas, config);
-    if (gfxSwapChain === null)
-        return { error: InitErrorCode.NO_WEBGPU_GENERIC };
-
-    const viewer = new Viewer(gfxSwapChain, canvas);
     return { viewer, error: InitErrorCode.SUCCESS };
 }
 
