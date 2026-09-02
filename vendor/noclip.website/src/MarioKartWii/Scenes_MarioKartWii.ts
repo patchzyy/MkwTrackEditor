@@ -9,7 +9,7 @@ import * as Yaz0 from '../Common/Compression/Yaz0.js';
 
 import { assert, readString, hexzero, assertExists } from '../util.js';
 import ArrayBufferSlice from '../ArrayBufferSlice.js';
-import { mat4, vec3, vec4 } from 'gl-matrix';
+import { mat4, vec3, vec4, type ReadonlyVec3 } from 'gl-matrix';
 import { RRESTextureHolder, MDL0Model, MDL0ModelInstance } from '../rres/render.js';
 import AnimationController from '../AnimationController.js';
 import { fillSceneParamsDataOnTemplate, GXRenderHelperGfx } from '../gx/gx_render.js';
@@ -27,6 +27,14 @@ import { GXMaterialHacks } from '../gx/gx_material.js';
 import { Cyan, Green, Magenta, Red, White, Yellow, colorNewFromRGBA, type Color } from '../Color.js';
 import { DebugDrawFlags } from '../gfx/helpers/DebugDraw.js';
 import { AABB } from '../Geometry.js';
+import {
+    EditorMeshPicker,
+    type EditorMeshBounds,
+    type EditorMeshGranularity,
+    type EditorMeshPickResult,
+    type EditorMeshTargetRef,
+    type EditorMeshTransformInput,
+} from './EditorMeshPicker.js';
 
 interface ObjFlowObj {
     name: string;
@@ -145,6 +153,40 @@ interface EditorOverlayRouteDeviationCap {
     hovered: boolean;
 }
 
+interface EditorOverlayCameraGizmo {
+    id: string;
+    /** CAME entry index. */
+    index: number;
+    type: number;
+    position: { x: number; y: number; z: number; };
+    rotation: { x: number; y: number; z: number; };
+    viewStart: { x: number; y: number; z: number; };
+    viewEnd: { x: number; y: number; z: number; };
+    zoomStart: number;
+    zoomEnd: number;
+    /** Resolved POTI route polyline, when the camera has one. */
+    routePoints: Array<{ x: number; y: number; z: number; }>;
+    routeIndex: number;
+    selected: boolean;
+    hovered: boolean;
+    label: string;
+    /** Position of this camera in the opening chain, 1-based; 0 when it is not part of it. */
+    openingOrder: number;
+}
+
+interface EditorOverlayCameraChainLink {
+    from: { x: number; y: number; z: number; };
+    to: { x: number; y: number; z: number; };
+    order: number;
+}
+
+interface EditorOverlayMeshHighlight {
+    /** Scene-space line segments (x0,y0,z0,x1,y1,z1). */
+    edges: Array<[number, number, number, number, number, number]>;
+    bounds: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } } | null;
+    selected: boolean;
+}
+
 interface EditorOverlayData {
     tool: 'translate' | 'rotate' | 'scale';
     points: EditorOverlayPoint[];
@@ -160,23 +202,27 @@ interface EditorOverlayData {
     fillBetweenPreview: EditorOverlayFillBetweenPreview[];
     routeDeviationSegments: EditorOverlayRouteDeviationSegment[];
     routeDeviationCaps: EditorOverlayRouteDeviationCap[];
+    cameraGizmos?: EditorOverlayCameraGizmo[];
+    cameraChainLinks?: EditorOverlayCameraChainLink[];
 }
 
 type EditorViewMode = 'normal' | 'dev' | 'topdown' | 'ortho';
 type EditorDOFMode = 'full' | 'reduced' | 'off';
+type EditorMode = 'kmp' | 'camera' | 'model' | 'visual';
 
 type EditorOverlayPick =
     | { kind: 'point'; id: string; }
     | { kind: 'center'; id: string; }
     | { kind: 'plane'; id: string; plane: 'xy' | 'xz' | 'yz'; }
     | { kind: 'axis'; id: string; axis: 'x' | 'y' | 'z'; }
-    | { kind: 'checkpointEndpoint'; id: string; side: 'left' | 'right'; };
+    | { kind: 'checkpointEndpoint'; id: string; side: 'left' | 'right'; }
+    | { kind: 'cameraViewPoint'; id: string; which: 'start' | 'end'; };
 
 const fallbackMaterialHacks: GXMaterialHacks = {
     lightingFudge: (p) => `(0.5 * (${p.ambSource} + 0.2) * ${p.matSource})`,
 };
 
-const emptyEditorOverlayData: EditorOverlayData = { tool: 'translate', points: [], lines: [], centerHandle: null, axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [], startSlots: [], fillBetweenPreview: [], routeDeviationSegments: [], routeDeviationCaps: [] };
+const emptyEditorOverlayData: EditorOverlayData = { tool: 'translate', points: [], lines: [], centerHandle: null, axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [], startSlots: [], fillBetweenPreview: [], routeDeviationSegments: [], routeDeviationCaps: [], cameraGizmos: [], cameraChainLinks: [] };
 const editorOverlayLineOptions = { flags: DebugDrawFlags.DepthTint };
 const editorOverlayPointOptions = { flags: DebugDrawFlags.DepthTint };
 const editorOverlayFillBetweenPreviewColor = colorNewFromRGBA(1.0, 0.9, 0.3, 0.88);
@@ -228,6 +274,40 @@ const editorOverlayAxisColors = new Map<'x' | 'y' | 'z', Color>([
     ['y', Green],
     ['z', Cyan],
 ]);
+
+// CAME type colours, matching src/lib/cameraPreview.ts CAMERA_TYPES.
+const editorCameraTypeColors: Color[] = [
+    colorNewFromRGBA(1.00, 0.84, 0.25, 0.95), // 0 Goal
+    colorNewFromRGBA(0.35, 0.85, 1.00, 0.95), // 1 FixSearch
+    colorNewFromRGBA(0.25, 0.72, 0.95, 0.95), // 2 PathSearch
+    colorNewFromRGBA(0.45, 0.95, 0.60, 0.95), // 3 KartFollow
+    colorNewFromRGBA(1.00, 0.62, 0.35, 0.95), // 4 KartPathFollow
+    colorNewFromRGBA(1.00, 0.45, 0.72, 0.95), // 5 OP_FixMoveAt
+    colorNewFromRGBA(0.86, 0.40, 1.00, 0.95), // 6 OP_PathMoveAt
+    colorNewFromRGBA(0.70, 0.70, 0.75, 0.95), // 7 MiniGame
+    colorNewFromRGBA(0.70, 0.70, 0.75, 0.95), // 8 MissionSuccess
+    colorNewFromRGBA(0.60, 0.60, 0.66, 0.95), // 9 Unknown
+];
+const editorCameraFallbackColor = colorNewFromRGBA(0.6, 0.6, 0.66, 0.95);
+const editorCameraSelectedColor = White;
+const editorCameraHoveredColor = colorNewFromRGBA(0.78, 0.92, 1.0, 0.98);
+const editorCameraViewLineColor = colorNewFromRGBA(0.55, 0.95, 0.75, 0.75);
+const editorCameraViewEndLineColor = colorNewFromRGBA(0.95, 0.75, 0.45, 0.6);
+const editorCameraRouteLineColor = colorNewFromRGBA(0.95, 0.45, 0.95, 0.7);
+const editorCameraChainColor = colorNewFromRGBA(1.0, 0.9, 0.35, 0.9);
+const editorMeshHoverColor = colorNewFromRGBA(0.45, 0.95, 1.0, 0.75);
+const editorMeshSelectedColor = colorNewFromRGBA(1.0, 0.72, 0.2, 0.95);
+const editorMeshBoxColor = colorNewFromRGBA(1.0, 0.85, 0.35, 0.9);
+/** Length of the drawn camera frustum, in scene units (the scene renders at 0.1x game units). */
+const editorCameraFrustumLength = 90;
+
+function getEditorCameraColor(gizmo: EditorOverlayCameraGizmo): Color {
+    if (gizmo.selected)
+        return editorCameraSelectedColor;
+    if (gizmo.hovered)
+        return editorCameraHoveredColor;
+    return editorCameraTypeColors[gizmo.type] ?? editorCameraFallbackColor;
+}
 
 function getCollisionOverlayColor(typeIndex: number, solid: boolean): Color {
     const alphaScale = solid ? 5.0 : 1.0;
@@ -352,6 +432,8 @@ function getModelInstances(baseObj: BaseObject): MDL0ModelInstance[] {
         return baseObj.getModelInstances();
     else if (baseObj instanceof CourseBGRenderer)
         return [baseObj.modelInstance];
+    else if (baseObj instanceof EditorImportedModelRenderer)
+        return [baseObj.modelInstance];
     else if (baseObj instanceof EditorStartPreviewRenderer)
         return [...baseObj.kartInstances, baseObj.driverInstance];
     else if (baseObj instanceof MDL0ModelInstance)
@@ -393,6 +475,17 @@ class MarioKartWiiRenderer {
     private editorOverlayViewportHeight = 1;
     private editorOverlayScratchMatrix = mat4.create();
     private editorDOFMode: EditorDOFMode = 'off';
+    private editorMode: EditorMode = 'kmp';
+    private editorMeshPicker: EditorMeshPicker | null = null;
+    private editorMeshHighlights: EditorOverlayMeshHighlight[] = [];
+    private editorImportedInstances = new Map<string, EditorImportedModelRenderer>();
+    private editorImportedInstanceSerial = 0;
+    private editorWorldFromClipMatrix = mat4.create();
+    private editorCameraWorldPosition = vec3.create();
+    private editorMeshPickScratchOrigin = vec3.create();
+    private editorMeshPickScratchDirection = vec3.create();
+    private editorMeshPickScratchPoint = vec4.create();
+    private editorMeshHighlightBox = new AABB();
 
     constructor(context: SceneContext, public commonCache: CommonCache, public courseArc: U8.U8Archive, useFallbackLighting: boolean) {
         this.renderHelper = new GXRenderHelperGfx(context.device, context);
@@ -548,6 +641,231 @@ class MarioKartWiiRenderer {
             this.eggDOF.setBlurScale(mode === 'reduced' ? 0.45 : 1.0);
     }
 
+    //#region Editor mode
+
+    /**
+     * Which editor mode the app is in. Controls which overlays are drawn:
+     *  - `kmp`     : the KMP overlays exactly as before (cameras stay lightweight point markers).
+     *  - `camera`  : KMP overlays plus the full CAME gizmos (frustums, view points, chain).
+     *  - `model`   : KMP overlays hidden, mesh hover/selection highlight shown.
+     *  - `visual`  : KMP overlays hidden.
+     */
+    public setEditorMode(mode: EditorMode): void {
+        this.editorMode = mode;
+        if (mode !== 'model')
+            this.editorMeshHighlights = [];
+    }
+
+    public getEditorMode(): EditorMode {
+        return this.editorMode;
+    }
+
+    //#endregion
+
+    //#region Model mode: mesh picking and per-mesh editing
+
+    private getEditorMeshPicker(): EditorMeshPicker {
+        if (this.editorMeshPicker === null) {
+            this.editorMeshPicker = new EditorMeshPicker(this.renderHelper.device);
+            this.editorMeshPicker.sceneScale = scaleFactor;
+            this.refreshEditorMeshSources();
+        }
+        return this.editorMeshPicker;
+    }
+
+    /** (Re)collects the course/skybox/imported model instances the picker works on. */
+    public refreshEditorMeshSources(): void {
+        if (this.editorMeshPicker === null)
+            return;
+        const sources: Array<{ archivePath: string; modelInstance: MDL0ModelInstance }> = [];
+        for (const object of this.baseObjects) {
+            if (!(object instanceof CourseBGRenderer) && !(object instanceof EditorImportedModelRenderer))
+                continue;
+            const archivePath = object instanceof EditorImportedModelRenderer ? object.archivePath : object.archivePath;
+            sources.push({ archivePath, modelInstance: object.modelInstance });
+        }
+        this.editorMeshPicker.setSources(sources);
+    }
+
+    /** Builds a world-space ray from normalized (0..1) viewport coordinates. */
+    private buildEditorPickRay(normalizedX: number, normalizedY: number): { origin: vec3; direction: vec3 } | null {
+        if (!Number.isFinite(normalizedX) || !Number.isFinite(normalizedY))
+            return null;
+        const ndcX = normalizedX * 2 - 1;
+        const ndcY = 1 - normalizedY * 2;
+
+        const unproject = (dst: vec3, ndcZ: number): boolean => {
+            vec4.set(this.editorMeshPickScratchPoint, ndcX, ndcY, ndcZ, 1);
+            vec4.transformMat4(this.editorMeshPickScratchPoint, this.editorMeshPickScratchPoint, this.editorWorldFromClipMatrix);
+            const w = this.editorMeshPickScratchPoint[3];
+            if (!Number.isFinite(w) || Math.abs(w) < 1e-9)
+                return false;
+            vec3.set(dst, this.editorMeshPickScratchPoint[0] / w, this.editorMeshPickScratchPoint[1] / w, this.editorMeshPickScratchPoint[2] / w);
+            return true;
+        };
+
+        const near = this.editorMeshPickScratchOrigin;
+        const far = this.editorMeshPickScratchDirection;
+        if (!unproject(near, 0) || !unproject(far, 1))
+            return null;
+
+        const origin = vec3.clone(this.editorCameraWorldPosition);
+        // Pick whichever unprojected point is further from the camera so the ray points forward.
+        const nearDistance = vec3.squaredDistance(origin, near);
+        const farDistance = vec3.squaredDistance(origin, far);
+        const target = farDistance >= nearDistance ? far : near;
+        const direction = vec3.sub(vec3.create(), target, origin);
+        if (vec3.squaredLength(direction) < 1e-12)
+            return null;
+        vec3.normalize(direction, direction);
+        return { origin, direction };
+    }
+
+    /**
+     * Picks the polygon group (or connected component) under the cursor.
+     * Coordinates are normalized viewport coordinates (0..1, y down).
+     */
+    public pickEditorMesh(normalizedX: number, normalizedY: number, granularity: EditorMeshGranularity = 'component'): EditorMeshPickResult | null {
+        const ray = this.buildEditorPickRay(normalizedX, normalizedY);
+        if (ray === null)
+            return null;
+        return this.getEditorMeshPicker().pick(ray.origin, ray.direction, granularity);
+    }
+
+    /** Every mesh whose centre projects inside the given normalized rectangle. */
+    public pickEditorMeshesInRect(
+        normalizedX0: number, normalizedY0: number,
+        normalizedX1: number, normalizedY1: number,
+        granularity: EditorMeshGranularity = 'component',
+    ): EditorMeshPickResult[] {
+        if (!Number.isFinite(normalizedX0) || !Number.isFinite(normalizedY0) || !Number.isFinite(normalizedX1) || !Number.isFinite(normalizedY1))
+            return [];
+        const minX = Math.min(normalizedX0, normalizedX1);
+        const maxX = Math.max(normalizedX0, normalizedX1);
+        const minY = Math.min(normalizedY0, normalizedY1);
+        const maxY = Math.max(normalizedY0, normalizedY1);
+        const width = Math.max(1, this.editorOverlayViewportWidth);
+        const height = Math.max(1, this.editorOverlayViewportHeight);
+        return this.getEditorMeshPicker().pickInRect(minX, minY, maxX, maxY, (point) => {
+            const projected = this.projectScenePoint(point);
+            return projected === null ? null : { x: projected.x / width, y: projected.y / height };
+        }, granularity);
+    }
+
+    /** Bounding box of a mesh target, in KMP/game units. */
+    public getEditorMeshComponentBounds(target: EditorMeshTargetRef): EditorMeshBounds | null {
+        return this.getEditorMeshPicker().getBounds(target);
+    }
+
+    public getEditorMeshComponentCount(target: EditorMeshTargetRef): number {
+        return this.getEditorMeshPicker().getComponentCount(target);
+    }
+
+    /** Applies an extra transform to a single draw call / component. Pass null to reset. */
+    public setEditorMeshTransform(target: EditorMeshTargetRef, transform: EditorMeshTransformInput | null): boolean {
+        return this.getEditorMeshPicker().setTransform(target, transform);
+    }
+
+    public setEditorMeshVisible(target: EditorMeshTargetRef, visible: boolean): boolean {
+        return this.getEditorMeshPicker().setVisible(target, visible);
+    }
+
+    public clearEditorMeshEdits(): void {
+        this.getEditorMeshPicker().clearAllEdits();
+    }
+
+    public listEditorMeshes() {
+        return this.getEditorMeshPicker().listMeshes();
+    }
+
+    /** Sets the hovered/selected mesh highlight drawn through the debug-draw path. */
+    public setEditorMeshHighlight(targets: Array<{ target: EditorMeshTargetRef; selected: boolean }>): void {
+        if (targets.length === 0) {
+            this.editorMeshHighlights = [];
+            return;
+        }
+        const picker = this.getEditorMeshPicker();
+        const highlights: EditorOverlayMeshHighlight[] = [];
+        for (const entry of targets) {
+            const bounds = picker.getSceneBounds(entry.target);
+            highlights.push({
+                edges: picker.getHighlightEdges(entry.target, entry.selected ? 6000 : 2500),
+                bounds: bounds === null ? null : { min: { ...bounds.min }, max: { ...bounds.max } },
+                selected: entry.selected,
+            });
+        }
+        this.editorMeshHighlights = highlights;
+    }
+
+    /**
+     * Adds an imported object BRRES to the scene as course geometry (course lighting,
+     * opaque sort layer). Returns an id for later update/remove.
+     */
+    public addEditorModelInstance(device: GfxDevice, brresBuffer: ArrayBufferSlice, modelName: string | null, matrix: mat4 | null): string | null {
+        const id = `imported-${this.editorImportedInstanceSerial++}`;
+        const archivePath = `./editor-imported/${id}.brres`;
+        let rres: BRRES.RRES;
+        try {
+            rres = this.modelCache.ensureRRES(device, this, archivePath, brresBuffer);
+        } catch (error) {
+            console.warn('Failed to parse imported BRRES', error);
+            return null;
+        }
+        const resolvedName = modelName ?? rres.mdl0[0]?.name ?? null;
+        if (resolvedName === null)
+            return null;
+        const mdl0Model = this.modelCache.modelCache.get(resolvedName);
+        if (mdl0Model === undefined)
+            return null;
+        const modelInstance = new MDL0ModelInstance(this.textureHolder, mdl0Model, resolvedName);
+        modelInstance.setSortKeyLayer(GfxRendererLayer.OPAQUE);
+        const renderer = new EditorImportedModelRenderer(id, archivePath, modelInstance);
+        if (matrix !== null)
+            mat4.copy(renderer.modelMatrix, matrix);
+        else
+            mat4.copy(renderer.modelMatrix, posMtx);
+        this.editorImportedInstances.set(id, renderer);
+        this.baseObjects.push(renderer);
+        this.refreshEditorMeshSources();
+        return id;
+    }
+
+    public updateEditorModelInstance(id: string, matrix: mat4): boolean {
+        const renderer = this.editorImportedInstances.get(id);
+        if (renderer === undefined)
+            return false;
+        mat4.copy(renderer.modelMatrix, matrix);
+        this.editorMeshPicker?.invalidate();
+        return true;
+    }
+
+    public setEditorModelInstanceVisible(id: string, visible: boolean): boolean {
+        const renderer = this.editorImportedInstances.get(id);
+        if (renderer === undefined)
+            return false;
+        renderer.visible = visible;
+        return true;
+    }
+
+    public removeEditorModelInstance(device: GfxDevice, id: string): boolean {
+        const renderer = this.editorImportedInstances.get(id);
+        if (renderer === undefined)
+            return false;
+        this.editorImportedInstances.delete(id);
+        const index = this.baseObjects.indexOf(renderer);
+        if (index >= 0)
+            this.baseObjects.splice(index, 1);
+        renderer.destroy(device);
+        this.refreshEditorMeshSources();
+        return true;
+    }
+
+    public listEditorModelInstances(): string[] {
+        return [...this.editorImportedInstances.keys()];
+    }
+
+    //#endregion
+
     public pickEditorHandle(normalizedX: number, normalizedY: number): EditorOverlayPick | null {
         if (!Number.isFinite(normalizedX) || !Number.isFinite(normalizedY))
             return null;
@@ -600,6 +918,29 @@ class MarioKartWiiRenderer {
             const score = distanceSq + projected.depth * 0.0001;
             if (best === null || score < best.score)
                 best = { result: { kind: 'checkpointEndpoint', id: endpoint.id, side: endpoint.side }, score };
+        }
+
+        if (this.editorMode === 'camera') {
+            for (const gizmo of this.editorOverlayData.cameraGizmos ?? []) {
+                const handles: Array<{ which: 'start' | 'end'; position: { x: number; y: number; z: number } }> = [
+                    { which: 'start', position: gizmo.viewStart },
+                    { which: 'end', position: gizmo.viewEnd },
+                ];
+                for (const handle of handles) {
+                    const projected = this.projectEditorOverlayPoint(handle.position);
+                    if (projected === null)
+                        continue;
+                    const dx = projected.x - targetX;
+                    const dy = projected.y - targetY;
+                    const distanceSq = dx * dx + dy * dy;
+                    const radius = gizmo.selected ? 26 : 18;
+                    if (distanceSq > radius * radius)
+                        continue;
+                    const score = distanceSq + projected.depth * 0.0001;
+                    if (best === null || score < best.score)
+                        best = { result: { kind: 'cameraViewPoint', id: gizmo.id, which: handle.which }, score };
+                }
+            }
         }
 
         for (let i = 0; i < this.editorOverlayData.points.length; i++) {
@@ -695,6 +1036,8 @@ class MarioKartWiiRenderer {
     protected prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
         this.animationController.setTimeInMilliseconds(viewerInput.time);
         mat4.copy(this.editorOverlayClipFromWorldMatrix, viewerInput.camera.clipFromWorldMatrix);
+        mat4.invert(this.editorWorldFromClipMatrix, this.editorOverlayClipFromWorldMatrix);
+        vec3.set(this.editorCameraWorldPosition, viewerInput.camera.worldMatrix[12], viewerInput.camera.worldMatrix[13], viewerInput.camera.worldMatrix[14]);
         this.editorOverlayViewportWidth = viewerInput.backbufferWidth;
         this.editorOverlayViewportHeight = viewerInput.backbufferHeight;
         this.renderHelper.debugDraw.beginFrame(viewerInput.camera.projectionMatrix, viewerInput.camera.viewMatrix, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
@@ -763,6 +1106,8 @@ class MarioKartWiiRenderer {
     }
 
     public destroy(device: GfxDevice): void {
+        this.editorMeshPicker?.destroy();
+        this.editorMeshPicker = null;
         this.renderHelper.destroy();
         this.textureHolder.destroy(device);
         this.modelCache.destroy(device);
@@ -866,6 +1211,16 @@ class MarioKartWiiRenderer {
             );
         }
 
+        for (const highlight of this.editorMeshHighlights)
+            this.drawEditorMeshHighlight(highlight);
+
+        if (this.editorMode === 'camera') {
+            for (const link of this.editorOverlayData.cameraChainLinks ?? [])
+                this.drawEditorCameraChainLink(link);
+            for (const gizmo of this.editorOverlayData.cameraGizmos ?? [])
+                this.drawEditorCameraGizmo(gizmo);
+        }
+
         for (let i = 0; i < this.editorOverlayData.points.length; i++) {
             const point = this.editorOverlayData.points[i];
             if (point.section === 'AREA') {
@@ -891,6 +1246,156 @@ class MarioKartWiiRenderer {
                 16,
                 editorOverlayPointOptions,
             );
+        }
+    }
+
+    //#region Camera (CAME) gizmos
+
+    private drawEditorCameraGizmo(gizmo: EditorOverlayCameraGizmo): void {
+        const debugDraw = this.renderHelper.debugDraw;
+        const color = getEditorCameraColor(gizmo);
+        const position = this.toScenePosition(this.editorOverlayScratchA, gizmo.position);
+        const markerSize = gizmo.selected ? 26 : gizmo.hovered ? 22 : 16;
+
+        debugDraw.drawSphereLine(position, markerSize, color, 16, editorOverlayPointOptions);
+        debugDraw.drawLocator(position, markerSize * 1.4, color, editorOverlayPointOptions);
+
+        // Route link.
+        if (gizmo.routePoints.length > 1) {
+            for (let i = 0; i + 1 < gizmo.routePoints.length; i++) {
+                debugDraw.drawLine(
+                    this.toScenePosition(this.editorOverlayScratchB, gizmo.routePoints[i]),
+                    this.toScenePosition(this.editorOverlayScratchC, gizmo.routePoints[i + 1]),
+                    editorCameraRouteLineColor,
+                    undefined,
+                    editorOverlayLineOptions,
+                );
+            }
+            debugDraw.drawLine(position, this.toScenePosition(this.editorOverlayScratchB, gizmo.routePoints[0]), editorCameraRouteLineColor, undefined, editorOverlayLineOptions);
+        }
+
+        // Sight lines to the view point handles.
+        const viewStart = this.toScenePosition(this.editorOverlayScratchB, gizmo.viewStart);
+        debugDraw.drawLine(position, viewStart, editorCameraViewLineColor, undefined, editorOverlayLineOptions);
+        debugDraw.drawSphereLine(viewStart, gizmo.selected ? 18 : 12, editorCameraViewLineColor, 12, editorOverlayPointOptions);
+
+        const hasViewEnd = gizmo.viewEnd.x !== gizmo.viewStart.x || gizmo.viewEnd.y !== gizmo.viewStart.y || gizmo.viewEnd.z !== gizmo.viewStart.z;
+        if (hasViewEnd) {
+            const viewEnd = this.toScenePosition(this.editorOverlayScratchC, gizmo.viewEnd);
+            debugDraw.drawLine(position, viewEnd, editorCameraViewEndLineColor, undefined, editorOverlayLineOptions);
+            debugDraw.drawLine(viewStart, viewEnd, editorCameraViewEndLineColor, undefined, editorOverlayLineOptions);
+            debugDraw.drawSphereLine(viewEnd, gizmo.selected ? 18 : 12, editorCameraViewEndLineColor, 12, editorOverlayPointOptions);
+        }
+
+        // Frustum wireframes for the start and end field of view.
+        this.drawEditorCameraFrustum(gizmo.position, gizmo.viewStart, gizmo.zoomStart, color);
+        if (Math.abs(gizmo.zoomEnd - gizmo.zoomStart) > 0.01 || hasViewEnd)
+            this.drawEditorCameraFrustum(gizmo.position, hasViewEnd ? gizmo.viewEnd : gizmo.viewStart, gizmo.zoomEnd, editorCameraViewEndLineColor);
+
+        const label = gizmo.openingOrder > 0 ? `${gizmo.openingOrder}. ${gizmo.label}` : gizmo.label;
+        debugDraw.drawWorldTextRU(
+            label,
+            position,
+            color,
+            undefined,
+            undefined,
+            { ...editorOverlayPointOptions, fontSize: gizmo.selected ? 22 : 18, textAlign: 'center' },
+        );
+    }
+
+    private drawEditorCameraFrustum(
+        position: { x: number; y: number; z: number },
+        target: { x: number; y: number; z: number },
+        fovDegrees: number,
+        color: Color,
+    ): void {
+        const debugDraw = this.renderHelper.debugDraw;
+        const apex = this.toScenePosition(this.editorOverlayScratchD, position);
+
+        const forward = vec3.set(
+            this.editorOverlayScratchE,
+            (target.x - position.x) * scaleFactor,
+            (target.y - position.y) * scaleFactor,
+            (target.z - position.z) * scaleFactor,
+        );
+        if (vec3.squaredLength(forward) < 1e-8)
+            vec3.set(forward, 0, 0, 1);
+        const length = Math.min(editorCameraFrustumLength, Math.max(20, vec3.length(forward)));
+        vec3.normalize(forward, forward);
+
+        const right = vec3.set(this.editorOverlayScratchF, -forward[2], 0, forward[0]);
+        if (vec3.squaredLength(right) < 1e-8)
+            vec3.set(right, 1, 0, 0);
+        vec3.normalize(right, right);
+        const up = vec3.cross(this.editorOverlayScratchG, right, forward);
+        vec3.normalize(up, up);
+
+        const halfHeight = Math.tan((Math.max(1, Math.min(179, fovDegrees)) * Math.PI) / 360) * length;
+        const halfWidth = halfHeight * (16 / 9);
+
+        const corner = (dst: vec3, sx: number, sy: number): vec3 => {
+            vec3.set(
+                dst,
+                apex[0] + forward[0] * length + right[0] * halfWidth * sx + up[0] * halfHeight * sy,
+                apex[1] + forward[1] * length + right[1] * halfWidth * sx + up[1] * halfHeight * sy,
+                apex[2] + forward[2] * length + right[2] * halfWidth * sx + up[2] * halfHeight * sy,
+            );
+            return dst;
+        };
+
+        const c0 = vec3.clone(corner(this.editorOverlayScratchH, -1, -1));
+        const c1 = vec3.clone(corner(this.editorOverlayScratchH, 1, -1));
+        const c2 = vec3.clone(corner(this.editorOverlayScratchH, 1, 1));
+        const c3 = vec3.clone(corner(this.editorOverlayScratchH, -1, 1));
+
+        debugDraw.drawLine(apex, c0, color, undefined, editorOverlayLineOptions);
+        debugDraw.drawLine(apex, c1, color, undefined, editorOverlayLineOptions);
+        debugDraw.drawLine(apex, c2, color, undefined, editorOverlayLineOptions);
+        debugDraw.drawLine(apex, c3, color, undefined, editorOverlayLineOptions);
+        debugDraw.drawLine(c0, c1, color, undefined, editorOverlayLineOptions);
+        debugDraw.drawLine(c1, c2, color, undefined, editorOverlayLineOptions);
+        debugDraw.drawLine(c2, c3, color, undefined, editorOverlayLineOptions);
+        debugDraw.drawLine(c3, c0, color, undefined, editorOverlayLineOptions);
+    }
+
+    private drawEditorCameraChainLink(link: EditorOverlayCameraChainLink): void {
+        const debugDraw = this.renderHelper.debugDraw;
+        const from = this.toScenePosition(this.editorOverlayScratchA, link.from);
+        const to = this.toScenePosition(this.editorOverlayScratchB, link.to);
+        debugDraw.drawLine(from, to, editorCameraChainColor, undefined, editorOverlayLineOptions);
+        const mid = vec3.set(
+            this.editorOverlayScratchC,
+            (from[0] + to[0]) * 0.5,
+            (from[1] + to[1]) * 0.5,
+            (from[2] + to[2]) * 0.5,
+        );
+        debugDraw.drawWorldTextRU(
+            `${link.order}`,
+            mid,
+            editorCameraChainColor,
+            undefined,
+            undefined,
+            { ...editorOverlayPointOptions, fontSize: 20, textAlign: 'center' },
+        );
+    }
+
+    //#endregion
+
+    private drawEditorMeshHighlight(highlight: EditorOverlayMeshHighlight): void {
+        const debugDraw = this.renderHelper.debugDraw;
+        const color = highlight.selected ? editorMeshSelectedColor : editorMeshHoverColor;
+        for (const edge of highlight.edges) {
+            vec3.set(this.editorOverlayScratchA, edge[0], edge[1], edge[2]);
+            vec3.set(this.editorOverlayScratchB, edge[3], edge[4], edge[5]);
+            debugDraw.drawLine(this.editorOverlayScratchA, this.editorOverlayScratchB, color, undefined, editorOverlayLineOptions);
+        }
+        if (highlight.bounds !== null) {
+            this.editorMeshHighlightBox.set(
+                highlight.bounds.min.x, highlight.bounds.min.y, highlight.bounds.min.z,
+                highlight.bounds.max.x, highlight.bounds.max.y, highlight.bounds.max.z,
+            );
+            mat4.identity(this.editorOverlayScratchMatrix);
+            debugDraw.drawBoxLine(this.editorMeshHighlightBox, this.editorOverlayScratchMatrix, highlight.selected ? editorMeshBoxColor : color, editorOverlayLineOptions);
         }
     }
 
@@ -2007,7 +2512,42 @@ class CourseBGRenderer implements BaseObject {
     public visible = true;
     public modelMatrix = mat4.create();
 
-    constructor(public modelInstance: MDL0ModelInstance) {
+    constructor(public modelInstance: MDL0ModelInstance, public archivePath: string = '') {
+    }
+
+    public setVertexColorsEnabled(v: boolean): void {
+        this.modelInstance.setVertexColorsEnabled(v);
+    }
+
+    public setTexturesEnabled(v: boolean): void {
+        this.modelInstance.setTexturesEnabled(v);
+    }
+
+    public bindLightSetting(lightSetting: BRRES.LightSetting): void {
+        this.modelInstance.bindLightSetting(lightSetting);
+    }
+
+    public prepareToRender(device: GfxDevice, renderInstManager: GfxRenderInstManager, viewerInput: Viewer.ViewerRenderInput): void {
+        if (!this.visible)
+            return;
+        mat4.copy(this.modelInstance.modelMatrix, this.modelMatrix);
+        this.modelInstance.prepareToRender(device, renderInstManager, viewerInput);
+    }
+
+    public destroy(device: GfxDevice): void {
+    }
+}
+
+/**
+ * A model imported from the content browser and dropped into the scene as course
+ * geometry. Rendered with the same lighting/sort layer as `course_model.brres` so it
+ * blends in with the track; the BRRES writer bakes it into the course model on export.
+ */
+class EditorImportedModelRenderer implements BaseObject {
+    public visible = true;
+    public modelMatrix = mat4.create();
+
+    constructor(public id: string, public archivePath: string, public modelInstance: MDL0ModelInstance) {
     }
 
     public setVertexColorsEnabled(v: boolean): void {
@@ -2042,6 +2582,8 @@ abstract class GobjPreviewRenderer implements BaseObject {
     }
 
     public abstract getModelInstances(): MDL0ModelInstance[];
+
+    public abstract prepareToRender(device: GfxDevice, renderInstManager: GfxRenderInstManager, viewerInput: Viewer.ViewerRenderInput): void;
 
     public setEditorTransform(translation: { x: number; y: number; z: number }, rotation: { x: number; y: number; z: number }, scale: { x: number; y: number; z: number }): void {
         const oldBase = mat4.create();
@@ -2126,7 +2668,7 @@ class RoutedMultiModelRenderer extends GobjPreviewRenderer {
     protected readonly scratchPosition = vec3.create();
     protected readonly timeline: RouteMotionTimeline;
     protected initialFrame: number;
-    private routeYawOffset: number;
+    private routeYawOffset = 0;
 
     constructor(
         public modelInstances: MDL0ModelInstance[],
@@ -2848,7 +3390,7 @@ class MarioKartWiiSceneDesc implements Viewer.SceneDesc {
         return mdl0Instance;
     }
 
-    private static spawnObjectFromKMP(device: GfxDevice, renderer: MarioKartWiiRenderer, arc: U8.U8Archive, gobj: GOBJ, routes: POTIRoute[]): void {
+    public static spawnObjectFromKMP(device: GfxDevice, renderer: MarioKartWiiRenderer, arc: U8.U8Archive, gobj: GOBJ, routes: POTIRoute[]): void {
         const getRRES = (objectName: string): BRRES.RRES => {
             const arcPath = `./${objectName}.brres`;
             const file = arc.findFileData(arcPath) ?? renderer.commonCache.findFileData(arcPath);
@@ -3577,13 +4119,13 @@ class MarioKartWiiSceneDesc implements Viewer.SceneDesc {
         const modelCache = renderer.modelCache, cache = renderer.renderHelper.renderCache;
 
         const courseRRES = modelCache.ensureRRES(device, renderer, `./course_model.brres`, arc.findFileData(`./course_model.brres`));
-        const courseInstance = new CourseBGRenderer(this.createModelInstanceFromRRES(renderer, courseRRES, 'course'));
+        const courseInstance = new CourseBGRenderer(this.createModelInstanceFromRRES(renderer, courseRRES, 'course'), './course_model.brres');
         courseInstance.modelInstance.setSortKeyLayer(GfxRendererLayer.OPAQUE);
         renderer.baseObjects.push(courseInstance);
         mat4.copy(courseInstance.modelMatrix, posMtx);
 
         const skyboxRRES = modelCache.ensureRRES(device, renderer, `./vrcorn_model.brres`, arc.findFileData(`./vrcorn_model.brres`));
-        const skyboxInstance = new CourseBGRenderer(this.createModelInstanceFromRRES(renderer, skyboxRRES, 'vrcorn'));
+        const skyboxInstance = new CourseBGRenderer(this.createModelInstanceFromRRES(renderer, skyboxRRES, 'vrcorn'), './vrcorn_model.brres');
         skyboxInstance.modelInstance.setSortKeyLayer(GfxRendererLayer.OPAQUE);
         renderer.baseObjects.push(skyboxInstance);
         mat4.copy(skyboxInstance.modelMatrix, posMtx);
