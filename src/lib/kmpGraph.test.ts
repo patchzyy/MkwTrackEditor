@@ -35,7 +35,7 @@ import { createEmptyKmpFile, type KmpCheckpoint, type KmpEnemyPoint, type KmpPat
 import { decodeYaz0 } from './yaz0';
 import { parseU8 } from './u8';
 import { readKmpFile } from './kmpFile';
-import { CUSTOM_TRACK_DIR, NINTENDO_TRACK_DIR, listTracks, readTrackBytes } from './realTrackFixtures';
+import { CUSTOM_TRACK_DIR, NINTENDO_TRACK_DIR, listTracks, readTrackBytes } from './realTrackFixtures.testdata';
 
 /** A tiny stand-in point so the tests read as "which point is where", not "which struct". */
 type P = { n: number };

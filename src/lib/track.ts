@@ -290,7 +290,10 @@ const ROUTE_REQUIRED_OBJECT_NAMES = new Map<number, string>([
 
 export function validateTrack(track: TrackDocument, options: ValidateTrackOptions = {}): TrackIssue[] {
   const archiveFileNames = track.archiveEntries.filter((entry) => entry.type === 'file').map((entry) => entry.path);
-  if (!track.kmpFile) {
+  // Callers that build a TrackDocument by hand may not have populated `kmpFile`, so fall
+  // back to reading it straight out of the archive.
+  const kmpFile = track.kmpFile ?? tryReadCourseKmp(track);
+  if (!kmpFile) {
     return [
       ...validateTrackFiles(archiveFileNames),
       ...(findFile(track.archiveEntries, 'course.kmp')
@@ -300,15 +303,25 @@ export function validateTrack(track: TrackDocument, options: ValidateTrackOption
   }
 
   return [
-    ...validateKmpFile(track.kmpFile, {
+    ...validateKmpFile(kmpFile, {
       archiveFileNames,
       objects: options.common ? createObjectLookup(options.common) : null,
-      battle: isBattleTrack(track.kmpFile),
+      battle: isBattleTrack(kmpFile),
     }),
     ...validateObjectPresenceFlags(track, options.common),
     ...validateItemBoxSettings(track, options.common),
     ...validateKnownObjectPitfalls(track),
   ];
+}
+
+function tryReadCourseKmp(track: TrackDocument): KmpFile | undefined {
+  const data = findFile(track.archiveEntries, 'course.kmp')?.data;
+  if (!data) return undefined;
+  try {
+    return readKmpFile(data);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Battle arenas have no item route and no checkpoints, but do have battle finish points. */

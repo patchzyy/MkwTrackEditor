@@ -607,7 +607,7 @@ export function computeLapPathValidity(graph: CheckpointGraph): LapPathValidity 
     issues.push({
       level: 'warning',
       code: 'checkpoint.duplicate-key',
-      message: `Key checkpoint ${type} is used by more than one checkpoint; the game expects each key number once per lap.`,
+      message: `Key checkpoint ${type} is used by more than one checkpoint. That is correct when the track splits into parallel routes, but a mistake otherwise.`,
     });
   }
 

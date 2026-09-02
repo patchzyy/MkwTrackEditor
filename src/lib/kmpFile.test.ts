@@ -17,7 +17,7 @@ import {
 } from './kmpFile';
 import { decodeYaz0 } from './yaz0';
 import { parseU8 } from './u8';
-import { CUSTOM_TRACK_DIR, NINTENDO_TRACK_DIR, listTracks, readTrackBytes } from './realTrackFixtures';
+import { CUSTOM_TRACK_DIR, NINTENDO_TRACK_DIR, listTracks, readTrackBytes } from './realTrackFixtures.testdata';
 
 function courseKmp(path: string): Uint8Array | undefined {
   return parseU8(decodeYaz0(readTrackBytes(path))).find((entry) => entry.path.toLowerCase().endsWith('course.kmp'))?.data;

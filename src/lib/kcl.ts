@@ -400,13 +400,18 @@ export function snapPointToNearestFeature(mesh: KclMesh, position: Vec3, radius:
   );
   let best: (KclFeatureSnapResult & { triangleIndex: number }) | null = null;
   let bestDistanceSq = radius * radius;
+  // Ties go to a vertex: when a corner and an edge are equally close, the user meant the corner.
+  const epsilon = Math.max(1e-6, bestDistanceSq * 1e-9);
   for (const index of candidates) {
     const triangle = mesh.triangles[index];
     if (!triangle) continue;
     const feature = snapPointToTriangleFeature(position, triangle);
     const d = distanceSq(position, feature.position);
     if (d > bestDistanceSq) continue;
-    bestDistanceSq = d;
+    const closer = d < bestDistanceSq - epsilon;
+    const betterKind = !best || (feature.kind === 'vertex' && best.kind === 'edge');
+    if (!closer && !betterKind) continue;
+    bestDistanceSq = Math.min(bestDistanceSq, d);
     best = { ...feature, triangleIndex: index };
   }
   return best;

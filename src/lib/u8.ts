@@ -24,6 +24,17 @@ export interface U8Layout {
   stringTable?: Uint8Array;
   /** Name offset per node, in node order (index 0 is the root). */
   nameOffsets?: number[];
+  /**
+   * Parent index per directory node, in node order. Some archive tools write values that are
+   * off by one when the archive has a "." wrapper directory; readers ignore the field, so
+   * these are kept verbatim rather than "fixed", to keep untouched archives byte-identical.
+   */
+  nodeParents?: number[];
+  /**
+   * "One past the last child" index per directory node. A few real tracks ship archives
+   * where these are inconsistent; they are kept verbatim for the same reason.
+   */
+  nodeEnds?: number[];
   /** Paths in node order (index 0 is the root, whose path is ''). Used to validate reuse. */
   nodePaths?: string[];
   /** Bytes of padding that followed the last file in the source archive. */
@@ -58,17 +69,25 @@ export function parseU8WithLayout(data: Uint8Array): { entries: U8Entry[]; layou
   const entries: U8Entry[] = [];
   const nodePaths: string[] = new Array(nodeCount).fill('');
   const nameOffsets = nodes.map((node) => node.nameOffset);
+  const nodeParents = nodes.map((node) => (node.type === 1 ? node.dataOffset : 0));
+  const nodeEnds = nodes.map((node) => (node.type === 1 ? node.size : 0));
 
-  function walk(index: number, parent: string): number {
+  /**
+   * `limit` clamps a directory to its parent's range. A handful of real tracks ship archives
+   * whose directory end indices overlap; without the clamp those nodes get visited twice and
+   * files appear in the entry list more than once.
+   */
+  function walk(index: number, parent: string, limit: number): number {
     const node = nodes[index];
     const name = reader.cstr(stringTableOffset + node.nameOffset);
     const path = parent && name ? `${parent}/${name}` : name;
     nodePaths[index] = path;
     if (node.type === 1) {
       if (path) entries.push({ path, type: 'directory' });
+      const end = Math.min(Math.max(node.size, index + 1), limit);
       let child = index + 1;
-      while (child < node.size) child = walk(child, path);
-      return node.size;
+      while (child < end) child = walk(child, path, end);
+      return end;
     }
 
     entries.push({
@@ -79,7 +98,7 @@ export function parseU8WithLayout(data: Uint8Array): { entries: U8Entry[]; layou
     return index + 1;
   }
 
-  walk(0, '');
+  walk(0, '', nodeCount);
 
   const fileNodes = nodes.filter((node) => node.type !== 1);
   const alignment = inferAlignment(fileNodes);
@@ -96,6 +115,8 @@ export function parseU8WithLayout(data: Uint8Array): { entries: U8Entry[]; layou
       dataStart: declaredDataStart,
       stringTable,
       nameOffsets,
+      nodeParents,
+      nodeEnds,
       nodePaths,
       trailingPadding: Math.max(0, data.length - lastEnd),
     },
@@ -198,12 +219,11 @@ export function buildU8(entries: U8Entry[], layout?: U8Layout): Uint8Array {
 
   // Reuse the source string table (and its name offsets) when the node layout is unchanged,
   // so an untouched archive rebuilds byte-for-byte.
-  const canReuseStrings =
-    !!layout?.stringTable &&
-    !!layout.nameOffsets &&
-    !!layout.nodePaths &&
-    layout.nodePaths.length === flat.length &&
-    layout.nodePaths.every((path, i) => path === flat[i].path);
+  const layoutMatches =
+    !!layout?.nodePaths && layout.nodePaths.length === flat.length && layout.nodePaths.every((path, i) => path === flat[i].path);
+  const canReuseStrings = layoutMatches && !!layout?.stringTable && !!layout.nameOffsets;
+  const parents = layoutMatches && layout?.nodeParents?.length === flat.length ? layout.nodeParents : null;
+  const ends = layoutMatches && layout?.nodeEnds?.length === flat.length ? layout.nodeEnds : null;
 
   let stringBytes: Uint8Array;
   let nameOffsets: number[];
@@ -239,10 +259,12 @@ export function buildU8(entries: U8Entry[], layout?: U8Layout): Uint8Array {
       dataCursor = align(dataCursor + node.data.length, alignment);
     }
   }
-  const trailingPadding = layout?.trailingPadding ?? 0;
   const lastFileIndex = [...fileOffsets.keys()].at(-1);
   const lastEnd = lastFileIndex === undefined ? dataStart : fileOffsets.get(lastFileIndex)! + (flat[lastFileIndex].data?.length ?? 0);
-  const totalLength = Math.max(dataCursor, lastEnd + trailingPadding);
+  // An unchanged archive keeps exactly the trailing padding it had; most tools do not pad
+  // the last file up to the alignment boundary. A rebuilt one is padded like every other file.
+  const totalLength =
+    layoutMatches && layout?.trailingPadding !== undefined ? Math.max(dataStart, lastEnd + layout.trailingPadding) : dataCursor;
 
   const out = new Uint8Array(totalLength);
   const view = new DataView(out.buffer);
@@ -261,8 +283,8 @@ export function buildU8(entries: U8Entry[], layout?: U8Layout): Uint8Array {
       view.setUint32(base + 8, node.data.length, false);
     } else {
       view.setUint32(base, 0x01000000 | (nameOffsets[i] & 0x00ffffff), false);
-      view.setUint32(base + 4, node.parent, false);
-      view.setUint32(base + 8, node.end ?? flat.length, false);
+      view.setUint32(base + 4, parents ? parents[i] : node.parent, false);
+      view.setUint32(base + 8, ends ? ends[i] : node.end ?? flat.length, false);
     }
   }
   out.set(stringBytes, 0x20 + nodeTableSize);

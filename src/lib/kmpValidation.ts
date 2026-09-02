@@ -64,6 +64,15 @@ export interface ValidateKmpOptions {
 
 const MAX_BYTE_INDEXED_RECORDS = 0xff;
 
+/** AREA type 0 reads `cameraIndex`. */
+const AREA_TYPE_CAMERA = 0x00;
+/** AREA type 3 reads `routeIndex`. */
+const AREA_TYPE_MOVING_ROAD = 0x03;
+/** AREA type 4 reads `enemyPointIndex`. */
+const AREA_TYPE_CPU_DESTINATION = 0x04;
+/** AREA type 0x0F ("teleport", a community extension) reads a cannon index from setting 2. */
+const AREA_TYPE_TELEPORT = 0x0f;
+
 export function validateTrackFiles(archiveFileNames: string[]): TrackIssue[] {
   const present = new Set(archiveFileNames.map((name) => name.split('/').pop()?.toLowerCase() ?? ''));
   const issues: TrackIssue[] = [];
@@ -247,7 +256,15 @@ function validateRoutes(file: KmpFile): TrackIssue[] {
 function validateObjects(file: KmpFile, options: ValidateKmpOptions): TrackIssue[] {
   const issues: TrackIssue[] = [];
   const lookup = options.objects;
-  const archiveNames = new Set((options.archiveFileNames ?? []).map((name) => name.split('/').pop()?.toLowerCase() ?? ''));
+  const archivePaths = options.archiveFileNames ?? [];
+  const archiveNames = new Set(archivePaths.map((name) => name.split('/').pop()?.toLowerCase() ?? ''));
+  // Some objects are pure particle effects with no model, e.g. `taimatsu` (a torch flame),
+  // which ship as `effect/<name>/rk_<name>.breff` instead of `<name>.brres`.
+  const archiveEffectNames = new Set(
+    archivePaths
+      .map((name) => /(?:^|\/)effect\/([^/]+)\//i.exec(name.split('\\').join('/'))?.[1]?.toLowerCase())
+      .filter((name): name is string => !!name),
+  );
   let reportedMissingLookup = false;
 
   for (let index = 0; index < file.objects.length; index++) {
@@ -308,11 +325,13 @@ function validateObjects(file: KmpFile, options: ValidateKmpOptions): TrackIssue
 
     for (const resource of lookup.objectResources(object.objectId)) {
       const key = resource.toLowerCase();
-      if (archiveNames.has(key) || lookup.hasCommonResource(key)) continue;
+      if (archiveNames.has(key) || lookup.hasCommonResource(key) || archiveEffectNames.has(key.replace(/\.brres$/, ''))) continue;
+      // A warning rather than an error: some objects are effect- or sound-only, and a
+      // trimmed Common archive can make a perfectly good track look broken.
       issues.push({
-        level: 'error',
+        level: 'warning',
         code: 'object.resource-missing',
-        message: `${label} needs the model file ${resource}, which is neither in this track nor in the shared game data.`,
+        message: `${label} needs the model file ${resource}, which is neither in this track nor in the shared game data, so it may not appear in game.`,
         entityId,
       });
     }
@@ -325,7 +344,7 @@ function validateAreas(file: KmpFile): TrackIssue[] {
   for (let index = 0; index < file.areas.length; index++) {
     const area = file.areas[index];
     const entityId = `AREA-${index}`;
-    if (area.type === 0) {
+    if (area.type === AREA_TYPE_CAMERA) {
       if (area.cameraIndex === KMP_NULL_INDEX_8) {
         issues.push({ level: 'error', code: 'area.camera-missing', message: `Area #${index} is a camera trigger but no camera is assigned to it.`, entityId });
       } else if (area.cameraIndex >= file.cameras.length) {
@@ -337,10 +356,12 @@ function validateAreas(file: KmpFile): TrackIssue[] {
         });
       }
     }
-    if (area.routeIndex !== KMP_NULL_INDEX_8 && area.routeIndex >= file.routes.length) {
+    // Only the area types documented as reading these fields are checked; other types leave
+    // stale values in them, and flagging those would be noise.
+    if (area.type === AREA_TYPE_MOVING_ROAD && area.routeIndex !== KMP_NULL_INDEX_8 && area.routeIndex >= file.routes.length) {
       issues.push({ level: 'error', code: 'area.route-out-of-range', message: `Area #${index} uses route #${area.routeIndex}, which does not exist.`, entityId });
     }
-    if (area.enemyPointIndex !== KMP_NULL_INDEX_8 && area.enemyPointIndex >= file.enemyPoints.length) {
+    if (area.type === AREA_TYPE_CPU_DESTINATION && area.enemyPointIndex !== KMP_NULL_INDEX_8 && area.enemyPointIndex >= file.enemyPoints.length) {
       issues.push({
         level: 'error',
         code: 'area.enemy-point-out-of-range',
@@ -348,7 +369,7 @@ function validateAreas(file: KmpFile): TrackIssue[] {
         entityId,
       });
     }
-    if (area.type === 0x0f && area.setting2 >= file.cannonPoints.length) {
+    if (area.type === AREA_TYPE_TELEPORT && area.setting2 >= file.cannonPoints.length) {
       issues.push({
         level: 'error',
         code: 'area.cannon-out-of-range',

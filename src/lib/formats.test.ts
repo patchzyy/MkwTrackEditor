@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { decodeYaz0, encodeYaz0Uncompressed, isYaz0 } from './yaz0';
+import { decodeYaz0, encodeYaz0, encodeYaz0Uncompressed, isYaz0 } from './yaz0';
 import { buildU8, parseU8 } from './u8';
 import {
   appendKmpArea,
@@ -45,15 +45,14 @@ import { parseKcl, raycastMesh, snapPointToTriangleFeature } from './kcl';
 import { getObjFlowResourceNames, mergeCommonResourceEntries, parseCommonResourceArchive, parseObjFlowContainer } from './objflow';
 import { parseNoclipBrresSummary } from './noclipBrres';
 import { exportTrack, getExportArchiveEntries, validateExportBytes, validateTrack, type TrackDocument } from './track';
+import { CUSTOM_TRACK_DIR, NINTENDO_TRACK_DIR, findCommonArchive, listTracks } from './realTrackFixtures.testdata';
 
-const sampleTrack = '/mnt/c/Users/patchzy/AppData/Roaming/Dolphin Emulator/Load/Riivolution/WheelWizard/RRBeta/Tracks/0.szs';
-const realTrackDirs = [
-  '/mnt/c/Users/patchzy/AppData/Roaming/Dolphin Emulator/Load/Riivolution/WheelWizard/RRBeta/Tracks',
-  '/mnt/c/Users/patchzy/AppData/Roaming/Dolphin Emulator/Load/Riivolution/WheelWizard/RRBeta/CT/Tracks',
-];
-const commonArchive = '/mnt/g/Games/Wii/mkwii-europe/Race/Common.szs';
-const bundledObjectBrres = '/mnt/g/ai/MkwTrackEditor/public/data/MarioKartWii/Race/Course/Object/kuribo.brres';
-const extractedAssetPool = '/mnt/g/ai/MkwTrackEditor/public/data/MarioKartWii/Race/Course/ExtractedAssets.u8';
+const realTrackDirs = [NINTENDO_TRACK_DIR, CUSTOM_TRACK_DIR];
+// The first Nintendo slot is a demo course with no gameplay data, so prefer a custom track.
+const sampleTrack = listTracks(CUSTOM_TRACK_DIR, 1)[0] ?? listTracks(NINTENDO_TRACK_DIR, 2)[1] ?? '';
+const commonArchive = findCommonArchive() ?? '';
+const bundledObjectBrres = 'public/data/MarioKartWii/Race/Course/Object/kuribo.brres';
+const extractedAssetPool = 'public/data/MarioKartWii/Race/Course/ExtractedAssets.u8';
 const realTrackSamples = collectRealTrackSamples(realTrackDirs, 8);
 
 function collectRealTrackSamples(dirs: string[], limit: number): string[] {
@@ -351,7 +350,7 @@ describe('MKW track loading', () => {
         brresSummaries: {},
         warnings: [],
       };
-      expect(validateTrack(trackWithoutCheckpointGroups).some((item) => item.message.includes('without checkpoint path groups'))).toBe(true);
+      expect(validateTrack(trackWithoutCheckpointGroups).map((item) => item.code)).toContain('checkpoint.no-groups');
     }
     expect(addedCheckpoint?.position.x).toBeCloseTo(1000);
     expect(addedCheckpoint?.position.z).toBeCloseTo(2000);
@@ -404,9 +403,9 @@ describe('MKW track loading', () => {
         brresSummaries: {},
         warnings: [],
       };
-      const cameraHeaderWarnings = validateTrack(invalidCameraHeaderTrack).map((item) => item.message);
-      expect(cameraHeaderWarnings.some((message) => message.includes('CAME intro start references missing camera 254'))).toBe(true);
-      expect(cameraHeaderWarnings.some((message) => message.includes('CAME selection start references missing camera 253'))).toBe(true);
+      const cameraHeaderIssues = validateTrack(invalidCameraHeaderTrack);
+      expect(cameraHeaderIssues.map((item) => item.code)).toContain('camera.opening-out-of-range');
+      expect(cameraHeaderIssues.find((item) => item.code === 'camera.opening-out-of-range')?.message).toContain('#254');
     }
     if (camera?.camera) {
       const movedCamera = parseKmp(patchKmpEntityPosition(kmp, camera, { x: camera.position.x + 10, y: camera.position.y + 20, z: camera.position.z + 30 })).entities.find((entity) => entity.id === camera.id);
@@ -534,7 +533,11 @@ describe('MKW track loading', () => {
         warnings: [],
       };
       const exportedBytes = exportTrack(track);
-      expect(validateExportBytes(track, exportedBytes).filter((issue) => issue.level === 'error'), path).toEqual([]);
+      // Some real tracks (demo courses, work-in-progress customs) already have problems, so
+      // the invariant is that a round trip through export does not introduce any new ones.
+      const before = validateTrack(track).map((issue) => `${issue.level}:${issue.code}:${issue.entityId ?? ''}`);
+      const after = validateExportBytes(track, exportedBytes).map((issue) => `${issue.level}:${issue.code}:${issue.entityId ?? ''}`);
+      expect(after.filter((issue) => !before.includes(issue)), path).toEqual([]);
       const exportedEntries = parseU8(decodeYaz0(exportedBytes));
       expect(exportedEntries.some((entry) => entry.path.toLowerCase().endsWith('course.kmp')), path).toBe(true);
     }
@@ -561,7 +564,7 @@ describe('MKW track loading', () => {
     const common = parseCommonResourceArchive(new Uint8Array(readFileSync(commonArchive)));
     const exportEntries = getExportArchiveEntries(track, common);
     expect(exportEntries.some((entry) => entry.path.toLowerCase() === 'kinoko.brres')).toBe(true);
-    expect(validateTrack(track, { common }).some((item) => item.message.includes('kinoko.brres'))).toBe(false);
+    expect(validateTrack(track, { common }).some((item) => item.code === 'object.resource-missing' && item.message.includes('kinoko.brres'))).toBe(false);
 
     const exported = parseU8(decodeYaz0(exportTrack(track, { common })));
     expect(exported.some((entry) => entry.path.toLowerCase().endsWith('kinoko.brres'))).toBe(true);
@@ -603,10 +606,24 @@ describe('MKW track loading', () => {
     const entries = parseU8(archive);
     const courseKmp = entries.find((entry) => entry.path.toLowerCase().endsWith('course.kmp'));
     expect(courseKmp?.data).toBeTruthy();
+    const common = parseCommonResourceArchive(new Uint8Array(readFileSync(commonArchive)));
 
-    const editedKmp = appendKmpGobj(parseKmp(courseKmp!.data!), 0x07, { x: 10, y: 20, z: 30 });
+    // Find an object whose model is in neither this track nor the shared archive.
+    const archiveNames = new Set(entries.map((entry) => entry.path.split('/').pop()?.toLowerCase() ?? ''));
+    const orphan = common.objFlow.entries.find((entry) => {
+      const resources = getObjFlowResourceNames(entry);
+      return (
+        resources.length > 0 &&
+        !entries.some((file) => file.path.toLowerCase().includes(`effect/${resources[0].replace(/\.brres$/i, '').toLowerCase()}/`)) &&
+        resources.every((resource) => !archiveNames.has(resource.toLowerCase()) && !common.byBaseName.has(resource.toLowerCase()))
+      );
+    });
+    expect(orphan, 'no object with an unavailable model was found').toBeTruthy();
+    const missingResource = getObjFlowResourceNames(orphan!)[0];
+
+    const editedKmp = appendKmpGobj(parseKmp(courseKmp!.data!), orphan!.objectId, { x: 10, y: 20, z: 30 });
     const track: TrackDocument = {
-      fileName: '0.szs',
+      fileName: 'sample.szs',
       compressed: true,
       archiveEntries: entries.map((entry) => (entry === courseKmp ? { ...entry, data: editedKmp } : entry)),
       kmp: parseKmp(editedKmp),
@@ -614,8 +631,9 @@ describe('MKW track loading', () => {
       brresSummaries: {},
       warnings: [],
     };
-    const common = parseCommonResourceArchive(new Uint8Array(readFileSync(commonArchive)));
-    expect(validateTrack(track, { common }).some((item) => item.message.includes('pocha.brres'))).toBe(true);
+    const issue = validateTrack(track, { common }).find((item) => item.code === 'object.resource-missing' && item.message.includes(missingResource));
+    expect(issue?.level).toBe('warning');
+    expect(issue?.entityId).toBeTruthy();
   });
 
   it.runIf(existsSync(sampleTrack) && existsSync(commonArchive))('warns when gameplay objects are hidden in multiplayer via presence flags', () => {
@@ -638,7 +656,7 @@ describe('MKW track loading', () => {
       warnings: [],
     };
     const common = parseCommonResourceArchive(new Uint8Array(readFileSync(commonArchive)));
-    expect(validateTrack(track, { common }).some((item) => item.message.includes('gameplay object') && item.message.includes('0x0001'))).toBe(true);
+    expect(validateTrack(track, { common }).some((item) => item.code === 'object.presence-uneven')).toBe(true);
   });
 
   it.runIf(existsSync(sampleTrack) && existsSync(commonArchive))('warns when item boxes use unsupported item/timing settings', () => {
@@ -668,10 +686,10 @@ describe('MKW track loading', () => {
       warnings: [],
     };
     const common = parseCommonResourceArchive(new Uint8Array(readFileSync(commonArchive)));
-    const issues = validateTrack(track, { common }).map((item) => item.message);
-    expect(issues.some((message) => message.includes('unsupported player item-box setting') && message.includes('0x0011'))).toBe(true);
-    expect(issues.some((message) => message.includes('unsupported CPU item-box setting') && message.includes('0x2222'))).toBe(true);
-    expect(issues.some((message) => message.includes('unsupported item-box timing setting') && message.includes('0x0007'))).toBe(true);
+    const issues = validateTrack(track, { common }).map((item) => item.code);
+    expect(issues).toContain('itembox.player-item');
+    expect(issues).toContain('itembox.cpu-item');
+    expect(issues).toContain('itembox.timing');
   });
 
   it.runIf(existsSync(sampleTrack))('warns about known vanilla object pitfalls', () => {
@@ -698,9 +716,9 @@ describe('MKW track loading', () => {
       brresSummaries: {},
       warnings: [],
     };
-    const issues = validateTrack(track).map((item) => item.message);
-    expect(issues.some((message) => message.includes('choropu and choropu2'))).toBe(true);
-    expect(issues.some((message) => message.includes('InsekiA') && message.includes('Setting 3 left at 0'))).toBe(true);
+    const issues = validateTrack(track).map((item) => item.code);
+    expect(issues).toContain('object.choropu-conflict');
+    expect(issues).toContain('object.inseki-setting');
   });
 
   it.runIf(existsSync(sampleTrack))('warns when a route-driven vanilla object is missing its route', () => {
@@ -720,8 +738,8 @@ describe('MKW track loading', () => {
       brresSummaries: {},
       warnings: [],
     };
-    const issues = validateTrack(track).map((item) => item.message);
-    expect(issues.some((message) => message.includes('kart_truck') && message.includes('requires a route'))).toBe(true);
+    const issues = validateTrack(track).map((item) => item.code);
+    expect(issues).toContain('object.route-required');
   });
 
   it.runIf(existsSync(sampleTrack))('warns when Daisy Circuit Mii audience objects are duplicated', () => {
@@ -742,8 +760,8 @@ describe('MKW track loading', () => {
       brresSummaries: {},
       warnings: [],
     };
-    const issues = validateTrack(track).map((item) => item.message);
-    expect(issues.some((message) => message.includes('MiiObjD01') && message.includes('at most one instance'))).toBe(true);
+    const issues = validateTrack(track).map((item) => item.code);
+    expect(issues).toContain('object.mii-audience-duplicate');
   });
 
   it.runIf(existsSync(sampleTrack))('warns for slot-restricted objects and begoman_spike ordering', () => {
@@ -765,9 +783,9 @@ describe('MKW track loading', () => {
       brresSummaries: {},
       warnings: [],
     };
-    const issues = validateTrack(track).map((item) => item.message);
-    expect(issues.some((message) => message.includes('slot-restricted objects') && message.includes('sunDS') && message.includes('begoman_spike'))).toBe(true);
-    expect(issues.some((message) => message.includes('begoman_spike must be the first placed game object'))).toBe(true);
+    const issues = validateTrack(track).map((item) => item.code);
+    expect(issues).toContain('object.slot-restricted');
+    expect(issues).toContain('object.begoman-order');
   });
 });
 
