@@ -68,6 +68,149 @@ export interface EditorProjectState {
   archiveMeshes: BrresEditorMesh[];
 }
 
+// ---------------------------------------------------------------------------
+// Per-mesh editing model (Model mode)
+//
+// The renderer applies these live; the BRRES writer will bake them into
+// `course_model.brres` on export.
+// ---------------------------------------------------------------------------
+
+/** How much geometry a single click selects. */
+export type MeshSelectionGranularity = 'component' | 'shape' | 'node';
+
+export const MESH_SELECTION_GRANULARITIES: MeshSelectionGranularity[] = ['component', 'shape', 'node'];
+
+/** Identifies a piece of renderable geometry inside a BRRES model. */
+export interface EditorMeshTarget {
+  archivePath: string;
+  modelName: string;
+  /** MDL0 shape index. */
+  shapeIndex: number;
+  /** Index into the concatenated [DrawOpa, DrawXlu] op list; identifies the draw call. */
+  drawOpIndex: number;
+  /** Connected-component index inside the shape, or null for whole-shape/node targets. */
+  componentIndex: number | null;
+  /** MDL0 node the draw op is bound to. */
+  nodeId: number;
+  granularity: MeshSelectionGranularity;
+}
+
+export interface MeshTransform {
+  translation: { x: number; y: number; z: number };
+  rotation: { x: number; y: number; z: number };
+  scale: { x: number; y: number; z: number };
+}
+
+export interface MeshEdit {
+  target: EditorMeshTarget;
+  transform: MeshTransform;
+  visible: boolean;
+  deleted: boolean;
+}
+
+export interface ImportedMesh {
+  id: string;
+  /** Content-browser asset path the BRRES came from. */
+  sourcePath: string;
+  modelName: string;
+  transform: MeshTransform;
+  visible: boolean;
+}
+
+export const IDENTITY_MESH_TRANSFORM: MeshTransform = {
+  translation: { x: 0, y: 0, z: 0 },
+  rotation: { x: 0, y: 0, z: 0 },
+  scale: { x: 1, y: 1, z: 1 },
+};
+
+export function createIdentityMeshTransform(): MeshTransform {
+  return {
+    translation: { x: 0, y: 0, z: 0 },
+    rotation: { x: 0, y: 0, z: 0 },
+    scale: { x: 1, y: 1, z: 1 },
+  };
+}
+
+/** Stable key for a mesh target; also used as the React key in selection lists. */
+export function meshTargetKey(target: EditorMeshTarget): string {
+  return [
+    target.archivePath.toLowerCase(),
+    target.modelName,
+    target.granularity,
+    target.granularity === 'node' ? `node${target.nodeId}` : `shape${target.shapeIndex}`,
+    target.granularity === 'node' ? '' : `op${target.drawOpIndex}`,
+    target.granularity === 'component' && target.componentIndex !== null ? `c${target.componentIndex}` : '',
+  ].join('::');
+}
+
+export function meshTargetEquals(a: EditorMeshTarget | null, b: EditorMeshTarget | null): boolean {
+  if (!a || !b) return a === b;
+  return meshTargetKey(a) === meshTargetKey(b);
+}
+
+/** Widens ( `]` ) or narrows ( `[` ) the selection granularity. */
+export function widenMeshGranularity(granularity: MeshSelectionGranularity): MeshSelectionGranularity {
+  return granularity === 'component' ? 'shape' : 'node';
+}
+
+export function narrowMeshGranularity(granularity: MeshSelectionGranularity): MeshSelectionGranularity {
+  return granularity === 'node' ? 'shape' : 'component';
+}
+
+export function retargetMeshGranularity(target: EditorMeshTarget, granularity: MeshSelectionGranularity): EditorMeshTarget {
+  return { ...target, granularity, componentIndex: granularity === 'component' ? target.componentIndex : null };
+}
+
+export function findMeshEdit(edits: readonly MeshEdit[], target: EditorMeshTarget): MeshEdit | null {
+  const key = meshTargetKey(target);
+  return edits.find((edit) => meshTargetKey(edit.target) === key) ?? null;
+}
+
+/** Immutably upserts an edit for `target`. */
+export function upsertMeshEdit(edits: readonly MeshEdit[], target: EditorMeshTarget, patch: Partial<Omit<MeshEdit, 'target'>>): MeshEdit[] {
+  const key = meshTargetKey(target);
+  const index = edits.findIndex((edit) => meshTargetKey(edit.target) === key);
+  const base: MeshEdit = index >= 0
+    ? edits[index]
+    : { target, transform: createIdentityMeshTransform(), visible: true, deleted: false };
+  const next: MeshEdit = {
+    target: base.target,
+    transform: patch.transform ?? base.transform,
+    visible: patch.visible ?? base.visible,
+    deleted: patch.deleted ?? base.deleted,
+  };
+  if (isNeutralMeshEdit(next)) return index >= 0 ? [...edits.slice(0, index), ...edits.slice(index + 1)] : [...edits];
+  if (index < 0) return [...edits, next];
+  return [...edits.slice(0, index), next, ...edits.slice(index + 1)];
+}
+
+export function removeMeshEdit(edits: readonly MeshEdit[], target: EditorMeshTarget): MeshEdit[] {
+  const key = meshTargetKey(target);
+  return edits.filter((edit) => meshTargetKey(edit.target) !== key);
+}
+
+export function isNeutralMeshEdit(edit: MeshEdit): boolean {
+  if (edit.deleted || !edit.visible) return false;
+  const { translation, rotation, scale } = edit.transform;
+  return (
+    translation.x === 0 && translation.y === 0 && translation.z === 0 &&
+    rotation.x === 0 && rotation.y === 0 && rotation.z === 0 &&
+    scale.x === 1 && scale.y === 1 && scale.z === 1
+  );
+}
+
+export function addImportedMesh(meshes: readonly ImportedMesh[], mesh: ImportedMesh): ImportedMesh[] {
+  return [...meshes.filter((candidate) => candidate.id !== mesh.id), mesh];
+}
+
+export function removeImportedMesh(meshes: readonly ImportedMesh[], id: string): ImportedMesh[] {
+  return meshes.filter((mesh) => mesh.id !== id);
+}
+
+export function updateImportedMesh(meshes: readonly ImportedMesh[], id: string, patch: Partial<Omit<ImportedMesh, 'id'>>): ImportedMesh[] {
+  return meshes.map((mesh) => (mesh.id === id ? { ...mesh, ...patch } : mesh));
+}
+
 const MDL0_NODE_VISIBLE_FLAG = 0x00000100;
 
 export async function buildEditorProjectState(track: TrackDocument): Promise<EditorProjectState> {

@@ -173,16 +173,50 @@ export class MDL0Model {
 
 const bboxScratch = new AABB();
 const drawParams = new DrawParams();
+const editorOverrideScratch = mat4.create();
+
+// Editor extension: lets a host application hide, transform or split an individual draw
+// call without touching the rest of the model. Used by the MKW track editor's Model mode.
+export interface ShapeInstanceEditorComponentDraw {
+    indexBuffer: GfxIndexBufferDescriptor;
+    indexCount: number;
+    /** Extra world-space matrix applied on top of the shape's node matrix. */
+    extraWorldMatrix: mat4 | null;
+    hidden: boolean;
+}
+
+export interface ShapeInstanceEditorOverride {
+    hidden: boolean;
+    /** Extra world-space matrix applied on top of the shape's node matrix. */
+    extraWorldMatrix: mat4 | null;
+    /** When set, the shape is drawn as N separate index ranges instead of its own draws. */
+    componentDraws: ShapeInstanceEditorComponentDraw[] | null;
+}
+
 class ShapeInstance {
     public sortKeyBias = 0;
+    public editorOverride: ShapeInstanceEditorOverride | null = null;
 
     constructor(public shape: BRRES.MDL0_ShapeEntry, public shapeData: ShapeData, public sortVizNode: BRRES.MDL0_NodeEntry, public materialInstance: MaterialInstance) {
+    }
+
+    private fillEditorPosMtx(dst: mat4, extraWorldMatrix: mat4 | null, camera: Camera, instanceStateData: InstanceStateData): void {
+        if (extraWorldMatrix === null) {
+            mat4.copy(dst, instanceStateData.drawViewMatrixArray[this.shape.mtxIdx]);
+            return;
+        }
+        mat4.mul(editorOverrideScratch, extraWorldMatrix, instanceStateData.jointToWorldMatrixArray[this.shape.mtxIdx]);
+        mat4.mul(dst, camera.viewMatrix, editorOverrideScratch);
     }
 
     public prepareToRender(renderInstManager: GfxRenderInstManager, depth: number, camera: Camera, instanceStateData: InstanceStateData): void {
         const materialInstance = this.materialInstance;
 
         if (!materialInstance.visible || !materialInstance.materialHelper.valid)
+            return;
+
+        const editorOverride = this.editorOverride;
+        if (editorOverride !== null && editorOverride.hidden)
             return;
 
         const template = renderInstManager.pushTemplate();
@@ -198,6 +232,25 @@ class ShapeInstance {
 
         if (!usesSkinning)
             materialInstance.fillMaterialParams(template, instanceStateData, this.shape.mtxIdx, null, camera);
+
+        // Editor extension: draw the shape as independent connected components so each one
+        // can carry its own transform / visibility.
+        if (editorOverride !== null && editorOverride.componentDraws !== null && !usesSkinning) {
+            for (let p = 0; p < editorOverride.componentDraws.length; p++) {
+                const componentDraw = editorOverride.componentDraws[p];
+                if (componentDraw.hidden || componentDraw.indexCount === 0)
+                    continue;
+                drawParams.clear();
+                this.fillEditorPosMtx(drawParams.u_PosMtx[0], componentDraw.extraWorldMatrix ?? editorOverride.extraWorldMatrix, camera, instanceStateData);
+                const renderInst = renderInstManager.newRenderInst();
+                renderInst.setVertexInput(this.shapeData.inputLayout, this.shapeData.vertexBuffers, componentDraw.indexBuffer);
+                materialInstance.materialHelper.allocateDrawParamsDataOnInst(renderInst, drawParams);
+                renderInst.setDrawCount(componentDraw.indexCount, 0);
+                renderInstManager.submitRenderInst(renderInst);
+            }
+            renderInstManager.popTemplate();
+            return;
+        }
 
         drawParams.clear();
         for (let p = 0; p < this.shape.loadedVertexData.draws.length; p++) {
@@ -219,7 +272,7 @@ class ShapeInstance {
                 }
             } else {
                 instVisible = true;
-                mat4.copy(drawParams.u_PosMtx[0], instanceStateData.drawViewMatrixArray[this.shape.mtxIdx]);
+                this.fillEditorPosMtx(drawParams.u_PosMtx[0], editorOverride !== null ? editorOverride.extraWorldMatrix : null, camera, instanceStateData);
             }
 
             if (!instVisible)

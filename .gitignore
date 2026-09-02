@@ -10,3 +10,4 @@ image.png
 
 # Local copies of real MKW tracks for the dev server (see docs/WORKPLAN.md).
 public/dev-tracks/
+.probe-profile/

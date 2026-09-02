@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type DragEvent, type MouseEvent, type Poin
 import { Eye, EyeOff, Move3D, RotateCcw, Scale3D } from 'lucide-react';
 import { mat4, vec3, vec4 } from 'gl-matrix';
 import ArrayBufferSlice from '../../vendor/noclip.website/src/ArrayBufferSlice';
-import { FPSCameraController, OrthoCameraController } from '../../vendor/noclip.website/src/Camera';
+import { CameraUpdateResult, FPSCameraController, OrthoCameraController, type Camera, type CameraController } from '../../vendor/noclip.website/src/Camera';
 import { DataShare } from '../../vendor/noclip.website/src/DataShare';
 import type { DataFetcher } from '../../vendor/noclip.website/src/DataFetcher';
 import { getMatrixAxisY } from '../../vendor/noclip.website/src/MathHelpers';
@@ -11,8 +11,13 @@ import { InitErrorCode, initializeViewerWebGL2, resizeCanvas, type SceneGfx, typ
 import { createSceneFromU8Buffer } from '../../vendor/noclip.website/src/rres/scenes';
 import { buildPublicAssetUrl } from '../lib/assetPaths';
 import {
+  meshTransformFromGizmoPose,
   syncBrresViewportTransformSelectionPreview,
+  toMeshViewportTransformSelection,
   type BrresViewportPreviewScene,
+  type EditorMeshBoundsPayload,
+  type EditorMeshPickPayload,
+  type EditorMeshRendererScene,
   type ViewportTransformSelection,
 } from '../lib/brresRenderAdapter';
 import { buildU8 } from '../lib/u8';
@@ -20,6 +25,42 @@ import type { AppendableKmpSection, KmpDocument, KmpEntity, KmpRouteInsertTarget
 import { raycastDown, raycastMesh, snapPointToTriangleFeature } from '../lib/kcl';
 import type { TrackDocument } from '../lib/track';
 import { describeEntity } from '../lib/track';
+import {
+  createIdentityMeshTransform,
+  meshTargetKey,
+  narrowMeshGranularity,
+  retargetMeshGranularity,
+  widenMeshGranularity,
+  type EditorMeshTarget,
+  type MeshEdit,
+  type MeshSelectionGranularity,
+  type MeshTransform,
+} from '../lib/brresEditor';
+import {
+  buildOpeningCameraChain,
+  getOpeningSequenceDuration,
+  sampleCameraPose,
+  sampleOpeningSequence,
+  type CameraPreviewDef,
+} from '../lib/cameraPreview';
+import {
+  buildCameraOverlay,
+  findCameraPreviewDef,
+  toCameraPreviewDefs,
+  type SceneOverlayCameraChainLink,
+  type SceneOverlayCameraGizmo,
+} from './viewport/cameraOverlay';
+import { advancePreviewFrames, computePreviewCameraMatrix, toCameraFovY } from './viewport/cameraPlayback';
+import {
+  applyMeshSelectionClick,
+  describeMeshPick,
+  makeMeshSelectionEntry,
+  meshSelectionGizmoId,
+  meshSelectionKeyFromGizmoId,
+  toMeshTarget,
+  updateMeshSelectionTransform,
+  type MeshSelectionEntry,
+} from './viewport/meshSelection';
 
 interface Noclip3DViewportProps {
   track: TrackDocument | null;
@@ -28,6 +69,24 @@ interface Noclip3DViewportProps {
   transformSelection?: ViewportTransformSelection | null;
   transformSelections?: ViewportTransformSelection[];
   showKmpEditorOverlay?: boolean;
+  /**
+   * Which editor mode the app is in. `'kmp'` keeps today's behaviour.
+   * `'camera'` turns on the CAME gizmos and their picking; `'model'` turns on mesh
+   * picking/transforming and hides the KMP overlays; `'visual'` hides the KMP overlays.
+   */
+  mode?: EditorMode;
+  /** Drives the in-viewport CAME playback. `null` restores the free camera. */
+  cameraPreview?: CameraPreviewRequest | null;
+  onCameraPreviewEnd?: () => void;
+  /** Fired when a CAME view-point handle is dragged in the viewport. */
+  onMoveCameraViewPoint?: (entity: KmpEntity, which: 'start' | 'end', position: Vec3) => void;
+  /** Model mode: how much geometry one click selects. Uncontrolled by default. */
+  meshGranularity?: MeshSelectionGranularity;
+  /** Model mode: mesh edits to re-apply to the renderer when the scene (re)loads. */
+  meshEdits?: MeshEdit[];
+  onSelectMesh?: (target: EditorMeshTarget | null, options?: { additive?: boolean; targets?: EditorMeshTarget[] }) => void;
+  onTransformMesh?: (target: EditorMeshTarget, transform: MeshTransform) => void;
+  onChangeMeshGranularity?: (granularity: MeshSelectionGranularity) => void;
   fillBetweenPreviewPositions?: Vec3[];
   smokeCommonUrl?: string | null;
   commonArchiveUrl?: string | null;
@@ -58,7 +117,18 @@ interface Noclip3DViewportProps {
 
 export type TransformTool = 'translate' | 'rotate' | 'scale';
 export type ViewMode = 'normal' | 'dev' | 'topdown' | 'ortho';
+export type EditorMode = 'kmp' | 'camera' | 'model' | 'visual';
+export interface CameraPreviewRequest {
+  /** CAME entity id (`CAME-<n>`) or the raw CAME index. */
+  cameraId: string;
+  playing: boolean;
+  /** Playback position in MKW frames (60 fps). */
+  time: number;
+  /** Play the whole opening chain starting at this camera instead of just this one. */
+  sequence?: boolean;
+}
 export type { ViewportTransformSelection } from '../lib/brresRenderAdapter';
+export type { MeshSelectionGranularity, EditorMeshTarget } from '../lib/brresEditor';
 
 type GizmoAxis = 'x' | 'y' | 'z';
 type GizmoPlane = 'xy' | 'xz' | 'yz';
@@ -191,6 +261,8 @@ interface SceneOverlayData {
   fillBetweenPreview: SceneOverlayFillBetweenPreview[];
   routeDeviationSegments: SceneOverlayRouteDeviationSegment[];
   routeDeviationCaps: SceneOverlayRouteDeviationCap[];
+  cameraGizmos: SceneOverlayCameraGizmo[];
+  cameraChainLinks: SceneOverlayCameraChainLink[];
 }
 
 interface RouteInsertPreview {
@@ -208,7 +280,8 @@ type SceneOverlayPick =
   | { kind: 'center'; id: string }
   | { kind: 'plane'; id: string; plane: GizmoPlane }
   | { kind: 'axis'; id: string; axis: GizmoAxis }
-  | { kind: 'checkpointEndpoint'; id: string; side: 'left' | 'right' };
+  | { kind: 'checkpointEndpoint'; id: string; side: 'left' | 'right' }
+  | { kind: 'cameraViewPoint'; id: string; which: 'start' | 'end' };
 
 type GizmoHandleKey =
   | { kind: 'center'; id: string }
@@ -321,7 +394,13 @@ interface CheckpointDragState {
   side: 'left' | 'right';
 }
 
-type ActiveDragState = DragState | GizmoDragState | CheckpointDragState;
+interface CameraViewPointDragState {
+  kind: 'cameraViewPoint';
+  id: string;
+  which: 'start' | 'end';
+}
+
+type ActiveDragState = DragState | GizmoDragState | CheckpointDragState | CameraViewPointDragState;
 
 interface CameraLookDragState {
   lastClientX: number;
@@ -346,7 +425,9 @@ type PendingInteractionCommit =
   | { kind: 'moveTransformSelection'; selection: ViewportTransformSelection; position: Vec3 }
   | { kind: 'rotateTransformSelection'; selection: ViewportTransformSelection; rotation: Vec3 }
   | { kind: 'scaleTransformSelection'; selection: ViewportTransformSelection; scale: Vec3 }
-  | { kind: 'moveCheckpointEndpoint'; entity: KmpEntity; side: 'left' | 'right'; position: Vec3 };
+  | { kind: 'moveCheckpointEndpoint'; entity: KmpEntity; side: 'left' | 'right'; position: Vec3 }
+  | { kind: 'moveCameraViewPoint'; entity: KmpEntity; which: 'start' | 'end'; position: Vec3 }
+  | { kind: 'transformMesh'; target: EditorMeshTarget; transform: MeshTransform };
 
 interface MarqueeSelectionState {
   additive: boolean;
@@ -446,6 +527,37 @@ function getInitialCameraFrame(track: TrackDocument): CameraFrame {
   };
 }
 
+/**
+ * Camera controller used while a CAME preview is playing: it ignores all input so the
+ * fly controls cannot fight the scripted camera. The previous controller is restored
+ * when the preview stops.
+ */
+class PreviewCameraController implements CameraController {
+  public camera!: Camera;
+  public forceUpdate = false;
+  private dirty = true;
+
+  public cameraUpdateForced(): void {
+    this.dirty = true;
+  }
+
+  public update(): CameraUpdateResult {
+    if (!this.dirty) return CameraUpdateResult.Unchanged;
+    this.dirty = false;
+    return CameraUpdateResult.Changed;
+  }
+
+  public setSceneMoveSpeedMult(): void {
+  }
+
+  public getKeyMoveSpeed(): number | null {
+    return null;
+  }
+
+  public setKeyMoveSpeed(): void {
+  }
+}
+
 function applyFPSCameraFrame(controller: FPSCameraController, frame: CameraFrame) {
   const camera = controller.camera;
   if (!camera) return;
@@ -463,6 +575,15 @@ export function Noclip3DViewport({
   transformSelection = null,
   transformSelections = [],
   showKmpEditorOverlay = true,
+  mode = 'kmp',
+  cameraPreview = null,
+  onCameraPreviewEnd,
+  onMoveCameraViewPoint,
+  meshGranularity,
+  meshEdits,
+  onSelectMesh,
+  onTransformMesh,
+  onChangeMeshGranularity,
   fillBetweenPreviewPositions = [],
   smokeCommonUrl = null,
   commonArchiveUrl = null,
@@ -573,6 +694,39 @@ export function Noclip3DViewport({
   const onRotateTransformSelectionRef = useRef(onRotateTransformSelection);
   const onScaleTransformSelectionRef = useRef(onScaleTransformSelection);
   const onMoveCheckpointEndpointRef = useRef(onMoveCheckpointEndpoint);
+  const onMoveCameraViewPointRef = useRef(onMoveCameraViewPoint);
+  const onSelectMeshRef = useRef(onSelectMesh);
+  const onTransformMeshRef = useRef(onTransformMesh);
+  const onChangeMeshGranularityRef = useRef(onChangeMeshGranularity);
+  const onCameraPreviewEndRef = useRef(onCameraPreviewEnd);
+  const modeRef = useRef<EditorMode>(mode);
+  /** Dev-hook override so `window.__mkwViewport.setMode` survives re-renders. */
+  const devModeOverrideRef = useRef<EditorMode | null>(null);
+  const devCaptureRef = useRef<{ request: boolean; dataUrl: string | null }>({ request: false, dataUrl: null });
+  const [internalMeshGranularity, setInternalMeshGranularity] = useState<MeshSelectionGranularity>('component');
+  const activeMeshGranularity = meshGranularity ?? internalMeshGranularity;
+  const meshGranularityRef = useRef<MeshSelectionGranularity>(activeMeshGranularity);
+  const [meshSelections, setMeshSelections] = useState<MeshSelectionEntry[]>([]);
+  const meshSelectionsRef = useRef<MeshSelectionEntry[]>(meshSelections);
+  const [hoveredMeshKey, setHoveredMeshKey] = useState<string | null>(null);
+  const hoveredMeshRef = useRef<{ key: string; target: EditorMeshTarget } | null>(null);
+  const cameraPreviewRef = useRef<CameraPreviewRequest | null>(cameraPreview);
+  /** Dev-hook override so `window.__mkwViewport.previewCamera` survives re-renders. */
+  const devCameraPreviewRef = useRef<CameraPreviewRequest | null | undefined>(undefined);
+  const cameraPreviewStateRef = useRef<{
+    frames: number;
+    lastTimeMs: number | null;
+    savedCameraMatrix: mat4 | null;
+    savedFovY: number | null;
+    active: boolean;
+    sequence: ReturnType<typeof buildOpeningCameraChain> | null;
+    startIndex: number;
+  }>({ frames: 0, lastTimeMs: null, savedCameraMatrix: null, savedFovY: null, active: false, sequence: null, startIndex: 0 });
+  const cameraPreviewMatrixRef = useRef(mat4.create());
+  const cameraPreviewDefsRef = useRef<CameraPreviewDef[]>([]);
+  const previousCameraControllerRef = useRef<CameraController | null>(null);
+  const cameraPreviewLabelRef = useRef<string | null>(null);
+  const [cameraPreviewLabel, setCameraPreviewLabel] = useState<string | null>(null);
   const selected = track?.kmp?.entities.find((entity) => entity.id === selectedId) ?? null;
   const selectionHudLabel = transformSelection?.label ?? (selected ? getEntityLabel(selected) : null);
   const sceneKey = track ? getSceneKey(track) : null;
@@ -598,31 +752,52 @@ export function Noclip3DViewport({
   onRotateTransformSelectionRef.current = onRotateTransformSelection;
   onScaleTransformSelectionRef.current = onScaleTransformSelection;
   onMoveCheckpointEndpointRef.current = onMoveCheckpointEndpoint;
+  onMoveCameraViewPointRef.current = onMoveCameraViewPoint;
+  onSelectMeshRef.current = onSelectMesh;
+  onTransformMeshRef.current = onTransformMesh;
+  onChangeMeshGranularityRef.current = onChangeMeshGranularity;
+  onCameraPreviewEndRef.current = onCameraPreviewEnd;
+  modeRef.current = devModeOverrideRef.current ?? mode;
+  meshGranularityRef.current = activeMeshGranularity;
+  meshSelectionsRef.current = meshSelections;
+  cameraPreviewRef.current = devCameraPreviewRef.current !== undefined ? devCameraPreviewRef.current : cameraPreview;
+  cameraPreviewDefsRef.current = track?.kmp ? toCameraPreviewDefs(track.kmp) : [];
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    const viewport = viewportRef.current;
+    const canvas: HTMLCanvasElement | null = canvasRef.current;
+    const viewport: HTMLElement | null = viewportRef.current;
     if (!canvas || !viewport) return;
+    const canvasElement: HTMLCanvasElement = canvas;
+    const viewportElement: HTMLElement = viewport;
     let cancelled = false;
 
     async function bootViewer() {
-      const result = await initializeViewerWebGL2(canvas);
+      const result = await initializeViewerWebGL2(canvasElement);
       if (cancelled) return;
       if (result.error !== InitErrorCode.SUCCESS || !result.viewer) {
         setStatus('WebGL2 is unavailable; noclip renderer cannot start in this browser.');
         return;
       }
-      viewerRef.current = result.viewer;
+      const viewer: Viewer = result.viewer;
+      viewerRef.current = viewer;
       setViewerReady(true);
       const resizeObserver = new ResizeObserver(() => resizeToDisplay());
-      resizeObserver.observe(viewport);
+      resizeObserver.observe(viewportElement);
       resizeToDisplay();
       setViewportCameraLookActive(false);
       const tick = (time: number) => {
-        const restoreSuppressedKeys = withSuppressedCameraMovementKeys(result.viewer!);
-        result.viewer!.update({ time, webXRContext: null });
+        stepCameraPreview(time);
+        const restoreSuppressedKeys = withSuppressedCameraMovementKeys(viewer);
+        viewer.update({ time, webXRContext: null });
         restoreSuppressedKeys();
-        const cameraPosition = getViewerCameraPosition(result.viewer);
+        if (import.meta.env.DEV && devCaptureRef.current.request) {
+          try {
+            devCaptureRef.current = { request: false, dataUrl: canvasElement.toDataURL('image/png') };
+          } catch {
+            devCaptureRef.current = { request: false, dataUrl: null };
+          }
+        }
+        const cameraPosition = getViewerCameraPosition(viewer);
         if (selectedIdRef.current && hasCameraPositionChanged(cameraPosition, overlayCameraPositionRef.current)) {
           overlayCameraPositionRef.current = cameraPosition;
           syncSceneOverlay(trackRef.current, selectedIdRef.current);
@@ -630,7 +805,7 @@ export function Noclip3DViewport({
           overlayCameraPositionRef.current = cameraPosition;
         }
         if (smokeMode && smokeViewportSampleRef.current !== 'nonblank' && smokeProbeFrameRef.current++ % 12 === 0) {
-          const sample = sampleViewportState(canvas);
+          const sample = sampleViewportState(canvasElement);
           if (sample && sample !== smokeViewportSampleRef.current) {
             smokeViewportSampleRef.current = sample;
             setSmokeViewportSample(sample);
@@ -657,8 +832,8 @@ export function Noclip3DViewport({
     });
 
     function resizeToDisplay() {
-      const rect = viewport.getBoundingClientRect();
-      resizeCanvas(canvas, Math.max(1, Math.floor(rect.width)), Math.max(1, Math.floor(rect.height)), window.devicePixelRatio || 1);
+      const rect = viewportElement.getBoundingClientRect();
+      resizeCanvas(canvasElement, Math.max(1, Math.floor(rect.width)), Math.max(1, Math.floor(rect.height)), window.devicePixelRatio || 1);
     }
 
     return () => {
@@ -763,7 +938,7 @@ export function Noclip3DViewport({
       releaseCameraLook(canvas);
     };
 
-    const handleNativeContextMenu = (event: MouseEvent) => {
+    const handleNativeContextMenu = (event: globalThis.MouseEvent) => {
       event.preventDefault();
     };
 
@@ -805,36 +980,40 @@ export function Noclip3DViewport({
     }
 
     let cancelled = false;
+    const sceneViewer: Viewer = viewer;
+    const sceneUiContainer: HTMLElement = uiContainer;
+    const loadingTrack: TrackDocument = sceneTrack;
     async function loadScene() {
       try {
         setStatus('Loading track in noclip Mario Kart Wii renderer...');
-        sceneRef.current?.destroy(viewer.gfxDevice);
-        for (const item of destroyablePoolRef.current) item.destroy(viewer.gfxDevice);
+        sceneRef.current?.destroy(sceneViewer.gfxDevice);
+        for (const item of destroyablePoolRef.current) item.destroy(sceneViewer.gfxDevice);
         destroyablePoolRef.current = [];
 
-        const archiveBytes = buildU8(sceneTrack.archiveEntries);
+        const archiveBytes = buildU8(loadingTrack.archiveEntries);
         const dataShare = new DataShare();
         const dataFetcher = makeLocalDataFetcher(commonArchiveUrl ?? smokeCommonUrl);
         const context: SceneContext = {
-          device: viewer.gfxDevice,
+          device: sceneViewer.gfxDevice,
           dataFetcher,
           dataShare,
-          uiContainer,
+          uiContainer: sceneUiContainer,
           destroyablePool: destroyablePoolRef.current,
-          inputManager: viewer.inputManager,
-          viewerInput: viewer.viewerRenderInput,
+          inputManager: sceneViewer.inputManager,
+          viewerInput: sceneViewer.viewerRenderInput,
           initialSceneTime: 0,
         };
         const scene = await createSceneFromU8Buffer(context, new ArrayBufferSlice(archiveBytes.buffer, archiveBytes.byteOffset, archiveBytes.byteLength));
         if (cancelled) {
-          scene.destroy(viewer.gfxDevice);
+          scene.destroy(sceneViewer.gfxDevice);
           return;
         }
         sceneRef.current = scene;
-        viewer.setScene(scene);
-        syncSceneOverlay(sceneTrack, selectedIdRef.current);
-        applyViewMode(sceneTrack, true);
-        setStatus(`${sceneTrack.fileName} Sigma`);
+        sceneViewer.setScene(scene);
+        (scene as SceneGfx & EditorMeshRendererScene).setEditorMode?.(modeRef.current);
+        syncSceneOverlay(loadingTrack, selectedIdRef.current);
+        applyViewMode(loadingTrack, true);
+        setStatus(`${loadingTrack.fileName} Sigma`);
       } catch (error) {
         setStatus(error instanceof Error ? error.message : String(error));
       }
@@ -938,6 +1117,139 @@ export function Noclip3DViewport({
     scene?.setEditorDOFMode?.(dofMode);
   }, [dofMode, viewerReady, sceneKey]);
 
+  // Push the editor mode into the renderer and reset mode-specific state.
+  useEffect(() => {
+    const scene = getMeshScene();
+    scene?.setEditorMode?.(mode);
+    if (mode !== 'model') {
+      hoveredMeshRef.current = null;
+      setHoveredMeshKey(null);
+      if (meshSelectionsRef.current.length > 0) applyMeshSelection([], false);
+      scene?.setEditorMeshHighlight?.([]);
+    } else {
+      updateMeshHighlight();
+    }
+    if (mode !== 'camera' && cameraPreviewRef.current) {
+      cameraPreviewRef.current = null;
+      endCameraPreview(viewerRef.current, true);
+    }
+    syncSceneOverlay(trackRef.current, selectedIdRef.current);
+  }, [mode, viewerReady, sceneKey]);
+
+  // Re-apply persisted mesh edits after the scene (re)loads.
+  useEffect(() => {
+    const scene = getMeshScene();
+    if (!scene?.setEditorMeshTransform || !meshEdits) return;
+    for (const edit of meshEdits) {
+      scene.setEditorMeshTransform?.(edit.target, { kind: 'trs', ...edit.transform });
+      if (!edit.visible || edit.deleted) scene.setEditorMeshVisible?.(edit.target, false);
+    }
+  }, [meshEdits, viewerReady, sceneKey]);
+
+  // `]` widens the mesh selection unit, `[` narrows it.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (modeRef.current !== 'model') return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      if (event.key === ']') {
+        event.preventDefault();
+        changeMeshGranularity(widenMeshGranularity(meshGranularityRef.current));
+      } else if (event.key === '[') {
+        event.preventDefault();
+        changeMeshGranularity(narrowMeshGranularity(meshGranularityRef.current));
+      } else if (event.key === 'f' || event.key === 'F') {
+        if (frameMeshSelection()) event.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [meshGranularity]);
+
+  useEffect(() => {
+    syncSceneOverlay(trackRef.current, selectedIdRef.current);
+  }, [meshSelections]);
+
+  // Dev-only hook so the viewport's new features can be driven from DevTools while the
+  // app UI is still being wired up.
+  useEffect(() => {
+    if (!import.meta.env.DEV || typeof window === 'undefined') return;
+    const api = {
+      setMode: (next: EditorMode | null) => {
+        devModeOverrideRef.current = next;
+        modeRef.current = next ?? mode;
+        getMeshScene()?.setEditorMode?.(modeRef.current);
+        syncSceneOverlay(trackRef.current, selectedIdRef.current);
+      },
+      getMode: () => modeRef.current,
+      pickMeshAt: (clientX: number, clientY: number) => pickMeshAtClient(clientX, clientY),
+      selectMeshAt: (clientX: number, clientY: number, additive = false) => {
+        selectMeshFromClient(clientX, clientY, additive);
+        return meshSelectionsRef.current.map((entry) => entry.target);
+      },
+      getSelectedMesh: () => meshSelectionsRef.current.map((entry) => ({ target: entry.target, label: entry.label, transform: entry.transform })),
+      setMeshGranularity: (granularity: MeshSelectionGranularity) => changeMeshGranularity(granularity),
+      transformMesh: (target: EditorMeshTarget, transform: MeshTransform | null) => {
+        const applied = getMeshScene()?.setEditorMeshTransform?.(target, transform === null ? null : { kind: 'trs', ...transform }) ?? false;
+        applyMeshTransform(meshTargetKey(target), transform ?? createIdentityMeshTransform());
+        updateMeshHighlight();
+        return applied;
+      },
+      setMeshVisible: (target: EditorMeshTarget, visible: boolean) => getMeshScene()?.setEditorMeshVisible?.(target, visible) ?? false,
+      listMeshes: () => getMeshScene()?.listEditorMeshes?.() ?? [],
+      getMeshBounds: (target: EditorMeshTarget) => getMeshBounds(target),
+      frameMeshSelection: () => frameMeshSelection(),
+      addImportedMesh: (brres: ArrayBuffer | Uint8Array, modelName: string | null, placement?: { position?: Vec3; rotation?: Vec3; scale?: Vec3 }) =>
+        addImportedMeshInstance(brres, modelName, placement),
+      removeImportedMesh: (id: string) => removeImportedMeshInstance(id),
+      listImportedMeshes: () => getMeshScene()?.listEditorModelInstances?.() ?? [],
+      pickRay: (clientX: number, clientY: number) => {
+        const canvas = canvasRef.current;
+        const scene = sceneRef.current as (SceneGfx & { getEditorPickRay?: (x: number, y: number) => unknown }) | null;
+        if (!canvas || !scene?.getEditorPickRay) return null;
+        const rect = canvas.getBoundingClientRect();
+        return scene.getEditorPickRay((clientX - rect.left) / rect.width, (clientY - rect.top) / rect.height);
+      },
+      previewCamera: (cameraId: string | number, options: { play?: boolean; time?: number; sequence?: boolean } = {}) => {
+        const request: CameraPreviewRequest = {
+          cameraId: typeof cameraId === 'number' ? `CAME-${cameraId}` : cameraId,
+          playing: options.play ?? false,
+          time: options.time ?? 0,
+          sequence: options.sequence ?? false,
+        };
+        devCameraPreviewRef.current = request;
+        cameraPreviewRef.current = request;
+        return true;
+      },
+      stopCameraPreview: () => {
+        devCameraPreviewRef.current = null;
+        cameraPreviewRef.current = null;
+        endCameraPreview(viewerRef.current, true);
+      },
+      playOpeningSequence: () => {
+        const started = playOpeningSequence();
+        if (started) devCameraPreviewRef.current = cameraPreviewRef.current;
+        return started;
+      },
+      getCameraOverlay: () => buildCameraOverlay(trackRef.current?.kmp ?? null),
+      getCameras: () => cameraPreviewDefsRef.current,
+      /** Grabs the WebGL frame as a PNG data URL (the drawing buffer is not preserved). */
+      captureFrame: async (): Promise<string | null> => {
+        devCaptureRef.current = { request: true, dataUrl: null };
+        for (let i = 0; i < 120; i++) {
+          if (!devCaptureRef.current.request) return devCaptureRef.current.dataUrl;
+          await new Promise((resolve) => setTimeout(resolve, 32));
+        }
+        devCaptureRef.current.request = false;
+        return null;
+      },
+    };
+    (window as unknown as { __mkwViewport?: typeof api }).__mkwViewport = api;
+    return () => {
+      delete (window as unknown as { __mkwViewport?: typeof api }).__mkwViewport;
+    };
+  }, [viewerReady, sceneKey]);
+
   useEffect(() => {
     setRouteVisibility((current) => {
       const next: Record<string, boolean> = {};
@@ -981,7 +1293,7 @@ export function Noclip3DViewport({
         return;
       }
       smokePlacementDoneRef.current = true;
-      smokePlacementUsedCollisionRef.current = placement.source !== 'plane';
+      smokePlacementUsedCollisionRef.current = true;
       onAddObject(smokeAddObjectId, placement.position);
     };
     tryPlace();
@@ -1170,19 +1482,46 @@ export function Noclip3DViewport({
       onScaleEntityRef.current?.(pending.entity, pending.scale);
       return;
     }
+    if (pending.kind === 'transformMesh') {
+      onTransformMeshRef.current?.(pending.target, pending.transform);
+      return;
+    }
+    if (pending.kind === 'moveCameraViewPoint') {
+      onMoveCameraViewPointRef.current?.(pending.entity, pending.which, pending.position);
+      return;
+    }
     if (pending.kind === 'moveTransformSelection') {
+      if (commitMeshTransformSelection(pending.selection, pending.position, pending.selection.rotation, pending.selection.scale)) return;
       onMoveTransformSelectionRef.current?.(pending.selection, pending.position);
       return;
     }
     if (pending.kind === 'rotateTransformSelection') {
+      if (commitMeshTransformSelection(pending.selection, pending.selection.position, pending.rotation, pending.selection.scale)) return;
       onRotateTransformSelectionRef.current?.(pending.selection, pending.rotation);
       return;
     }
     if (pending.kind === 'scaleTransformSelection') {
+      if (commitMeshTransformSelection(pending.selection, pending.selection.position, pending.selection.rotation, pending.scale)) return;
       onScaleTransformSelectionRef.current?.(pending.selection, pending.scale);
       return;
     }
     onMoveCheckpointEndpointRef.current?.(pending.entity, pending.side, pending.position);
+  }
+
+  /** Mesh gizmo drags commit through `onTransformMesh`, not the BRRES-node callbacks. */
+  function commitMeshTransformSelection(
+    selection: ViewportTransformSelection,
+    position: Vec3,
+    rotation: Vec3 | undefined,
+    scale: Vec3 | undefined,
+  ): boolean {
+    const rendererTarget = selection.rendererTarget;
+    if (rendererTarget?.kind !== 'editorMesh') return false;
+    const transform = meshTransformFromGizmoPose(rendererTarget.baseCenter, position, rotation, scale);
+    applyMeshTransform(meshTargetKey(rendererTarget.target), transform);
+    onTransformMeshRef.current?.(rendererTarget.target, transform);
+    updateMeshHighlight();
+    return true;
   }
 
   function scheduleInteractionCommit(pending: PendingInteractionCommit) {
@@ -1216,6 +1555,10 @@ export function Noclip3DViewport({
     }
     if (drag.kind === 'checkpointEndpoint') {
       handleCheckpointEndpointPointerMove(clientX, clientY, drag, snapToFeatures);
+      return;
+    }
+    if (drag.kind === 'cameraViewPoint') {
+      handleCameraViewPointPointerMove(clientX, clientY, drag, snapToFeatures);
       return;
     }
     const entity = trackRef.current?.kmp?.entities.find((candidate) => candidate.id === drag.id);
@@ -1322,6 +1665,17 @@ export function Noclip3DViewport({
       onSelect(entity.id);
       onInteractionStart?.();
       draggingEntityRef.current = { kind: 'checkpointEndpoint', id: entity.id, side: scenePick.side };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
+    if (scenePick?.kind === 'cameraViewPoint') {
+      const cameraEntity = trackRef.current?.kmp?.entities.find((candidate) => candidate.id === scenePick.id);
+      if (!cameraEntity?.cameraView) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onSelect(cameraEntity.id);
+      onInteractionStart?.();
+      draggingEntityRef.current = { kind: 'cameraViewPoint', id: cameraEntity.id, which: scenePick.which };
       event.currentTarget.setPointerCapture(event.pointerId);
       return;
     }
@@ -1524,9 +1878,9 @@ function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDra
 function snapDraggedPositionToCollision(position: Vec3): Vec3 {
   const kcl = trackRef.current?.kcl;
   if (!kcl) return position;
-  const hit = raycastDown(kcl, position.x, position.z);
+  const hit = raycastMesh(kcl, { x: position.x, y: 100000, z: position.z }, { x: 0, y: -1, z: 0 });
   if (!hit) return position;
-  return snapPointToTriangleFeature(hit, hit.triangle).position;
+  return snapPointToTriangleFeature(hit.position, hit.triangle).position;
 }
 
   function handleCheckpointEndpointPointerMove(clientX: number, clientY: number, drag: CheckpointDragState, snapToFeatures = false) {
@@ -1535,6 +1889,14 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     const current = entity.checkpoint[drag.side];
     const next = placeFromScreen(clientX, clientY, current.y, snapToFeatures);
     if (next) scheduleInteractionCommit({ kind: 'moveCheckpointEndpoint', entity, side: drag.side, position: next });
+  }
+
+  function handleCameraViewPointPointerMove(clientX: number, clientY: number, drag: CameraViewPointDragState, snapToFeatures = false) {
+    const entity = trackRef.current?.kmp?.entities.find((candidate) => candidate.id === drag.id);
+    if (!entity?.cameraView) return;
+    const current = drag.which === 'start' ? entity.cameraView.start : entity.cameraView.end;
+    const next = placeFromScreen(clientX, clientY, current.y, snapToFeatures);
+    if (next) scheduleInteractionCommit({ kind: 'moveCameraViewPoint', entity, which: drag.which, position: next });
   }
 
   function handleDrop(event: DragEvent<HTMLElement>) {
@@ -1576,6 +1938,12 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
       onSelectTransformSelectionRef.current?.(pickedTransformSelection.selection.id);
       return;
     }
+    if (modeRef.current === 'model') {
+      // Do not re-pick when the click was really the end of a gizmo drag.
+      if (scenePick && (scenePick.kind === 'axis' || scenePick.kind === 'plane' || scenePick.kind === 'center')) return;
+      selectMeshFromClient(event.clientX, event.clientY, isAdditiveSelectionModifier(event));
+      return;
+    }
     const picked = pickedTransformSelection?.entity ?? pickEntityFromPick(scenePick) ?? pickEntityFromScreenPosition(event.clientX, event.clientY);
     onSelect(picked?.id ?? null, { additive: isAdditiveSelectionModifier(event) });
   }
@@ -1600,11 +1968,39 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     setMarqueeSelection(null);
     suppressNextClickRef.current = true;
     if (!canvas || !marquee) return;
+    if (modeRef.current === 'model') {
+      selectMeshesInMarquee(marquee, canvas);
+      return;
+    }
     const scene = sceneRef.current as SceneGfx & {
       pickEditorPointsInRect?: (normalizedX0: number, normalizedY0: number, normalizedX1: number, normalizedY1: number) => string[];
     } | null;
     const selectedIds = pickScenePointsInRect(scene, marquee, canvas);
     onSelectMany?.(selectedIds, { additive: marquee.additive });
+  }
+
+  /** Model mode marquee: every mesh whose centre falls inside the rectangle. */
+  function selectMeshesInMarquee(marquee: MarqueeSelectionState, canvas: HTMLCanvasElement) {
+    const scene = getMeshScene();
+    if (!scene?.pickEditorMeshesInRect) return;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const picks = scene.pickEditorMeshesInRect(
+      clamp01((marquee.startX - rect.left) / rect.width),
+      clamp01((marquee.startY - rect.top) / rect.height),
+      clamp01((marquee.currentX - rect.left) / rect.width),
+      clamp01((marquee.currentY - rect.top) / rect.height),
+      meshGranularityRef.current,
+    );
+    const entries: MeshSelectionEntry[] = [];
+    for (const pick of picks) {
+      const entry = makeMeshEntryFromTarget(toMeshTarget(pick, meshGranularityRef.current), describeMeshPick(pick));
+      if (entry && !entries.some((candidate) => candidate.key === entry.key)) entries.push(entry);
+    }
+    const next = marquee.additive
+      ? [...meshSelectionsRef.current, ...entries.filter((entry) => !meshSelectionsRef.current.some((candidate) => candidate.key === entry.key))]
+      : entries;
+    applyMeshSelection(next, true, marquee.additive);
   }
 
   function pickEntityFromPick(pick: SceneOverlayPick | null): KmpEntity | null {
@@ -1624,6 +2020,8 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
 
   function pickTransformSelectionFromPick(pick: SceneOverlayPick | null): TransformSelectionTarget | null {
     if (!pick) return null;
+    const meshTarget = findMeshTransformSelection(pick.id);
+    if (meshTarget) return meshTarget;
     if (transformSelectionRef.current && pick.id === transformSelectionRef.current.id) {
       return { kind: 'external', selection: transformSelectionRef.current };
     }
@@ -1635,6 +2033,8 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
   }
 
   function findTransformSelectionById(id: string): TransformSelectionTarget | null {
+    const meshTarget = findMeshTransformSelection(id);
+    if (meshTarget) return meshTarget;
     if (transformSelectionRef.current?.id === id) return { kind: 'external', selection: transformSelectionRef.current };
     const external = transformSelectionsRef.current.find((candidate) => candidate.id === id);
     if (external) return { kind: 'external', selection: external };
@@ -1677,11 +2077,328 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     syncBrresViewportTransformSelectionPreview(scene, selection, position, rotation, scale);
   }
 
+  //#region Model mode: mesh picking / transforming
+
+  function getMeshScene(): (SceneGfx & EditorMeshRendererScene) | null {
+    return sceneRef.current as (SceneGfx & EditorMeshRendererScene) | null;
+  }
+
+  function pickMeshAtClient(clientX: number, clientY: number): EditorMeshPickPayload | null {
+    const canvas = canvasRef.current;
+    const scene = getMeshScene();
+    if (!canvas || !scene?.pickEditorMesh) return null;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    return scene.pickEditorMesh((clientX - rect.left) / rect.width, (clientY - rect.top) / rect.height, meshGranularityRef.current);
+  }
+
+  function getMeshBounds(target: EditorMeshTarget): EditorMeshBoundsPayload | null {
+    return getMeshScene()?.getEditorMeshComponentBounds?.(target) ?? null;
+  }
+
+  function makeMeshEntryFromTarget(target: EditorMeshTarget, label: string, transform?: MeshTransform): MeshSelectionEntry | null {
+    const bounds = getMeshBounds(target);
+    if (!bounds) return null;
+    const current = transform ?? createIdentityMeshTransform();
+    // `getEditorMeshComponentBounds` reports the *current* box, so back out the live offset.
+    const baseCenter = {
+      x: bounds.center.x - current.translation.x,
+      y: bounds.center.y - current.translation.y,
+      z: bounds.center.z - current.translation.z,
+    };
+    return makeMeshSelectionEntry(target, label, baseCenter, current);
+  }
+
+  function applyMeshSelection(next: MeshSelectionEntry[], notify: boolean, additive = false) {
+    setMeshSelections(next);
+    meshSelectionsRef.current = next;
+    updateMeshHighlight();
+    if (notify) {
+      onSelectMeshRef.current?.(next.length > 0 ? next[next.length - 1].target : null, {
+        additive,
+        targets: next.map((entry) => entry.target),
+      });
+    }
+  }
+
+  function updateMeshHighlight() {
+    const scene = getMeshScene();
+    if (!scene?.setEditorMeshHighlight) return;
+    if (modeRef.current !== 'model') {
+      scene.setEditorMeshHighlight([]);
+      return;
+    }
+    const targets: Array<{ target: EditorMeshTarget; selected: boolean }> = meshSelectionsRef.current.map((entry) => ({
+      target: entry.target,
+      selected: true,
+    }));
+    const hovered = hoveredMeshRef.current;
+    if (hovered && !meshSelectionsRef.current.some((entry) => entry.key === hovered.key))
+      targets.push({ target: hovered.target, selected: false });
+    scene.setEditorMeshHighlight(targets);
+  }
+
+  function selectMeshFromClient(clientX: number, clientY: number, additive: boolean): boolean {
+    const pick = pickMeshAtClient(clientX, clientY);
+    if (!pick) {
+      if (!additive) applyMeshSelection([], true, additive);
+      return false;
+    }
+    const target = toMeshTarget(pick, meshGranularityRef.current);
+    const entry = makeMeshEntryFromTarget(target, describeMeshPick(pick));
+    if (!entry) return false;
+    applyMeshSelection(applyMeshSelectionClick(meshSelectionsRef.current, entry, additive), true, additive);
+    return true;
+  }
+
+  function updateHoveredMesh(clientX: number, clientY: number) {
+    if (modeRef.current !== 'model') {
+      if (hoveredMeshRef.current !== null) {
+        hoveredMeshRef.current = null;
+        setHoveredMeshKey(null);
+        updateMeshHighlight();
+      }
+      return;
+    }
+    const pick = pickMeshAtClient(clientX, clientY);
+    const target = pick ? toMeshTarget(pick, meshGranularityRef.current) : null;
+    const key = target ? meshTargetKey(target) : null;
+    if (key === (hoveredMeshRef.current?.key ?? null)) return;
+    hoveredMeshRef.current = target && key ? { key, target } : null;
+    setHoveredMeshKey(key);
+    updateMeshHighlight();
+  }
+
+  function changeMeshGranularity(next: MeshSelectionGranularity) {
+    if (next === meshGranularityRef.current) return;
+    meshGranularityRef.current = next;
+    if (meshGranularity === undefined) setInternalMeshGranularity(next);
+    onChangeMeshGranularityRef.current?.(next);
+    const retargeted = meshSelectionsRef.current
+      .map((entry) => makeMeshEntryFromTarget(retargetMeshGranularity(entry.target, next), entry.label, entry.transform))
+      .filter((entry): entry is MeshSelectionEntry => entry !== null);
+    // De-duplicate: widening can collapse several components onto one shape.
+    const unique: MeshSelectionEntry[] = [];
+    for (const entry of retargeted) if (!unique.some((candidate) => candidate.key === entry.key)) unique.push(entry);
+    applyMeshSelection(unique, true);
+  }
+
+  /** Frames the free camera on the current mesh selection (F in model mode). */
+  function frameMeshSelection(): boolean {
+    const viewer = viewerRef.current;
+    const entry = meshSelectionsRef.current[meshSelectionsRef.current.length - 1];
+    if (!viewer || !entry) return false;
+    const bounds = getMeshBounds(entry.target);
+    if (!bounds) return false;
+    const controller = viewer.cameraController instanceof FPSCameraController ? viewer.cameraController : new FPSCameraController();
+    if (!(viewer.cameraController instanceof FPSCameraController)) viewer.setCameraController(controller);
+    const radius = Math.max(60, bounds.radius) * MKW_RENDER_SCALE;
+    const center = vec3.fromValues(
+      bounds.center.x * MKW_RENDER_SCALE,
+      bounds.center.y * MKW_RENDER_SCALE,
+      bounds.center.z * MKW_RENDER_SCALE,
+    );
+    applyFPSCameraFrame(controller, {
+      eye: vec3.fromValues(center[0] + radius * 1.6, center[1] + radius * 1.1, center[2] + radius * 1.9),
+      target: center,
+    });
+    controller.update(viewer.inputManager, 0);
+    viewer.camera.worldMatrixUpdated();
+    return true;
+  }
+
+  /**
+   * Adds an object BRRES to the scene as course geometry. `matrix` is optional; when it is
+   * omitted the model is placed at `position` (game units) with `scale` applied.
+   */
+  function addImportedMeshInstance(
+    brres: ArrayBuffer | Uint8Array,
+    modelName: string | null,
+    placement: { position?: Vec3; rotation?: Vec3; scale?: Vec3 } = {},
+  ): string | null {
+    const viewer = viewerRef.current;
+    const scene = getMeshScene();
+    if (!viewer || !scene?.addEditorModelInstance) return null;
+    const bytes = brres instanceof Uint8Array ? brres : new Uint8Array(brres);
+    const slice = new ArrayBufferSlice(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const matrix = mat4.create();
+    const position = placement.position ?? { x: 0, y: 0, z: 0 };
+    const rotation = placement.rotation ?? { x: 0, y: 0, z: 0 };
+    const scale = placement.scale ?? { x: 1, y: 1, z: 1 };
+    const deg = Math.PI / 180;
+    mat4.fromTranslation(matrix, [position.x * MKW_RENDER_SCALE, position.y * MKW_RENDER_SCALE, position.z * MKW_RENDER_SCALE]);
+    mat4.rotateY(matrix, matrix, rotation.y * deg);
+    mat4.rotateX(matrix, matrix, rotation.x * deg);
+    mat4.rotateZ(matrix, matrix, rotation.z * deg);
+    mat4.scale(matrix, matrix, [scale.x * MKW_RENDER_SCALE, scale.y * MKW_RENDER_SCALE, scale.z * MKW_RENDER_SCALE]);
+    return scene.addEditorModelInstance(viewer.gfxDevice, slice, modelName, matrix);
+  }
+
+  function removeImportedMeshInstance(id: string): boolean {
+    const viewer = viewerRef.current;
+    const scene = getMeshScene();
+    if (!viewer || !scene?.removeEditorModelInstance) return false;
+    return scene.removeEditorModelInstance(viewer.gfxDevice, id);
+  }
+
+  function applyMeshTransform(key: string, transform: MeshTransform) {
+    const next = updateMeshSelectionTransform(meshSelectionsRef.current, key, transform);
+    setMeshSelections(next);
+    meshSelectionsRef.current = next;
+  }
+
+  function getMeshTransformSelections(): ViewportTransformSelection[] {
+    if (modeRef.current !== 'model') return [];
+    return meshSelectionsRef.current.map((entry) =>
+      toMeshViewportTransformSelection(entry.target, entry.baseCenter, entry.transform, entry.label, meshSelectionGizmoId(entry)),
+    );
+  }
+
+  function findMeshTransformSelection(id: string): TransformSelectionTarget | null {
+    if (!id.startsWith('editor-mesh::')) return null;
+    const key = meshSelectionKeyFromGizmoId(id);
+    const entry = meshSelectionsRef.current.find((candidate) => candidate.key === key);
+    if (!entry) return null;
+    return {
+      kind: 'external',
+      selection: toMeshViewportTransformSelection(entry.target, entry.baseCenter, entry.transform, entry.label, id),
+    };
+  }
+
+  //#endregion
+
+  //#region Camera preview playback
+
+  function getCameraPreviewDef(request: CameraPreviewRequest | null): CameraPreviewDef | null {
+    if (!request) return null;
+    return findCameraPreviewDef(cameraPreviewDefsRef.current, request.cameraId);
+  }
+
+  function beginCameraPreview(viewer: Viewer): void {
+    const state = cameraPreviewStateRef.current;
+    if (state.active) return;
+    state.active = true;
+    state.frames = 0;
+    state.lastTimeMs = null;
+    state.savedCameraMatrix = mat4.clone(viewer.camera.worldMatrix);
+    state.savedFovY = viewer.camera.fovY;
+    previousCameraControllerRef.current = viewer.cameraController;
+    viewer.setCameraController(new PreviewCameraController());
+    setViewportCameraLookActive(false);
+  }
+
+  function endCameraPreview(viewer: Viewer | null, restore: boolean): void {
+    const state = cameraPreviewStateRef.current;
+    if (!state.active) return;
+    state.active = false;
+    state.sequence = null;
+    state.lastTimeMs = null;
+    setCameraPreviewLabel(null);
+    if (!viewer) return;
+    const previous = previousCameraControllerRef.current;
+    previousCameraControllerRef.current = null;
+    if (previous) viewer.setCameraController(previous);
+    else viewer.setCameraController(new FPSCameraController());
+    if (restore && state.savedCameraMatrix) {
+      mat4.copy(viewer.camera.worldMatrix, state.savedCameraMatrix);
+      if (state.savedFovY !== null) viewer.camera.setPerspective(state.savedFovY, getViewerAspect(viewer), 4, 500000);
+      viewer.camera.worldMatrixUpdated();
+      viewer.cameraController?.cameraUpdateForced();
+    }
+    state.savedCameraMatrix = null;
+    state.savedFovY = null;
+  }
+
+  function stepCameraPreview(timeMs: number): void {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const request = cameraPreviewRef.current;
+    const state = cameraPreviewStateRef.current;
+    if (!request) {
+      endCameraPreview(viewer, true);
+      return;
+    }
+    const startDef = getCameraPreviewDef(request);
+    if (!startDef) {
+      endCameraPreview(viewer, true);
+      return;
+    }
+    if (!state.active || state.startIndex !== startDef.index) {
+      if (state.active && state.startIndex !== startDef.index) {
+        state.frames = 0;
+        state.lastTimeMs = null;
+      }
+      state.startIndex = startDef.index;
+      beginCameraPreview(viewer);
+      state.sequence = request.sequence ? buildOpeningCameraChain(cameraPreviewDefsRef.current, startDef.index) : null;
+    }
+
+    if (request.playing) {
+      const delta = state.lastTimeMs === null ? 0 : timeMs - state.lastTimeMs;
+      state.lastTimeMs = timeMs;
+      state.frames = advancePreviewFrames(state.frames, delta);
+    } else {
+      state.lastTimeMs = null;
+      state.frames = Math.max(0, request.time);
+    }
+
+    let def = startDef;
+    let localFrames = state.frames;
+    if (state.sequence && state.sequence.length > 0) {
+      const sample = sampleOpeningSequence(state.sequence, state.frames);
+      if (!sample) {
+        onCameraPreviewEndRef.current?.();
+        endCameraPreview(viewer, true);
+        return;
+      }
+      def = cameraPreviewDefsRef.current.find((candidate) => candidate.index === sample.cameraIndex) ?? startDef;
+      localFrames = sample.localFrame;
+    } else if (def.time > 0 && state.frames > def.time && request.playing) {
+      onCameraPreviewEndRef.current?.();
+      endCameraPreview(viewer, true);
+      return;
+    }
+
+    const pose = sampleCameraPose(def, localFrames);
+    computePreviewCameraMatrix(cameraPreviewMatrixRef.current, pose, MKW_RENDER_SCALE);
+    mat4.copy(viewer.camera.worldMatrix, cameraPreviewMatrixRef.current);
+    viewer.camera.setPerspective(toCameraFovY(pose.fovDegrees), getViewerAspect(viewer), 4, 500000);
+    viewer.camera.worldMatrixUpdated();
+    viewer.cameraController?.cameraUpdateForced();
+    const label = `Camera ${def.index} - ${Math.round(localFrames)}f`;
+    if (label !== cameraPreviewLabelRef.current) {
+      cameraPreviewLabelRef.current = label;
+      setCameraPreviewLabel(label);
+    }
+  }
+
+  /** Chains through the opening cameras starting at the CAME header's intro camera. */
+  function playOpeningSequence(): boolean {
+    const kmp = trackRef.current?.kmp;
+    if (!kmp) return false;
+    const overlay = buildCameraOverlay(kmp);
+    if (overlay.openingChain.length === 0) return false;
+    const first = overlay.openingChain[0];
+    const state = cameraPreviewStateRef.current;
+    state.frames = 0;
+    state.lastTimeMs = null;
+    cameraPreviewRef.current = { cameraId: `CAME-${first.cameraIndex}`, playing: true, time: 0, sequence: true };
+    return true;
+  }
+
+  //#endregion
+
   function syncSceneOverlay(nextTrack: TrackDocument | null, nextSelectedId: string | null) {
     const scene = sceneRef.current as SceneGfx & {
       setEditorOverlayData?: (data: SceneOverlayData) => void;
     } | null;
     overlayCameraPositionRef.current = getViewerCameraPosition(viewerRef.current);
+    const cameraOverlay = modeRef.current === 'camera'
+      ? buildCameraOverlay(nextTrack?.kmp ?? null, {
+          selectedIds: new Set([...(selectedIdsRef.current ?? []), ...(nextSelectedId ? [nextSelectedId] : [])]),
+          hoveredId: hoveredIdRef.current,
+        })
+      : { cameraGizmos: [], cameraChainLinks: [] };
     scene?.setEditorOverlayData?.(
       buildSceneOverlayData(
         nextTrack,
@@ -1689,7 +2406,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
         selectedIdsRef.current,
         transformSelectionRef.current,
         transformSelectionsRef.current,
-        showKmpEditorOverlayRef.current,
+        showKmpEditorOverlayRef.current && modeRef.current !== 'model' && modeRef.current !== 'visual',
         fillBetweenPreviewPositions,
         previewTransform,
         hoveredIdRef.current,
@@ -1701,6 +2418,9 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
         viewModeRef.current,
         getViewerCameraPosition(viewerRef.current),
         routeInsertPreview,
+        cameraOverlay.cameraGizmos,
+        cameraOverlay.cameraChainLinks,
+        getMeshTransformSelections(),
       ),
     );
   }
@@ -1711,6 +2431,11 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     } | null;
     const scenePick = pickSceneHandle(scene, clientX, clientY, canvas);
     setHoveredGizmoHandle(pickToGizmoHandle(scenePick));
+    if (modeRef.current === 'model') {
+      if (!scenePick) updateHoveredMesh(clientX, clientY);
+      if (hoveredIdRef.current !== null) setHoveredId(null);
+      return;
+    }
     const hoveredTransformSelection = pickTransformSelectionFromPick(scenePick);
     const hovered = hoveredTransformSelection?.entity ?? pickEntityFromPick(scenePick) ?? pickEntityFromScreenPosition(clientX, clientY);
     const nextHoveredId = hoveredTransformSelection?.selection.id ?? hovered?.id ?? null;
@@ -1752,7 +2477,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
       viewer.camera.setPerspective(Math.PI / 3, getViewerAspect(viewer), 4, 500000);
       if (shouldResetCamera) {
         applyFPSCameraFrame(controller, getInitialCameraFrame(nextTrack));
-        controller.update(viewer.inputManager, 0, 0);
+        controller.update(viewer.inputManager, 0);
       }
       viewer.camera.worldMatrixUpdated();
       return;
@@ -1986,8 +2711,13 @@ function buildSceneOverlayData(
   viewMode: ViewMode,
   cameraPosition: Vec3 | null,
   routeInsertPreview: RouteInsertPreview | null,
+  cameraGizmos: SceneOverlayCameraGizmo[] = [],
+  cameraChainLinks: SceneOverlayCameraChainLink[] = [],
+  meshTransformSelections: ViewportTransformSelection[] = [],
 ): SceneOverlayData {
-  if (!track?.kmp && !transformSelection) return { tool, points: [], lines: [], centerHandle: null, axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [], startSlots: [], fillBetweenPreview: [], routeDeviationSegments: [], routeDeviationCaps: [] };
+  const activeMeshSelection = meshTransformSelections.length > 0 ? meshTransformSelections[meshTransformSelections.length - 1] : null;
+  if (activeMeshSelection) transformSelection = activeMeshSelection;
+  if (!track?.kmp && !transformSelection) return { tool, points: [], lines: [], centerHandle: null, axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [], startSlots: [], fillBetweenPreview: [], routeDeviationSegments: [], routeDeviationCaps: [], cameraGizmos, cameraChainLinks };
   const kmp = track?.kmp ?? null;
   const showCollision = viewMode === 'dev' && collisionVisible;
   const showKmpData = !!kmp && showKmpEditorOverlay;
@@ -2012,8 +2742,8 @@ function buildSceneOverlayData(
     previewTransform && previewTransform.id === entity.id ? previewTransform.position : entity.position
   );
 
-  const points = visibleEntities
-    .map((entity) => ({
+  const points: SceneOverlayPoint[] = visibleEntities
+    .map((entity): SceneOverlayPoint => ({
       id: entity.id,
       section: String(entity.section),
       position: applyPreviewPosition(entity),
@@ -2062,7 +2792,7 @@ function buildSceneOverlayData(
 
   const routeDeviationSegments: SceneOverlayRouteDeviationSegment[] = [];
   const routeDeviationCaps: SceneOverlayRouteDeviationCap[] = visibleEntities
-    .filter((entity) => (entity.section === 'ENPT' || entity.section === 'ITPT') && selectedDeviationSections.has(entity.section) && (entity.pointDeviation ?? 0) > 0)
+    .filter((entity): entity is KmpEntity & { section: 'ENPT' | 'ITPT' } => (entity.section === 'ENPT' || entity.section === 'ITPT') && selectedDeviationSections.has(entity.section) && (entity.pointDeviation ?? 0) > 0)
     .map((entity) => ({
       id: `${entity.id}-cap`,
       section: entity.section,
@@ -2073,9 +2803,9 @@ function buildSceneOverlayData(
     }));
 
   const lines: SceneOverlayLine[] = [];
-  for (const graph of track.kmp.pathGraphs) {
+  for (const graph of showKmpData ? kmp?.pathGraphs ?? [] : []) {
     if (routeVisibility[graph.pointSection] === false) continue;
-    const graphPoints = track.kmp.entities.filter((entity) => entity.section === graph.pointSection);
+    const graphPoints = (kmp?.entities ?? []).filter((entity) => entity.section === graph.pointSection);
     for (const group of graph.groups) {
       const routeKey = graph.pointSection;
       for (let pointIndex = group.startIndex; pointIndex < group.startIndex + group.pointCount - 1; pointIndex++) {
@@ -2101,7 +2831,7 @@ function buildSceneOverlayData(
       }
     }
   }
-  for (const route of track.kmp.routes) {
+  for (const route of showKmpData ? kmp?.routes ?? [] : []) {
     const routeKey = getPotiRouteVisibilityKey(route.index, routeUsage);
     if (!isPotiRouteVisible(route.index, routeVisibility, routeUsage, forcedVisibleObjectRoutes)) continue;
     for (let i = 0; i < route.points.length - 1; i++) {
@@ -2114,7 +2844,7 @@ function buildSceneOverlayData(
       });
     }
   }
-  for (const entity of track.kmp.entities.filter((candidate) => candidate.section === 'CKPT' && candidate.checkpoint)) {
+  for (const entity of (showKmpData ? kmp?.entities ?? [] : []).filter((candidate) => candidate.section === 'CKPT' && candidate.checkpoint)) {
     if (routeVisibility.CKPT === false) continue;
     lines.push({
       id: `CKPT-span-${entity.id}`,
@@ -2249,7 +2979,7 @@ function buildSceneOverlayData(
     }
   }
 
-  return { tool, points, lines, centerHandle, axes, planes, checkpointEndpoints, collisionTriangles, checkpointWalls, areaVolumes, startSlots, fillBetweenPreview, routeDeviationSegments, routeDeviationCaps };
+  return { tool, points, lines, centerHandle, axes, planes, checkpointEndpoints, collisionTriangles, checkpointWalls, areaVolumes, startSlots, fillBetweenPreview, routeDeviationSegments, routeDeviationCaps, cameraGizmos, cameraChainLinks };
 }
 
 function getRouteInsertCandidate(
@@ -2423,8 +3153,12 @@ function routeInsertPreviewEquals(a: RouteInsertPreview | null, b: RouteInsertPr
     a.position.z === b.position.z &&
     a.target.section === b.target.section &&
     ('routeIndex' in a.target ? a.target.routeIndex : a.target.groupIndex) === ('routeIndex' in b.target ? b.target.routeIndex : b.target.groupIndex) &&
-    a.target.afterPointIndex === b.target.afterPointIndex
+    routeInsertPointIndex(a.target) === routeInsertPointIndex(b.target)
   );
+}
+
+function routeInsertPointIndex(target: KmpRouteInsertTarget): number {
+  return 'afterPointIndex' in target ? target.afterPointIndex : target.localPointIndex;
 }
 
 function buildRouteDeviationSegment(
@@ -2902,10 +3636,11 @@ function clamp01(value: number): number {
 }
 
 function pickToGizmoHandle(pick: SceneOverlayPick | null): GizmoHandleKey | null {
-  if (!pick || pick.kind === 'point' || pick.kind === 'checkpointEndpoint') return null;
+  if (!pick) return null;
   if (pick.kind === 'center') return { kind: 'center', id: pick.id };
   if (pick.kind === 'plane') return { kind: 'plane', id: pick.id, plane: pick.plane };
-  return { kind: 'axis', id: pick.id, axis: pick.axis };
+  if (pick.kind === 'axis') return { kind: 'axis', id: pick.id, axis: pick.axis };
+  return null;
 }
 
 function gizmoHandleEquals(a: GizmoHandleKey | null, b: GizmoHandleKey | null): boolean {
@@ -3190,5 +3925,5 @@ function makeLocalDataFetcher(commonArchiveUrl?: string | null): DataFetcher {
       if (!response.ok) throw new Error(`Failed to load renderer data ${path}: ${response.status}`);
       return new ArrayBufferSlice(await response.arrayBuffer()) as never;
     },
-  } as DataFetcher;
+  } as unknown as DataFetcher;
 }
