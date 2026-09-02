@@ -157,6 +157,9 @@ listMeshes()
 getMeshBounds(target)
 frameMeshSelection()
 pickRay(clientX, clientY)
+addImportedMesh(brres, modelName | null, { position?, rotation?, scale? })
+removeImportedMesh(id)
+listImportedMeshes()
 previewCamera(cameraIdOrIndex, { play?, time?, sequence? })
 stopCameraPreview()
 playOpeningSequence()
@@ -164,6 +167,12 @@ getCameraOverlay()
 getCameras()
 captureFrame()                             // PNG data URL of the next rendered frame
 ```
+
+`scripts/viewport-dev-probe.mjs <url> <scriptFile>` drives this hook in a dedicated Edge
+instance and writes screenshots to `docs/screenshots/`. Probe bodies live next to it
+(`scripts/probe-model-mode.js`, `scripts/probe-camera-mode.js`, `scripts/probe-import-mesh.js`).
+Headless Edge cannot run noclip (SwiftShader lacks the required WebGL2 features), so the
+harness opens a real window parked off-screen.
 
 ---
 

@@ -49,7 +49,9 @@ export interface EditorMeshRendererScene {
   listEditorMeshes?: () => Array<EditorMeshTarget & { shapeName: string; materialName: string; nodeName: string; triangleCount: number }>;
   addEditorModelInstance?: (device: unknown, brresBuffer: unknown, modelName: string | null, matrix: unknown) => string | null;
   updateEditorModelInstance?: (id: string, matrix: unknown) => boolean;
+  setEditorModelInstanceVisible?: (id: string, visible: boolean) => boolean;
   removeEditorModelInstance?: (device: unknown, id: string) => boolean;
+  listEditorModelInstances?: () => string[];
 }
 
 export interface EditorMeshPickPayload extends EditorMeshTarget {

@@ -1199,6 +1199,10 @@ export function Noclip3DViewport({
       listMeshes: () => getMeshScene()?.listEditorMeshes?.() ?? [],
       getMeshBounds: (target: EditorMeshTarget) => getMeshBounds(target),
       frameMeshSelection: () => frameMeshSelection(),
+      addImportedMesh: (brres: ArrayBuffer | Uint8Array, modelName: string | null, placement?: { position?: Vec3; rotation?: Vec3; scale?: Vec3 }) =>
+        addImportedMeshInstance(brres, modelName, placement),
+      removeImportedMesh: (id: string) => removeImportedMeshInstance(id),
+      listImportedMeshes: () => getMeshScene()?.listEditorModelInstances?.() ?? [],
       pickRay: (clientX: number, clientY: number) => {
         const canvas = canvasRef.current;
         const scene = sceneRef.current as (SceneGfx & { getEditorPickRay?: (x: number, y: number) => unknown }) | null;
@@ -1964,11 +1968,39 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     setMarqueeSelection(null);
     suppressNextClickRef.current = true;
     if (!canvas || !marquee) return;
+    if (modeRef.current === 'model') {
+      selectMeshesInMarquee(marquee, canvas);
+      return;
+    }
     const scene = sceneRef.current as SceneGfx & {
       pickEditorPointsInRect?: (normalizedX0: number, normalizedY0: number, normalizedX1: number, normalizedY1: number) => string[];
     } | null;
     const selectedIds = pickScenePointsInRect(scene, marquee, canvas);
     onSelectMany?.(selectedIds, { additive: marquee.additive });
+  }
+
+  /** Model mode marquee: every mesh whose centre falls inside the rectangle. */
+  function selectMeshesInMarquee(marquee: MarqueeSelectionState, canvas: HTMLCanvasElement) {
+    const scene = getMeshScene();
+    if (!scene?.pickEditorMeshesInRect) return;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const picks = scene.pickEditorMeshesInRect(
+      clamp01((marquee.startX - rect.left) / rect.width),
+      clamp01((marquee.startY - rect.top) / rect.height),
+      clamp01((marquee.currentX - rect.left) / rect.width),
+      clamp01((marquee.currentY - rect.top) / rect.height),
+      meshGranularityRef.current,
+    );
+    const entries: MeshSelectionEntry[] = [];
+    for (const pick of picks) {
+      const entry = makeMeshEntryFromTarget(toMeshTarget(pick, meshGranularityRef.current), describeMeshPick(pick));
+      if (entry && !entries.some((candidate) => candidate.key === entry.key)) entries.push(entry);
+    }
+    const next = marquee.additive
+      ? [...meshSelectionsRef.current, ...entries.filter((entry) => !meshSelectionsRef.current.some((candidate) => candidate.key === entry.key))]
+      : entries;
+    applyMeshSelection(next, true, marquee.additive);
   }
 
   function pickEntityFromPick(pick: SceneOverlayPick | null): KmpEntity | null {
@@ -2173,6 +2205,40 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     controller.update(viewer.inputManager, 0);
     viewer.camera.worldMatrixUpdated();
     return true;
+  }
+
+  /**
+   * Adds an object BRRES to the scene as course geometry. `matrix` is optional; when it is
+   * omitted the model is placed at `position` (game units) with `scale` applied.
+   */
+  function addImportedMeshInstance(
+    brres: ArrayBuffer | Uint8Array,
+    modelName: string | null,
+    placement: { position?: Vec3; rotation?: Vec3; scale?: Vec3 } = {},
+  ): string | null {
+    const viewer = viewerRef.current;
+    const scene = getMeshScene();
+    if (!viewer || !scene?.addEditorModelInstance) return null;
+    const bytes = brres instanceof Uint8Array ? brres : new Uint8Array(brres);
+    const slice = new ArrayBufferSlice(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const matrix = mat4.create();
+    const position = placement.position ?? { x: 0, y: 0, z: 0 };
+    const rotation = placement.rotation ?? { x: 0, y: 0, z: 0 };
+    const scale = placement.scale ?? { x: 1, y: 1, z: 1 };
+    const deg = Math.PI / 180;
+    mat4.fromTranslation(matrix, [position.x * MKW_RENDER_SCALE, position.y * MKW_RENDER_SCALE, position.z * MKW_RENDER_SCALE]);
+    mat4.rotateY(matrix, matrix, rotation.y * deg);
+    mat4.rotateX(matrix, matrix, rotation.x * deg);
+    mat4.rotateZ(matrix, matrix, rotation.z * deg);
+    mat4.scale(matrix, matrix, [scale.x * MKW_RENDER_SCALE, scale.y * MKW_RENDER_SCALE, scale.z * MKW_RENDER_SCALE]);
+    return scene.addEditorModelInstance(viewer.gfxDevice, slice, modelName, matrix);
+  }
+
+  function removeImportedMeshInstance(id: string): boolean {
+    const viewer = viewerRef.current;
+    const scene = getMeshScene();
+    if (!viewer || !scene?.removeEditorModelInstance) return false;
+    return scene.removeEditorModelInstance(viewer.gfxDevice, id);
   }
 
   function applyMeshTransform(key: string, transform: MeshTransform) {
