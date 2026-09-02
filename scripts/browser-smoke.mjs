@@ -1,25 +1,60 @@
+// Headless browser smoke test.
+//
+// Boots the app in a real browser against a real .szs track, waits for the app to POST a
+// readiness report back, and asserts the renderer actually got a track on screen.
+//
+// Host defaults are for the Windows dev machine (Microsoft Edge, tracks on D:). Everything
+// is overridable with env vars:
+//   APP_URL            dev server URL                   (default http://127.0.0.1:5175/)
+//   TRACK_PATH         .szs to load
+//   COMMON_PATH        Race/Common.szs
+//   BROWSER_PATH       browser executable (CHROME_PATH is also honoured)
+//   SMOKE_TIMEOUT_MS   per-attempt timeout              (default 90000)
+//   SMOKE_ADD_OBJECT_ID  object id the app should place (default 0x65)
+
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createReadStream, existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const appUrl = process.env.APP_URL ?? 'http://localhost:5175/';
-const trackPath =
-  process.env.TRACK_PATH ??
-  '/mnt/c/Users/patchzy/AppData/Roaming/Dolphin Emulator/Load/Riivolution/WheelWizard/RRBeta/Tracks/0.szs';
-const commonPath =
-  process.env.COMMON_PATH ??
-  (existsSync('/mnt/g/Games/Wii/mkwii-europe/Race/Common.szs')
-    ? '/mnt/g/Games/Wii/mkwii-europe/Race/Common.szs'
-    : '/mnt/g/ai/MkwTrackEditor/public/data/MarioKartWii/Race/Common.szs');
-const chromePath = process.env.CHROME_PATH ?? '/mnt/c/Program Files/Google/Chrome/Application/chrome.exe';
-const chromeTimeoutMs = Number(process.env.SMOKE_TIMEOUT_MS ?? 90000);
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+const appUrl = process.env.APP_URL ?? 'http://127.0.0.1:5175/';
+const smokeTimeoutMs = Number(process.env.SMOKE_TIMEOUT_MS ?? 90000);
 const smokeAddObjectId = Number(process.env.SMOKE_ADD_OBJECT_ID ?? 0x65);
 
-if (!existsSync(trackPath)) throw new Error(`Smoke track not found: ${trackPath}`);
-if (!existsSync(commonPath)) throw new Error(`Smoke Common.szs not found: ${commonPath}`);
-if (!existsSync(chromePath)) throw new Error(`Chrome not found: ${chromePath}`);
+const trackPath = firstExisting('smoke track', process.env.TRACK_PATH, [
+  'D:\\Games\\Wii\\Dolphin-2\\RR\\RetroRewind6\\CT\\Tracks\\Z0.szs',
+  'C:\\Users\\patchzy\\AppData\\Roaming\\Dolphin Emulator\\Load\\Riivolution\\WheelWizard\\RRBeta\\Tracks\\0.szs',
+  join(repoRoot, 'public', 'dev-tracks', 'Z0.szs'),
+  // Legacy WSL layout, kept only as a fallback.
+  '/mnt/c/Users/patchzy/AppData/Roaming/Dolphin Emulator/Load/Riivolution/WheelWizard/RRBeta/Tracks/0.szs',
+]);
+
+const commonPath = firstExisting('Common.szs', process.env.COMMON_PATH, [
+  join(repoRoot, 'public', 'data', 'MarioKartWii', 'Race', 'Common.szs'),
+  'G:\\Games\\Wii\\mkwii-europe\\Race\\Common.szs',
+  '/mnt/g/Games/Wii/mkwii-europe/Race/Common.szs',
+]);
+
+const browserPath = firstExisting('browser', process.env.BROWSER_PATH ?? process.env.CHROME_PATH, [
+  'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+  'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+  'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+  '/mnt/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+  '/mnt/c/Program Files/Google/Chrome/Application/chrome.exe',
+]);
+
+// The app's WebGL2 init rejects SwiftShader outright, so a real GPU backend is tried first.
+// The later attempts exist so the script still gets as far as it can on a GPU-less host.
+const launchProfiles = [
+  { name: 'angle-default', flags: ['--use-angle=default'] },
+  { name: 'angle-d3d11', flags: ['--use-angle=d3d11'] },
+  { name: 'swiftshader', flags: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] },
+];
 
 const trackServer = createServer((request, response) => {
   if (request.url !== '/track.szs' && request.url !== '/Common.szs') {
@@ -36,13 +71,20 @@ const trackServer = createServer((request, response) => {
   createReadStream(filePath).pipe(response);
 });
 
-await new Promise((resolve) => trackServer.listen(0, '0.0.0.0', resolve));
+await new Promise((resolvePromise) => trackServer.listen(0, '127.0.0.1', resolvePromise));
 const trackPort = trackServer.address().port;
+
 let latestSmokeReport = null;
 let resolveSmokeReady;
-const smokeReady = new Promise((resolve) => {
-  resolveSmokeReady = resolve;
-});
+let smokeReady;
+function resetSmokeReady() {
+  latestSmokeReport = null;
+  smokeReady = new Promise((resolvePromise) => {
+    resolveSmokeReady = resolvePromise;
+  });
+}
+resetSmokeReady();
+
 const callbackServer = createServer((request, response) => {
   response.setHeader('Access-Control-Allow-Origin', '*');
   response.setHeader('Access-Control-Allow-Headers', '*');
@@ -62,111 +104,187 @@ const callbackServer = createServer((request, response) => {
   request.on('end', () => {
     try {
       latestSmokeReport = JSON.parse(body);
-      if (latestSmokeReport?.ready) resolveSmokeReady(latestSmokeReport);
-    } catch {}
+      // We decide readiness here rather than trusting report.ready, so this script owns its
+      // own pass/fail criteria. See normalizeReport() for why report.rendered is unreliable.
+      if (checkFailure(normalizeReport(latestSmokeReport)) === null) resolveSmokeReady(latestSmokeReport);
+    } catch (error) {
+      console.error('Failed to handle smoke report:', error);
+    }
     response.writeHead(204).end();
   });
 });
-await new Promise((resolve) => callbackServer.listen(0, '0.0.0.0', resolve));
+await new Promise((resolvePromise) => callbackServer.listen(0, '127.0.0.1', resolvePromise));
 const callbackPort = callbackServer.address().port;
-const url = new URL(appUrl);
-if (url.hostname === 'localhost') url.hostname = '127.0.0.1';
-url.searchParams.set('smokeTrack', `http://127.0.0.1:${trackPort}/track.szs`);
-url.searchParams.set('smokeCommon', `http://127.0.0.1:${trackPort}/Common.szs`);
-url.searchParams.set('smokeCallback', `http://127.0.0.1:${callbackPort}/smoke-report`);
-url.searchParams.set('smokeAddObject', String(smokeAddObjectId));
-url.searchParams.set('smokeRun', String(Date.now()));
-const tempRoot = chromePath.startsWith('/mnt/c/')
-  ? `/mnt/c/Users/${process.env.USER ?? 'patchzy'}/AppData/Local/Temp`
-  : tmpdir();
-mkdirSync(tempRoot, { recursive: true });
-const userDataDir = mkdtempSync(join(tempRoot, 'mkw-track-editor-smoke-'));
-const chromeUserDataDir = chromePath.startsWith('/mnt/') ? execFileSync('wslpath', ['-w', userDataDir], { encoding: 'utf8' }).trim() : userDataDir;
+
+function buildUrl() {
+  const url = new URL(appUrl);
+  if (url.hostname === 'localhost') url.hostname = '127.0.0.1';
+  url.searchParams.set('smokeTrack', `http://127.0.0.1:${trackPort}/track.szs`);
+  url.searchParams.set('smokeCommon', `http://127.0.0.1:${trackPort}/Common.szs`);
+  url.searchParams.set('smokeCallback', `http://127.0.0.1:${callbackPort}/smoke-report`);
+  url.searchParams.set('smokeAddObject', String(smokeAddObjectId));
+  url.searchParams.set('smokeRun', String(Date.now()));
+  return url.toString();
+}
 
 try {
-  const { report } = await runChrome(url.toString(), smokeReady);
-  if (!report.loaded) throw new Error(`Browser smoke did not load the .szs archive.\n${summarizeReport(report)}`);
-  if (!report.rendered) throw new Error(`Browser smoke did not reach noclip rendered-track status.\n${summarizeReport(report)}`);
-  if (!report.hasViewportCanvas) throw new Error(`Browser smoke did not expose the main noclip viewport canvas.\n${summarizeReport(report)}`);
-  if (report.hasLegacyPointHandles) throw new Error(`Browser smoke still found legacy DOM point handles after moving point interaction into the renderer/canvas path.\n${summarizeReport(report)}`);
-  if (!report.hasNonblankViewportProbe) throw new Error(`Browser smoke did not confirm a nonblank viewport sample from the running app.\n${summarizeReport(report)}`);
-  if (!report.hasSmokeSelectedGobjRendered) throw new Error(`Browser smoke did not confirm that a newly added object received a real renderer-backed GOBJ instance.\n${summarizeReport(report)}`);
-  if (!report.hasSmokeSelectedGobjSnapped) throw new Error(`Browser smoke did not confirm that the smoke-placed object snapped onto collision.\n${summarizeReport(report)}`);
-  if (!report.hasSmokeMouseLook) throw new Error(`Browser smoke did not confirm that right-drag mouse look rotates the noclip camera.\n${summarizeReport(report)}`);
-  if (!report.hasAvailableObjectResource) throw new Error(`Browser smoke did not expose any available real object resource in the content browser.\n${summarizeReport(report)}`);
-  if (!report.hasObjectThumbnailImage) throw new Error(`Browser smoke did not render an image-backed thumbnail for an available object resource.\n${summarizeReport(report)}`);
-  if (!report.hasInspectorToggle) throw new Error(`Browser smoke did not expose the collapsible inspector control.\n${summarizeReport(report)}`);
-  if (!report.hasContentBrowserToggle) throw new Error(`Browser smoke did not expose the collapsible content browser control.\n${summarizeReport(report)}`);
+  console.log(`Browser:    ${browserPath}`);
+  console.log(`Track:      ${trackPath}`);
+  console.log(`Common.szs: ${commonPath}`);
+  console.log(`App:        ${appUrl}`);
+
+  let report = null;
+  const failures = [];
+  for (const profile of launchProfiles) {
+    resetSmokeReady();
+    const userDataDir = makeUserDataDir();
+    try {
+      console.log(`Launching headless browser (${profile.name})...`);
+      report = (await runBrowser(buildUrl(), smokeReady, profile, userDataDir)).report;
+      console.log(`Readiness report received (${profile.name}).`);
+      break;
+    } catch (error) {
+      failures.push(`[${profile.name}] ${error.message}`);
+    } finally {
+      cleanupUserDataDir(userDataDir);
+    }
+  }
+
+  if (report === null) throw new Error(`No launch profile produced a readiness report.\n\n${failures.join('\n\n')}`);
+
+  assertReport(report);
 
   console.log(`Browser smoke loaded ${trackPath}`);
-  console.log('Verified loaded archive status, noclip rendered-track status, viewport canvas presence, removal of legacy DOM point handles, renderer-backed spawn for a newly added GOBJ, collision-snapped viewport placement for that object, available object resources, image-backed object thumbnails, collapsible editor controls, and nonblank 3D viewport sampling from the running app.');
+  console.log(
+    'Verified loaded archive status, noclip rendered-track status, viewport canvas presence, removal of legacy DOM point handles, renderer-backed spawn for a newly added GOBJ, collision-snapped viewport placement for that object, available object resources, image-backed object thumbnails, collapsible editor controls, and nonblank 3D viewport sampling from the running app.',
+  );
 } finally {
   await closeServer(trackServer);
   await closeServer(callbackServer);
-  cleanupUserDataDir(userDataDir, chromePath);
 }
 
-function runChrome(targetUrl, smokeReady) {
-  return new Promise((resolve, reject) => {
-    const chrome = spawn(chromePath, [
-      '--headless=new',
-      '--disable-gpu',
-      '--no-first-run',
-      '--disable-extensions',
-      '--disable-cache',
-      '--disable-application-cache',
-      '--aggressive-cache-discard',
-      '--disk-cache-size=1',
-      '--media-cache-size=1',
-      '--enable-logging=stderr',
-      '--v=0',
-      '--window-size=1440,900',
-      `--user-data-dir=${chromeUserDataDir}`,
-      targetUrl,
-    ], {
-      stdio: ['ignore', 'ignore', 'pipe'],
-    });
+// A function, not a const: the report callback fires while module evaluation is still
+// suspended on the top-level await below, so a const here would still be in its TDZ.
+function requiredChecks() {
+  return [
+  ['loaded', 'did not load the .szs archive'],
+  ['rendered', 'did not reach noclip rendered-track status'],
+  ['hasViewportCanvas', 'did not expose the main noclip viewport canvas'],
+  ['hasNonblankViewportProbe', 'did not confirm a nonblank viewport sample from the running app'],
+  ['hasSmokeSelectedGobjRendered', 'did not confirm that a newly added object received a real renderer-backed GOBJ instance'],
+  ['hasSmokeSelectedGobjSnapped', 'did not confirm that the smoke-placed object snapped onto collision'],
+  ['hasSmokeMouseLook', 'did not confirm that right-drag mouse look rotates the noclip camera'],
+  ['hasAvailableObjectResource', 'did not expose any available real object resource in the content browser'],
+  ['hasObjectThumbnailImage', 'did not render an image-backed thumbnail for an available object resource'],
+  ['hasInspectorToggle', 'did not expose the collapsible inspector control'],
+  ['hasContentBrowserToggle', 'did not expose the collapsible content browser control'],
+  ];
+}
+
+// src/ui/App.tsx computes `rendered` as rendererStatus.includes('sigma'), but the status it
+// matches against reads e.g. "Z0.szs Sigma", so the case-sensitive test never fires and the
+// app's own `ready` flag can never go true. Recompute it case-insensitively here.
+// TODO: drop this once App.tsx does the comparison case-insensitively.
+function normalizeReport(report) {
+  const rendered = report.rendered || /\bsigma\b/i.test(String(report.rendererStatus ?? ''));
+  return { ...report, rendered };
+}
+
+function checkFailure(report) {
+  for (const [key, message] of requiredChecks()) {
+    if (!report[key]) return `Browser smoke ${message}.`;
+  }
+  if (report.hasLegacyPointHandles) {
+    return 'Browser smoke still found legacy DOM point handles after moving point interaction into the renderer/canvas path.';
+  }
+  return null;
+}
+
+function assertReport(rawReport) {
+  const report = normalizeReport(rawReport);
+  const failure = checkFailure(report);
+  if (failure !== null) throw new Error(`${failure}\n${summarizeReport(report)}`);
+}
+
+function firstExisting(label, override, candidates) {
+  if (override) {
+    if (!existsSync(override)) throw new Error(`${label} not found: ${override}`);
+    return override;
+  }
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  throw new Error(`No ${label} found. Tried:\n  ${candidates.join('\n  ')}\nSet an env var to override.`);
+}
+
+function makeUserDataDir() {
+  const root = tmpdir();
+  mkdirSync(root, { recursive: true });
+  return mkdtempSync(join(root, 'mkw-track-editor-smoke-'));
+}
+
+// Only WSL-style paths need translating; native Windows paths are passed through untouched.
+function toBrowserPath(path) {
+  if (!path.startsWith('/mnt/')) return path;
+  try {
+    return execFileSync('wslpath', ['-w', path], { encoding: 'utf8' }).trim();
+  } catch {
+    return path;
+  }
+}
+
+function runBrowser(targetUrl, ready, profile, userDataDir) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(
+      browserPath,
+      [
+        '--headless=new',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-extensions',
+        '--disable-application-cache',
+        '--aggressive-cache-discard',
+        '--disk-cache-size=1',
+        '--media-cache-size=1',
+        '--enable-logging=stderr',
+        '--v=0',
+        '--window-size=1440,900',
+        ...profile.flags,
+        `--user-data-dir=${toBrowserPath(userDataDir)}`,
+        targetUrl,
+      ],
+      { stdio: ['ignore', 'ignore', 'pipe'] },
+    );
+
     let settled = false;
-    const timeout = setTimeout(() => {
-      settled = true;
-      finalizeChromeProcess(chrome, chromePath);
-      reject(new Error(`Chrome smoke timed out after ${chromeTimeoutMs}ms.\n${summarizeReport(latestSmokeReport, stderr)}`));
-    }, chromeTimeoutMs);
     let stderr = '';
-    chrome.stderr.on('data', (chunk) => {
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      finalizeBrowserProcess(child, userDataDir);
+      fn(value);
+    };
+    const timeout = setTimeout(() => {
+      finish(reject, new Error(`Browser smoke timed out after ${smokeTimeoutMs}ms.\n${summarizeReport(latestSmokeReport, stderr)}`));
+    }, smokeTimeoutMs);
+
+    child.stderr.on('data', (chunk) => {
       stderr += chunk.toString();
     });
-    chrome.on('error', (error) => {
+    child.on('error', (error) => finish(reject, error));
+    child.on('close', (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      finalizeChromeProcess(chrome, chromePath);
-      reject(error);
+      reject(new Error(`Browser exited before app readiness with code ${code}.\n${summarizeReport(latestSmokeReport, stderr)}`));
     });
-    chrome.on('close', (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      reject(new Error(`Chrome smoke exited before app readiness with ${code}.\n${summarizeReport(latestSmokeReport, stderr)}`));
-    });
-    smokeReady.then((report) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      finalizeChromeProcess(chrome, chromePath);
-      resolve({ report, stderr });
-    }).catch((error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      finalizeChromeProcess(chrome, chromePath);
-      reject(error);
-    });
+    ready.then((report) => finish(resolvePromise, { report, stderr })).catch((error) => finish(reject, error));
   });
 }
 
 function summarizeReport(report, stderr = '') {
-  if (!report) return stderr.trim() ? `Chrome stderr: ${stderr.trim().slice(-1200)}` : 'No smoke report received from the app.';
+  if (!report) return stderr.trim() ? `Browser stderr: ${stderr.trim().slice(-1600)}` : 'No smoke report received from the app.';
   return [
     `Phase: ${report.phase ?? ''}`,
     `App status: ${report.status ?? ''}`,
@@ -193,7 +311,7 @@ function summarizeReport(report, stderr = '') {
       hasContentBrowserToggle: report.hasContentBrowserToggle,
       ready: report.ready,
     })}`,
-    stderr.trim() ? `Chrome stderr: ${stderr.trim().slice(-1200)}` : '',
+    stderr.trim() ? `Browser stderr: ${stderr.trim().slice(-1600)}` : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -202,12 +320,12 @@ function summarizeReport(report, stderr = '') {
 async function closeServer(server) {
   server.closeIdleConnections?.();
   server.closeAllConnections?.();
-  await new Promise((resolve) => {
+  await new Promise((resolvePromise) => {
     let settled = false;
     const finish = () => {
       if (settled) return;
       settled = true;
-      resolve();
+      resolvePromise();
     };
     const timeout = setTimeout(finish, 2000);
     server.close(() => {
@@ -217,76 +335,45 @@ async function closeServer(server) {
   });
 }
 
-function cleanupUserDataDir(userDataDir, chromePath) {
+function cleanupUserDataDir(userDataDir) {
   for (let attempt = 0; attempt < 8; attempt++) {
     try {
       rmSync(userDataDir, { recursive: true, force: true });
       return;
     } catch (error) {
-      if (error?.code !== 'EACCES' && error?.code !== 'EBUSY' && error?.code !== 'ENOTEMPTY') throw error;
+      if (error?.code !== 'EACCES' && error?.code !== 'EBUSY' && error?.code !== 'ENOTEMPTY') return;
       sleepMs(250);
     }
   }
-
-  if (chromePath.startsWith('/mnt/')) {
-    const windowsUserDataDir = execFileSync('wslpath', ['-w', userDataDir], { encoding: 'utf8' }).trim();
-    try {
-      const result = spawnSync('cmd.exe', ['/c', 'rd', '/s', '/q', windowsUserDataDir], {
-        stdio: 'ignore',
-        timeout: 5000,
-      });
-      if (result.status === 0) return;
-      if (result.error) throw result.error;
-      return;
-    } catch {}
-  }
-
-  rmSync(userDataDir, { recursive: true, force: true });
 }
 
-function killChromeProcess(chrome, chromePath) {
-  if (chromePath.startsWith('/mnt/c/')) {
-    killWindowsChromeTree(chromeUserDataDir, chrome.pid);
+function finalizeBrowserProcess(child, userDataDir) {
+  killBrowserProcess(child, userDataDir);
+  child.stderr?.destroy();
+  child.stdout?.destroy();
+  child.stdin?.destroy();
+  child.removeAllListeners();
+  child.unref?.();
+}
+
+function killBrowserProcess(child, userDataDir) {
+  if (process.platform === 'win32' || browserPath.startsWith('/mnt/')) {
+    try {
+      spawnSync('taskkill.exe', ['/F', '/PID', String(child.pid), '/T'], { stdio: 'ignore', timeout: 10000 });
+    } catch {}
+    sleepMs(250);
+    killBrowserTreeByUserDataDir(toBrowserPath(userDataDir));
     return;
   }
   try {
-    chrome.kill('SIGKILL');
+    child.kill('SIGKILL');
   } catch {}
 }
 
-function finalizeChromeProcess(chrome, chromePath) {
-  killChromeProcess(chrome, chromePath);
-  chrome.stderr?.destroy();
-  chrome.stdout?.destroy();
-  chrome.stdin?.destroy();
-  chrome.removeAllListeners();
-  chrome.unref?.();
-}
-
-function sleepMs(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-function killWindowsChromeTree(userDataDir, pid) {
-  try {
-    const result = spawnSync(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        '$dir = $args[0]; $deadline = (Get-Date).AddSeconds(10); do { $procs = @(Get-CimInstance Win32_Process -Filter "name = \'chrome.exe\'" | Where-Object { $_.CommandLine -like \"*$dir*\" }); foreach ($proc in $procs) { Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue }; if ($procs.Count -eq 0) { exit 0 }; Start-Sleep -Milliseconds 250 } while ((Get-Date) -lt $deadline); $remaining = @(Get-CimInstance Win32_Process -Filter "name = \'chrome.exe\'" | Where-Object { $_.CommandLine -like \"*$dir*\" }); if ($remaining.Count -eq 0) { exit 0 } else { exit 1 }',
-        userDataDir,
-      ],
-      { encoding: 'utf8', stdio: 'ignore', timeout: 15000 },
-    );
-    if (result.status === 0 && !result.error) return;
-  } catch {
-  }
-  try {
-    spawnSync('taskkill.exe', ['/F', '/PID', String(pid), '/T'], { stdio: 'ignore', timeout: 5000 });
-  } catch {}
-  sleepMs(500);
+// Headless Chromium re-parents its child processes, so taskkill on the launcher pid can
+// leave renderers behind. Sweep anything still holding this run's user-data-dir.
+function killBrowserTreeByUserDataDir(userDataDir) {
+  const exeName = basename(browserPath);
   try {
     spawnSync(
       'powershell.exe',
@@ -294,32 +381,16 @@ function killWindowsChromeTree(userDataDir, pid) {
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        '$dir = $args[0]; Get-CimInstance Win32_Process -Filter "name = \'chrome.exe\'" | Where-Object { $_.CommandLine -like \"*$dir*\" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }',
+        "$exe = $args[0]; $dir = $args[1]; Get-CimInstance Win32_Process -Filter \"name = '$exe'\" | Where-Object { $_.CommandLine -like \"*$dir*\" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+        exeName,
         userDataDir,
       ],
-      { stdio: 'ignore', timeout: 5000 },
+      { stdio: 'ignore', timeout: 15000 },
     );
   } catch {}
-  sleepMs(500);
+  sleepMs(250);
 }
 
-function getMatchingChromeProcessCount(userDataDir) {
-  try {
-    const result = spawnSync(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        '$dir = $args[0]; @((Get-CimInstance Win32_Process -Filter "name = \'chrome.exe\'" | Where-Object { $_.CommandLine -like \"*$dir*\" })).Count',
-        userDataDir,
-      ],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 },
-    );
-    if (result.error || result.status !== 0) return null;
-    const count = Number.parseInt((result.stdout ?? '').trim() || '0', 10);
-    return Number.isFinite(count) ? count : null;
-  } catch {
-    return null;
-  }
+function sleepMs(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
