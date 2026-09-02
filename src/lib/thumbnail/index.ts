@@ -19,6 +19,7 @@ import type { ThumbnailRenderOptions, ThumbnailRenderResult } from './webglThumb
 export { computeStudioFraming, isUsableBounds, makeEmptyBounds, expandBoundsByPoint, boundsCenter, boundsRadius } from './framing';
 export type { Bounds3, StudioFraming, StudioFramingOptions } from './framing';
 export { hashBytes, LruCache, SerialTaskQueue, InFlightMap, immediateSchedule } from './cache';
+export { selectThumbnailModelNames, isAuxiliaryModelName, modelNameFromResourcePath } from './modelSelection';
 export type { ThumbnailRenderOptions, ThumbnailRenderResult } from './webglThumbnailRenderer';
 
 export interface BrresThumbnailOptions extends ThumbnailRenderOptions {
@@ -71,6 +72,7 @@ export function buildBrresThumbnailKey(data: Uint8Array, options: BrresThumbnail
     options.size ?? '',
     options.supersample ?? '',
     options.modelNames?.join(',') ?? '',
+    options.preferModelName ?? '',
     options.variantKey ?? '',
     ...extras,
   ]);

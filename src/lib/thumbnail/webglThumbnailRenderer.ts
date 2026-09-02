@@ -17,12 +17,13 @@ import { colorNewFromRGBA } from '../../../vendor/noclip.website/src/Color';
 import * as BRRES from '../../../vendor/noclip.website/src/rres/brres';
 import { MDL0Model, MDL0ModelInstance, RRESTextureHolder } from '../../../vendor/noclip.website/src/rres/render';
 import { GXRenderHelperGfx, fillSceneParamsDataOnTemplate } from '../../../vendor/noclip.website/src/gx/gx_render';
+import { calcMipChain, decodeTexture } from '../../../vendor/noclip.website/src/gx/gx_texture';
+import { GfxFormat, makeTextureDescriptor2D, type GfxTexture } from '../../../vendor/noclip.website/src/gfx/platform/GfxPlatform';
 import type { GXMaterialHacks } from '../../../vendor/noclip.website/src/gx/gx_material';
 import {
   createSwapChainForWebGL2,
   GfxPlatformWebGL2Config,
 } from '../../../vendor/noclip.website/src/gfx/platform/GfxPlatformWebGL2';
-import type { GfxSwapChain } from '../../../vendor/noclip.website/src/gfx/platform/GfxPlatform';
 import { GfxrAttachmentSlot } from '../../../vendor/noclip.website/src/gfx/render/GfxRenderGraph';
 import {
   AntialiasingMode,
@@ -41,6 +42,7 @@ import {
   type Bounds3,
   type StudioFramingOptions,
 } from './framing';
+import { selectThumbnailModelNames } from './modelSelection';
 
 export interface ThumbnailRenderOptions extends StudioFramingOptions {
   /** Output image edge length in CSS pixels. */
@@ -52,8 +54,14 @@ export interface ThumbnailRenderOptions extends StudioFramingOptions {
    * Common.szs objects frequently reference textures that live in a sibling archive.
    */
   extraTextureArchives?: Uint8Array[];
-  /** Restrict rendering to these MDL0 names (default: every model in the archive). */
+  /** Restrict rendering to these MDL0 names (default: chosen by `selectThumbnailModelNames`). */
   modelNames?: string[];
+  /**
+   * Name of the MDL0 that represents the object, usually the BRRES file's base name. When it
+   * matches a model in the archive only that model is drawn, which is how the game picks the
+   * presentation mesh out of `itembox` / `itembox-low` / `itembox-shadow`.
+   */
+  preferModelName?: string | null;
   /** Background colour behind the model. Alpha 0 keeps the tile background visible. */
   background?: { r: number; g: number; b: number; a: number };
 }
@@ -73,15 +81,17 @@ const thumbnailMaterialHacks: GXMaterialHacks = {
   lightingFudge: (p) => `(0.5 * (${p.ambSource} + 0.2) * ${p.matSource})`,
 };
 
-const DEFAULT_BACKGROUND = { r: 0.086, g: 0.114, b: 0.153, a: 0 };
+const DEFAULT_BACKGROUND = { r: 0.086, g: 0.114, b: 0.153, a: 1 };
 const DEFAULT_SIZE = 128;
 const DEFAULT_SUPERSAMPLE = 2;
+
+type ThumbnailSwapChain = ReturnType<typeof createSwapChainForWebGL2>;
 
 interface ThumbnailDevice {
   canvas: HTMLCanvasElement;
   gl: WebGL2RenderingContext;
-  swapChain: GfxSwapChain;
-  device: ReturnType<GfxSwapChain['getDevice']>;
+  swapChain: ThumbnailSwapChain;
+  device: ReturnType<ThumbnailSwapChain['getDevice']>;
   renderHelper: GXRenderHelperGfx;
   renderInstList: GfxRenderInstList;
   width: number;
@@ -184,16 +194,33 @@ export function computeMdl0Bounds(mdl0: BRRES.MDL0): Bounds3 | null {
   return isUsableBounds(vertexBounds) ? vertexBounds : null;
 }
 
+/**
+ * The vendored `rres/brres.ts` declares its own minimal AABB with `minX`..`maxZ` fields, while
+ * noclip's shared `Geometry.ts` AABB uses `min`/`max` vec3s. Accept either shape.
+ */
 interface AabbLike {
-  readonly min: ArrayLike<number>;
-  readonly max: ArrayLike<number>;
+  readonly min?: ArrayLike<number>;
+  readonly max?: ArrayLike<number>;
+  readonly minX?: number;
+  readonly minY?: number;
+  readonly minZ?: number;
+  readonly maxX?: number;
+  readonly maxY?: number;
+  readonly maxZ?: number;
 }
 
 function aabbToBounds(aabb: AabbLike | null | undefined): Bounds3 | null {
   if (aabb === null || aabb === undefined) return null;
+  if (aabb.min !== undefined && aabb.max !== undefined) {
+    return {
+      min: [aabb.min[0], aabb.min[1], aabb.min[2]],
+      max: [aabb.max[0], aabb.max[1], aabb.max[2]],
+    };
+  }
+  if (aabb.minX === undefined || aabb.maxX === undefined) return null;
   return {
-    min: [aabb.min[0], aabb.min[1], aabb.min[2]],
-    max: [aabb.max[0], aabb.max[1], aabb.max[2]],
+    min: [aabb.minX, aabb.minY ?? 0, aabb.minZ ?? 0],
+    max: [aabb.maxX, aabb.maxY ?? 0, aabb.maxZ ?? 0],
   };
 }
 
@@ -232,7 +259,10 @@ function addShapePositionBounds(dst: Bounds3, shape: BRRES.MDL0_ShapeEntry): voi
  * Render every model in `data` (plus any extra texture archives) to a PNG data URL.
  * Returns null when the renderer is unavailable or the archive has nothing drawable.
  */
-export function renderBrresThumbnail(data: Uint8Array, options: ThumbnailRenderOptions = {}): ThumbnailRenderResult | null {
+export async function renderBrresThumbnail(
+  data: Uint8Array,
+  options: ThumbnailRenderOptions = {},
+): Promise<ThumbnailRenderResult | null> {
   const size = Math.max(16, Math.round(options.size ?? DEFAULT_SIZE));
   const supersample = Math.max(1, Math.min(4, Math.round(options.supersample ?? DEFAULT_SUPERSAMPLE)));
   const renderSize = size * supersample;
@@ -254,6 +284,7 @@ export function renderBrresThumbnail(data: Uint8Array, options: ThumbnailRenderO
 
   const { device, renderHelper, renderInstList } = shared;
   const textureHolder = new RRESTextureHolder();
+  const ownedTextures: GfxTexture[] = [];
   const models: MDL0Model[] = [];
   const instances: MDL0ModelInstance[] = [];
   const animationController = new AnimationController(60);
@@ -264,17 +295,19 @@ export function renderBrresThumbnail(data: Uint8Array, options: ThumbnailRenderO
     // entries win for any name collision.
     for (const extra of options.extraTextureArchives ?? []) {
       try {
-        textureHolder.addRRESTextures(device, BRRES.parse(toSlice(extra)));
+        await uploadRresTextures(device, BRRES.parse(toSlice(extra)), textureHolder, ownedTextures);
       } catch {
         // A bad sibling archive should never stop the main model from rendering.
       }
     }
-    textureHolder.addRRESTextures(device, rres);
+    await uploadRresTextures(device, rres, textureHolder, ownedTextures);
 
-    const wanted = options.modelNames ? new Set(options.modelNames) : null;
+    const wanted = new Set(
+      options.modelNames ?? selectThumbnailModelNames(rres.mdl0.map((mdl0) => mdl0.name), options.preferModelName),
+    );
     const bounds = makeEmptyBounds();
     for (const mdl0 of rres.mdl0) {
-      if (wanted !== null && !wanted.has(mdl0.name)) continue;
+      if (!wanted.has(mdl0.name)) continue;
       let model: MDL0Model;
       try {
         model = new MDL0Model(device, renderHelper.renderCache, mdl0, thumbnailMaterialHacks);
@@ -354,6 +387,9 @@ export function renderBrresThumbnail(data: Uint8Array, options: ThumbnailRenderO
     builder.resolveRenderTargetToExternalTexture(colorTargetID, viewerInput.onscreenTexture);
 
     const template = renderHelper.pushTemplateRenderInst();
+    // A thumbnail is a single one-off frame, so we cannot let draws be skipped while their
+    // shaders compile in the background the way the live viewport does.
+    template.setAllowSkippingIfPipelineNotReady(false);
     fillSceneParamsDataOnTemplate(template, viewerInput);
     renderHelper.renderInstManager.setCurrentList(renderInstList);
     for (const instance of instances) {
@@ -370,13 +406,20 @@ export function renderBrresThumbnail(data: Uint8Array, options: ThumbnailRenderO
     builder.execute();
     renderInstList.reset();
 
-    return readbackToDataUrl(shared, renderSize, size, models.length);
+    return readbackToDataUrl(shared, renderSize, size, models.length, background);
   } finally {
     for (const model of models) {
       try {
         model.destroy(device);
       } catch {
         // Ignore teardown failures; the shared device stays usable.
+      }
+    }
+    for (const texture of ownedTextures) {
+      try {
+        device.destroyTexture(texture);
+      } catch {
+        // Ignore teardown failures.
       }
     }
     try {
@@ -387,11 +430,53 @@ export function renderBrresThumbnail(data: Uint8Array, options: ThumbnailRenderO
   }
 }
 
+/**
+ * Decode and upload every TEX0 in {@param rres}, waiting for each upload to finish.
+ *
+ * noclip's `RRESTextureHolder.addRRESTextures` uploads asynchronously and drops the promises,
+ * which is fine for a continuous render loop but leaves a one-shot thumbnail sampling empty
+ * textures (and, with alpha testing, discarding every fragment). Registering the finished
+ * textures as overrides keeps the decode deterministic.
+ */
+async function uploadRresTextures(
+  device: ThumbnailDevice['device'],
+  rres: BRRES.RRES,
+  holder: RRESTextureHolder,
+  ownedTextures: GfxTexture[],
+): Promise<void> {
+  for (const tex0 of rres.tex0) {
+    if (tex0.data === null || tex0.width <= 0 || tex0.height <= 0) continue;
+    try {
+      const mipChain = calcMipChain(tex0, tex0.mipCount);
+      const firstMip = mipChain.mipLevels[0];
+      if (firstMip === undefined) continue;
+      const gfxTexture = device.createTexture(
+        makeTextureDescriptor2D(GfxFormat.U8_RGBA_NORM, firstMip.width, firstMip.height, mipChain.mipLevels.length),
+      );
+      device.setResourceName(gfxTexture, tex0.name);
+      ownedTextures.push(gfxTexture);
+      for (let level = 0; level < mipChain.mipLevels.length; level++) {
+        const decoded = await decodeTexture(mipChain.mipLevels[level]);
+        device.uploadTextureData(gfxTexture, level, [decoded.pixels]);
+      }
+      holder.setTextureOverride(tex0.name, {
+        gfxTexture,
+        width: firstMip.width,
+        height: firstMip.height,
+        flipY: false,
+      });
+    } catch {
+      // A texture we cannot decode just renders untextured.
+    }
+  }
+}
+
 function readbackToDataUrl(
   shared: ThumbnailDevice,
   renderSize: number,
   outputSize: number,
   modelCount: number,
+  background: { r: number; g: number; b: number; a: number },
 ): ThumbnailRenderResult | null {
   const { gl } = shared;
   const pixels = new Uint8Array(renderSize * renderSize * 4);
@@ -406,7 +491,21 @@ function readbackToDataUrl(
     const src = (renderSize - 1 - y) * rowBytes;
     flipped.set(pixels.subarray(src, src + rowBytes), y * rowBytes);
   }
-  for (let i = 3; i < flipped.length; i += 4) if (flipped[i] > 8) covered++;
+  // GX materials frequently disable alpha writes, so "was something drawn here" is measured
+  // against the clear colour rather than against alpha.
+  const clearR = Math.round(background.r * 255);
+  const clearG = Math.round(background.g * 255);
+  const clearB = Math.round(background.b * 255);
+  const clearA = Math.round(background.a * 255);
+  for (let i = 0; i < flipped.length; i += 4) {
+    if (
+      Math.abs(flipped[i] - clearR) > 2 ||
+      Math.abs(flipped[i + 1] - clearG) > 2 ||
+      Math.abs(flipped[i + 2] - clearB) > 2 ||
+      Math.abs(flipped[i + 3] - clearA) > 2
+    )
+      covered++;
+  }
   const coverage = covered / (renderSize * renderSize);
   if (covered === 0) return null;
 

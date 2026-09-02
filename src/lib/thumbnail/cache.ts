@@ -109,8 +109,13 @@ export class SerialTaskQueue {
   }
 }
 
+/**
+ * One render per animation frame while the page is visible, so the UI stays responsive.
+ * Hidden documents do not fire `requestAnimationFrame`, so fall back to a timer there.
+ */
 export function defaultSchedule(run: () => void): void {
-  if (typeof requestAnimationFrame === 'function') {
+  const documentHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+  if (!documentHidden && typeof requestAnimationFrame === 'function') {
     requestAnimationFrame(() => run());
     return;
   }
