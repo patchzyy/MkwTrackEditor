@@ -298,8 +298,11 @@ const editorCameraChainColor = colorNewFromRGBA(1.0, 0.9, 0.35, 0.9);
 const editorMeshHoverColor = colorNewFromRGBA(0.45, 0.95, 1.0, 0.75);
 const editorMeshSelectedColor = colorNewFromRGBA(1.0, 0.72, 0.2, 0.95);
 const editorMeshBoxColor = colorNewFromRGBA(1.0, 0.85, 0.35, 0.9);
-/** Length of the drawn camera frustum, in scene units (the scene renders at 0.1x game units). */
-const editorCameraFrustumLength = 90;
+/** Maximum length of the drawn camera frustum, in scene units (the scene renders at 0.1x game units). */
+const editorCameraFrustumLength = 700;
+const editorCameraFrustumMinLength = 120;
+/** NDC depths probed when unprojecting a pick ray; covers normal and reversed-Z projections. */
+const editorPickRayDepthSamples = [0.5, 0.25, 0.75, 0.1, 0.9, 0.0, 1.0];
 
 function getEditorCameraColor(gizmo: EditorOverlayCameraGizmo): Color {
     if (gizmo.selected)
@@ -486,6 +489,7 @@ class MarioKartWiiRenderer {
     private editorMeshPickScratchDirection = vec3.create();
     private editorMeshPickScratchPoint = vec4.create();
     private editorMeshHighlightBox = new AABB();
+    private editorMeshIncludeSkybox = false;
 
     constructor(context: SceneContext, public commonCache: CommonCache, public courseArc: U8.U8Archive, useFallbackLighting: boolean) {
         this.renderHelper = new GXRenderHelperGfx(context.device, context);
@@ -673,18 +677,34 @@ class MarioKartWiiRenderer {
         return this.editorMeshPicker;
     }
 
-    /** (Re)collects the course/skybox/imported model instances the picker works on. */
+    /**
+     * (Re)collects the model instances the mesh picker works on: the course model and any
+     * imported meshes. The skybox is excluded by default because it wraps the whole scene
+     * and would swallow every click.
+     */
     public refreshEditorMeshSources(): void {
         if (this.editorMeshPicker === null)
             return;
         const sources: Array<{ archivePath: string; modelInstance: MDL0ModelInstance }> = [];
         for (const object of this.baseObjects) {
-            if (!(object instanceof CourseBGRenderer) && !(object instanceof EditorImportedModelRenderer))
+            if (object instanceof EditorImportedModelRenderer) {
+                sources.push({ archivePath: object.archivePath, modelInstance: object.modelInstance });
                 continue;
-            const archivePath = object instanceof EditorImportedModelRenderer ? object.archivePath : object.archivePath;
-            sources.push({ archivePath, modelInstance: object.modelInstance });
+            }
+            if (!(object instanceof CourseBGRenderer))
+                continue;
+            if (!this.editorMeshIncludeSkybox && object.archivePath.toLowerCase().includes('vrcorn'))
+                continue;
+            sources.push({ archivePath: object.archivePath, modelInstance: object.modelInstance });
         }
         this.editorMeshPicker.setSources(sources);
+    }
+
+    public setEditorMeshIncludeSkybox(include: boolean): void {
+        if (this.editorMeshIncludeSkybox === include)
+            return;
+        this.editorMeshIncludeSkybox = include;
+        this.refreshEditorMeshSources();
     }
 
     /** Builds a world-space ray from normalized (0..1) viewport coordinates. */
@@ -704,21 +724,35 @@ class MarioKartWiiRenderer {
             return true;
         };
 
-        const near = this.editorMeshPickScratchOrigin;
-        const far = this.editorMeshPickScratchDirection;
-        if (!unproject(near, 0) || !unproject(far, 1))
+        // Depth conventions differ (reversed Z, infinite far plane), so probe a few NDC
+        // depths and keep the sample furthest from the camera.
+        const origin = vec3.clone(this.editorCameraWorldPosition);
+        let bestDistance = -1;
+        let found = false;
+        for (const ndcZ of editorPickRayDepthSamples) {
+            if (!unproject(this.editorMeshPickScratchOrigin, ndcZ))
+                continue;
+            const distance = vec3.squaredDistance(origin, this.editorMeshPickScratchOrigin);
+            if (!Number.isFinite(distance) || distance <= bestDistance)
+                continue;
+            bestDistance = distance;
+            vec3.copy(this.editorMeshPickScratchDirection, this.editorMeshPickScratchOrigin);
+            found = true;
+        }
+        if (!found || bestDistance <= 1e-12)
             return null;
 
-        const origin = vec3.clone(this.editorCameraWorldPosition);
-        // Pick whichever unprojected point is further from the camera so the ray points forward.
-        const nearDistance = vec3.squaredDistance(origin, near);
-        const farDistance = vec3.squaredDistance(origin, far);
-        const target = farDistance >= nearDistance ? far : near;
-        const direction = vec3.sub(vec3.create(), target, origin);
+        const direction = vec3.sub(vec3.create(), this.editorMeshPickScratchDirection, origin);
         if (vec3.squaredLength(direction) < 1e-12)
             return null;
         vec3.normalize(direction, direction);
         return { origin, direction };
+    }
+
+    /** The scene-space pick ray for normalized viewport coordinates. Diagnostics only. */
+    public getEditorPickRay(normalizedX: number, normalizedY: number): { origin: number[]; direction: number[] } | null {
+        const ray = this.buildEditorPickRay(normalizedX, normalizedY);
+        return ray === null ? null : { origin: [...ray.origin], direction: [...ray.direction] };
     }
 
     /**
@@ -1320,7 +1354,7 @@ class MarioKartWiiRenderer {
         );
         if (vec3.squaredLength(forward) < 1e-8)
             vec3.set(forward, 0, 0, 1);
-        const length = Math.min(editorCameraFrustumLength, Math.max(20, vec3.length(forward)));
+        const length = Math.min(editorCameraFrustumLength, Math.max(editorCameraFrustumMinLength, vec3.length(forward) * 0.3));
         vec3.normalize(forward, forward);
 
         const right = vec3.set(this.editorOverlayScratchF, -forward[2], 0, forward[0]);

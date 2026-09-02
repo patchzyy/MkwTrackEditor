@@ -419,25 +419,23 @@ export class EditorMeshPicker {
         return cache === undefined ? [] : [cache];
     }
 
-    /** Bounds of a target, in KMP/game units. */
-    public getBounds(target: EditorMeshTargetRef): EditorMeshBounds | null {
+    /** Bounds of a target, in KMP/game units, including any live edit. */
+    public getBounds(target: EditorMeshTargetRef, applyEdits = true): EditorMeshBounds | null {
         const caches = this.collectTargetCaches(target);
         if (caches.length === 0) return null;
-        const bounds = createEmptyBounds();
+        const bounds = this.getSceneBounds(target, applyEdits);
+        if (bounds === null) return null;
         let triangleCount = 0;
         for (const cache of caches) {
             if (target.granularity === 'component' && target.componentIndex !== null && caches.length === 1) {
                 const split = this.ensureSplit(cache);
                 if (split !== null && target.componentIndex < split.componentCount) {
-                    unionBounds(bounds, split.bounds[target.componentIndex]);
                     triangleCount += split.triangleCounts[target.componentIndex];
                     continue;
                 }
             }
-            unionBounds(bounds, cache.bounds);
             triangleCount += cache.indices.length / 3;
         }
-        if (isBoundsEmpty(bounds)) return null;
         const inv = 1 / this.sceneScale;
         const min = { x: bounds.min.x * inv, y: bounds.min.y * inv, z: bounds.min.z * inv };
         const max = { x: bounds.max.x * inv, y: bounds.max.y * inv, z: bounds.max.z * inv };
@@ -450,20 +448,49 @@ export class EditorMeshPicker {
         };
     }
 
-    /** Scene-space bounds, for drawing the highlight box. */
-    public getSceneBounds(target: EditorMeshTargetRef): MeshBounds | null {
+    /** The extra transform currently applied to a draw call / component, if any. */
+    private getActiveMatrix(cache: EditorMeshDrawCache, componentIndex: number | null): mat4 | null {
+        if (componentIndex !== null) {
+            const componentMatrix = this.componentTransforms.get(this.componentKey(cache, componentIndex));
+            if (componentMatrix !== undefined) return componentMatrix;
+        }
+        return this.overridesByDraw.get(cache.key)?.extraWorldMatrix ?? null;
+    }
+
+    private expandTransformedBounds(dst: MeshBounds, source: MeshBounds, matrix: mat4 | null): void {
+        if (matrix === null) {
+            unionBounds(dst, source);
+            return;
+        }
+        if (isBoundsEmpty(source)) return;
+        for (let corner = 0; corner < 8; corner++) {
+            vec3.set(
+                scratchVec,
+                (corner & 1) ? source.max.x : source.min.x,
+                (corner & 2) ? source.max.y : source.min.y,
+                (corner & 4) ? source.max.z : source.min.z,
+            );
+            vec3.transformMat4(scratchVec, scratchVec, matrix);
+            expandBounds(dst, scratchVec[0], scratchVec[1], scratchVec[2]);
+        }
+    }
+
+    /** Scene-space bounds (with any live edit applied), for drawing the highlight box. */
+    public getSceneBounds(target: EditorMeshTargetRef, applyEdits = true): MeshBounds | null {
         const caches = this.collectTargetCaches(target);
         if (caches.length === 0) return null;
         const bounds = createEmptyBounds();
         for (const cache of caches) {
-            if (target.granularity === 'component' && target.componentIndex !== null && caches.length === 1) {
+            const componentIndex = target.granularity === 'component' && caches.length === 1 ? target.componentIndex : null;
+            const matrix = applyEdits ? this.getActiveMatrix(cache, componentIndex) : null;
+            if (componentIndex !== null) {
                 const split = this.ensureSplit(cache);
-                if (split !== null && target.componentIndex < split.componentCount) {
-                    unionBounds(bounds, split.bounds[target.componentIndex]);
+                if (split !== null && componentIndex < split.componentCount) {
+                    this.expandTransformedBounds(bounds, split.bounds[componentIndex], matrix);
                     continue;
                 }
             }
-            unionBounds(bounds, cache.bounds);
+            this.expandTransformedBounds(bounds, cache.bounds, matrix);
         }
         return isBoundsEmpty(bounds) ? null : bounds;
     }
@@ -486,21 +513,31 @@ export class EditorMeshPicker {
         for (const cache of caches) {
             if (edges.length >= maxEdges) break;
             let indices: ArrayLike<number> = cache.indices;
-            if (target.granularity === 'component' && target.componentIndex !== null && caches.length === 1) {
+            const componentIndex = target.granularity === 'component' && caches.length === 1 ? target.componentIndex : null;
+            if (componentIndex !== null) {
                 const split = this.ensureSplit(cache);
-                if (split !== null && target.componentIndex < split.componentCount) {
+                if (split !== null && componentIndex < split.componentCount) {
                     const filtered: number[] = [];
                     for (let t = 0; t < split.triangleComponent.length; t++) {
-                        if (split.triangleComponent[t] !== target.componentIndex) continue;
+                        if (split.triangleComponent[t] !== componentIndex) continue;
                         filtered.push(cache.indices[t * 3], cache.indices[t * 3 + 1], cache.indices[t * 3 + 2]);
                     }
                     indices = filtered;
                 }
             }
+            const matrix = this.getActiveMatrix(cache, componentIndex);
             const localEdges = collectTriangleEdges(indices, maxEdges - edges.length);
             const p = cache.positions;
-            for (const [a, b] of localEdges)
-                edges.push([p[a * 3], p[a * 3 + 1], p[a * 3 + 2], p[b * 3], p[b * 3 + 1], p[b * 3 + 2]]);
+            for (const [a, b] of localEdges) {
+                if (matrix === null) {
+                    edges.push([p[a * 3], p[a * 3 + 1], p[a * 3 + 2], p[b * 3], p[b * 3 + 1], p[b * 3 + 2]]);
+                    continue;
+                }
+                vec3.transformMat4(scratchVec, vec3.set(scratchVec, p[a * 3], p[a * 3 + 1], p[a * 3 + 2]), matrix);
+                const ax = scratchVec[0], ay = scratchVec[1], az = scratchVec[2];
+                vec3.transformMat4(scratchVec, vec3.set(scratchVec, p[b * 3], p[b * 3 + 1], p[b * 3 + 2]), matrix);
+                edges.push([ax, ay, az, scratchVec[0], scratchVec[1], scratchVec[2]]);
+            }
         }
         return edges;
     }
@@ -583,7 +620,12 @@ export class EditorMeshPicker {
     private mutateTarget(target: EditorMeshTargetRef, mutate: (cache: EditorMeshDrawCache, componentIndex: number | null) => void): boolean {
         const caches = this.collectTargetCaches(target);
         if (caches.length === 0) return false;
-        const componentIndex = target.granularity === 'component' && caches.length === 1 ? target.componentIndex : null;
+        let componentIndex = target.granularity === 'component' && caches.length === 1 ? target.componentIndex : null;
+        if (componentIndex !== null) {
+            // A shape with a single component needs no split: edit the whole draw call.
+            const split = this.ensureSplit(caches[0]);
+            if (split === null || split.componentCount <= 1) componentIndex = null;
+        }
         for (const cache of caches) mutate(cache, componentIndex);
         this.reapplyOverrides();
         return true;
@@ -643,7 +685,8 @@ export class EditorMeshPicker {
             for (let i = 0; i < 16; i++) matrix[i] = transform.matrix[i];
             return matrix;
         }
-        const bounds = this.getSceneBounds(target);
+        // Pivot on the untransformed centre so repeated edits do not drift.
+        const bounds = this.getSceneBounds(target, false);
         const pivotX = bounds === null ? 0 : (bounds.min.x + bounds.max.x) * 0.5;
         const pivotY = bounds === null ? 0 : (bounds.min.y + bounds.max.y) * 0.5;
         const pivotZ = bounds === null ? 0 : (bounds.min.z + bounds.max.z) * 0.5;

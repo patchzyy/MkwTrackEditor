@@ -700,6 +700,9 @@ export function Noclip3DViewport({
   const onChangeMeshGranularityRef = useRef(onChangeMeshGranularity);
   const onCameraPreviewEndRef = useRef(onCameraPreviewEnd);
   const modeRef = useRef<EditorMode>(mode);
+  /** Dev-hook override so `window.__mkwViewport.setMode` survives re-renders. */
+  const devModeOverrideRef = useRef<EditorMode | null>(null);
+  const devCaptureRef = useRef<{ request: boolean; dataUrl: string | null }>({ request: false, dataUrl: null });
   const [internalMeshGranularity, setInternalMeshGranularity] = useState<MeshSelectionGranularity>('component');
   const activeMeshGranularity = meshGranularity ?? internalMeshGranularity;
   const meshGranularityRef = useRef<MeshSelectionGranularity>(activeMeshGranularity);
@@ -708,6 +711,8 @@ export function Noclip3DViewport({
   const [hoveredMeshKey, setHoveredMeshKey] = useState<string | null>(null);
   const hoveredMeshRef = useRef<{ key: string; target: EditorMeshTarget } | null>(null);
   const cameraPreviewRef = useRef<CameraPreviewRequest | null>(cameraPreview);
+  /** Dev-hook override so `window.__mkwViewport.previewCamera` survives re-renders. */
+  const devCameraPreviewRef = useRef<CameraPreviewRequest | null | undefined>(undefined);
   const cameraPreviewStateRef = useRef<{
     frames: number;
     lastTimeMs: number | null;
@@ -752,10 +757,10 @@ export function Noclip3DViewport({
   onTransformMeshRef.current = onTransformMesh;
   onChangeMeshGranularityRef.current = onChangeMeshGranularity;
   onCameraPreviewEndRef.current = onCameraPreviewEnd;
-  modeRef.current = mode;
+  modeRef.current = devModeOverrideRef.current ?? mode;
   meshGranularityRef.current = activeMeshGranularity;
   meshSelectionsRef.current = meshSelections;
-  cameraPreviewRef.current = cameraPreview;
+  cameraPreviewRef.current = devCameraPreviewRef.current !== undefined ? devCameraPreviewRef.current : cameraPreview;
   cameraPreviewDefsRef.current = track?.kmp ? toCameraPreviewDefs(track.kmp) : [];
 
   useEffect(() => {
@@ -785,6 +790,13 @@ export function Noclip3DViewport({
         const restoreSuppressedKeys = withSuppressedCameraMovementKeys(viewer);
         viewer.update({ time, webXRContext: null });
         restoreSuppressedKeys();
+        if (import.meta.env.DEV && devCaptureRef.current.request) {
+          try {
+            devCaptureRef.current = { request: false, dataUrl: canvasElement.toDataURL('image/png') };
+          } catch {
+            devCaptureRef.current = { request: false, dataUrl: null };
+          }
+        }
         const cameraPosition = getViewerCameraPosition(viewer);
         if (selectedIdRef.current && hasCameraPositionChanged(cameraPosition, overlayCameraPositionRef.current)) {
           overlayCameraPositionRef.current = cameraPosition;
@@ -1146,6 +1158,8 @@ export function Noclip3DViewport({
       } else if (event.key === '[') {
         event.preventDefault();
         changeMeshGranularity(narrowMeshGranularity(meshGranularityRef.current));
+      } else if (event.key === 'f' || event.key === 'F') {
+        if (frameMeshSelection()) event.preventDefault();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -1161,9 +1175,10 @@ export function Noclip3DViewport({
   useEffect(() => {
     if (!import.meta.env.DEV || typeof window === 'undefined') return;
     const api = {
-      setMode: (next: EditorMode) => {
-        modeRef.current = next;
-        getMeshScene()?.setEditorMode?.(next);
+      setMode: (next: EditorMode | null) => {
+        devModeOverrideRef.current = next;
+        modeRef.current = next ?? mode;
+        getMeshScene()?.setEditorMode?.(modeRef.current);
         syncSceneOverlay(trackRef.current, selectedIdRef.current);
       },
       getMode: () => modeRef.current,
@@ -1174,25 +1189,56 @@ export function Noclip3DViewport({
       },
       getSelectedMesh: () => meshSelectionsRef.current.map((entry) => ({ target: entry.target, label: entry.label, transform: entry.transform })),
       setMeshGranularity: (granularity: MeshSelectionGranularity) => changeMeshGranularity(granularity),
-      transformMesh: (target: EditorMeshTarget, transform: MeshTransform) => getMeshScene()?.setEditorMeshTransform?.(target, { kind: 'trs', ...transform }) ?? false,
+      transformMesh: (target: EditorMeshTarget, transform: MeshTransform | null) => {
+        const applied = getMeshScene()?.setEditorMeshTransform?.(target, transform === null ? null : { kind: 'trs', ...transform }) ?? false;
+        applyMeshTransform(meshTargetKey(target), transform ?? createIdentityMeshTransform());
+        updateMeshHighlight();
+        return applied;
+      },
       setMeshVisible: (target: EditorMeshTarget, visible: boolean) => getMeshScene()?.setEditorMeshVisible?.(target, visible) ?? false,
       listMeshes: () => getMeshScene()?.listEditorMeshes?.() ?? [],
+      getMeshBounds: (target: EditorMeshTarget) => getMeshBounds(target),
+      frameMeshSelection: () => frameMeshSelection(),
+      pickRay: (clientX: number, clientY: number) => {
+        const canvas = canvasRef.current;
+        const scene = sceneRef.current as (SceneGfx & { getEditorPickRay?: (x: number, y: number) => unknown }) | null;
+        if (!canvas || !scene?.getEditorPickRay) return null;
+        const rect = canvas.getBoundingClientRect();
+        return scene.getEditorPickRay((clientX - rect.left) / rect.width, (clientY - rect.top) / rect.height);
+      },
       previewCamera: (cameraId: string | number, options: { play?: boolean; time?: number; sequence?: boolean } = {}) => {
-        cameraPreviewRef.current = {
+        const request: CameraPreviewRequest = {
           cameraId: typeof cameraId === 'number' ? `CAME-${cameraId}` : cameraId,
           playing: options.play ?? false,
           time: options.time ?? 0,
           sequence: options.sequence ?? false,
         };
+        devCameraPreviewRef.current = request;
+        cameraPreviewRef.current = request;
         return true;
       },
       stopCameraPreview: () => {
+        devCameraPreviewRef.current = null;
         cameraPreviewRef.current = null;
         endCameraPreview(viewerRef.current, true);
       },
-      playOpeningSequence: () => playOpeningSequence(),
+      playOpeningSequence: () => {
+        const started = playOpeningSequence();
+        if (started) devCameraPreviewRef.current = cameraPreviewRef.current;
+        return started;
+      },
       getCameraOverlay: () => buildCameraOverlay(trackRef.current?.kmp ?? null),
       getCameras: () => cameraPreviewDefsRef.current,
+      /** Grabs the WebGL frame as a PNG data URL (the drawing buffer is not preserved). */
+      captureFrame: async (): Promise<string | null> => {
+        devCaptureRef.current = { request: true, dataUrl: null };
+        for (let i = 0; i < 120; i++) {
+          if (!devCaptureRef.current.request) return devCaptureRef.current.dataUrl;
+          await new Promise((resolve) => setTimeout(resolve, 32));
+        }
+        devCaptureRef.current.request = false;
+        return null;
+      },
     };
     (window as unknown as { __mkwViewport?: typeof api }).__mkwViewport = api;
     return () => {
@@ -2105,6 +2151,30 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     applyMeshSelection(unique, true);
   }
 
+  /** Frames the free camera on the current mesh selection (F in model mode). */
+  function frameMeshSelection(): boolean {
+    const viewer = viewerRef.current;
+    const entry = meshSelectionsRef.current[meshSelectionsRef.current.length - 1];
+    if (!viewer || !entry) return false;
+    const bounds = getMeshBounds(entry.target);
+    if (!bounds) return false;
+    const controller = viewer.cameraController instanceof FPSCameraController ? viewer.cameraController : new FPSCameraController();
+    if (!(viewer.cameraController instanceof FPSCameraController)) viewer.setCameraController(controller);
+    const radius = Math.max(60, bounds.radius) * MKW_RENDER_SCALE;
+    const center = vec3.fromValues(
+      bounds.center.x * MKW_RENDER_SCALE,
+      bounds.center.y * MKW_RENDER_SCALE,
+      bounds.center.z * MKW_RENDER_SCALE,
+    );
+    applyFPSCameraFrame(controller, {
+      eye: vec3.fromValues(center[0] + radius * 1.6, center[1] + radius * 1.1, center[2] + radius * 1.9),
+      target: center,
+    });
+    controller.update(viewer.inputManager, 0);
+    viewer.camera.worldMatrixUpdated();
+    return true;
+  }
+
   function applyMeshTransform(key: string, transform: MeshTransform) {
     const next = updateMeshSelectionTransform(meshSelectionsRef.current, key, transform);
     setMeshSelections(next);
@@ -2667,7 +2737,7 @@ function buildSceneOverlayData(
     }));
 
   const lines: SceneOverlayLine[] = [];
-  for (const graph of kmp?.pathGraphs ?? []) {
+  for (const graph of showKmpData ? kmp?.pathGraphs ?? [] : []) {
     if (routeVisibility[graph.pointSection] === false) continue;
     const graphPoints = (kmp?.entities ?? []).filter((entity) => entity.section === graph.pointSection);
     for (const group of graph.groups) {
@@ -2695,7 +2765,7 @@ function buildSceneOverlayData(
       }
     }
   }
-  for (const route of kmp?.routes ?? []) {
+  for (const route of showKmpData ? kmp?.routes ?? [] : []) {
     const routeKey = getPotiRouteVisibilityKey(route.index, routeUsage);
     if (!isPotiRouteVisible(route.index, routeVisibility, routeUsage, forcedVisibleObjectRoutes)) continue;
     for (let i = 0; i < route.points.length - 1; i++) {
@@ -2708,7 +2778,7 @@ function buildSceneOverlayData(
       });
     }
   }
-  for (const entity of (kmp?.entities ?? []).filter((candidate) => candidate.section === 'CKPT' && candidate.checkpoint)) {
+  for (const entity of (showKmpData ? kmp?.entities ?? [] : []).filter((candidate) => candidate.section === 'CKPT' && candidate.checkpoint)) {
     if (routeVisibility.CKPT === false) continue;
     lines.push({
       id: `CKPT-span-${entity.id}`,

@@ -140,6 +140,12 @@ export function computeTriangleSoupBounds(positions: ArrayLike<number>, indices:
   return bounds;
 }
 
+/**
+ * Cells with more vertices than this are welded internally only; their neighbours are not
+ * scanned pairwise. Keeps `splitTrianglesIntoComponents` linear on dense course meshes.
+ */
+const MAX_CROSS_CELL_WELD_BUCKET = 48;
+
 export interface TriangleComponentSplit {
   /** Component id for each triangle (`indices.length / 3` entries). */
   triangleComponent: Int32Array;
@@ -209,18 +215,25 @@ export function splitTrianglesIntoComponents(
         if (dx * 9 + dy * 3 + dz >= 0) neighbourOffsets.push([dx, dy, dz]);
 
   for (const [key, bucket] of buckets) {
+    // Everything inside one cell is within ~epsilon: weld it in linear time. This is the
+    // hot path for the duplicated vertices the GX vertex loader emits.
+    for (let i = 1; i < bucket.length; i++) union(bucket[0], bucket[i]);
+
+    // Cross-cell welding is the expensive part, so only do it for sparse cells. Skipping it
+    // can only split a component that should have been joined, never merge unrelated ones.
+    if (bucket.length > MAX_CROSS_CELL_WELD_BUCKET) continue;
     const parts = key.split(',');
     const cx = Number(parts[0]);
     const cy = Number(parts[1]);
     const cz = Number(parts[2]);
     for (const [dx, dy, dz] of neighbourOffsets) {
-      const other = dx === 0 && dy === 0 && dz === 0 ? bucket : buckets.get(cellKey(cx + dx, cy + dy, cz + dz));
-      if (other === undefined) continue;
-      const sameBucket = other === bucket;
+      if (dx === 0 && dy === 0 && dz === 0) continue;
+      const other = buckets.get(cellKey(cx + dx, cy + dy, cz + dz));
+      if (other === undefined || other.length > MAX_CROSS_CELL_WELD_BUCKET) continue;
       for (let i = 0; i < bucket.length; i++) {
         const a = bucket[i];
         const ab = a * 3;
-        for (let j = sameBucket ? i + 1 : 0; j < other.length; j++) {
+        for (let j = 0; j < other.length; j++) {
           const b = other[j];
           if (a === b) continue;
           const bb = b * 3;

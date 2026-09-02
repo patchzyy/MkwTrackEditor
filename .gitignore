@@ -8,3 +8,4 @@ pnpm-debug.log*
 .DS_Store
 image.png
 public/dev-tracks/
+.probe-profile/
