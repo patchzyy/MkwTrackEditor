@@ -29,7 +29,12 @@ function withStore<T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) 
 }
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  // `Uint8Array.buffer` is `ArrayBuffer | SharedArrayBuffer`; IndexedDB wants a plain
+  // ArrayBuffer, and slicing a SharedArrayBuffer would hand back a shared one too, so
+  // copy through a fresh ArrayBuffer instead.
+  const copy = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(copy).set(bytes);
+  return copy;
 }
 
 export async function loadPersistedCommonSzs(): Promise<Uint8Array | null> {

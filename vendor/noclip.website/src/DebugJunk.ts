@@ -7,8 +7,19 @@ import { Blue, Color, Green, Magenta, OpaqueBlack, Red, colorFromHSL, colorFromH
 import { downloadBuffer, downloadBufferSlice } from "./DownloadUtils.js";
 import { AABB } from "./Geometry.js";
 import { MathConstants, Vec3UnitX, Vec3UnitY, Vec3UnitZ, getMatrixAxisX, getMatrixAxisY, getMatrixAxisZ, getMatrixTranslation, lerp, transformVec3Mat4w0, vec3FromBasis2 } from "./MathHelpers.js";
-import { Slider } from "./ui.js";
 import { assertExists, hexzero, nArray } from "./util.js";
+
+// The noclip website installs its app object on `window.main`; the MKW Track Editor does
+// not. Everything in here that reaches for it degrades gracefully when it is absent.
+interface NoclipMain {
+    toplevel: HTMLElement;
+    canvas: HTMLCanvasElement;
+    viewer: { gfxDevice: { queryVendorInfo(): { clipSpaceNearZ: number } } };
+}
+
+function noclipMain(): NoclipMain | null {
+    return ((window as any).main as NoclipMain | undefined) ?? null;
+}
 
 let _debugOverlayCanvas: CanvasRenderingContext2D | null = null;
 export function getDebugOverlayCanvas2D(): CanvasRenderingContext2D {
@@ -21,7 +32,11 @@ export function getDebugOverlayCanvas2D(): CanvasRenderingContext2D {
         canvas.style.left = '0';
         canvas.style.pointerEvents = 'none';
 
-        window.main.toplevel.insertBefore(canvas, window.main.canvas);
+        const main = noclipMain();
+        if (main !== null)
+            main.toplevel.insertBefore(canvas, main.canvas);
+        else
+            document.body.appendChild(canvas);
         _debugOverlayCanvas = ctx;
 
         prepareFrameDebugOverlayCanvas2D();
@@ -176,7 +191,13 @@ export function drawViewportSpacePoint(ctx: CanvasRenderingContext2D, x: number,
     ctx.fillRect(x - rad, ctx.canvas.height - y - rad, size, size);
 }
 
-function shouldCull(p: ReadonlyVec4, clipSpaceNearZ = window.main.viewer.gfxDevice.queryVendorInfo().clipSpaceNearZ): boolean {
+function defaultClipSpaceNearZ(): number {
+    // WebGL2 (the only backend kept in this trim) uses -1; noclip's app object is
+    // consulted first so this still matches the device when running inside noclip.
+    return noclipMain()?.viewer.gfxDevice.queryVendorInfo().clipSpaceNearZ ?? -1;
+}
+
+function shouldCull(p: ReadonlyVec4, clipSpaceNearZ = defaultClipSpaceNearZ()): boolean {
     return p[0] < -1 || p[0] > 1 || p[1] < -1 || p[1] > 1 || p[2] < clipSpaceNearZ || p[2] > 1;
 }
 
@@ -317,86 +338,6 @@ export function drawScreenSpaceBox(ctx: CanvasRenderingContext2D, x1: number, y1
     ctx.stroke();
 }
 
-function flashItem(item: any, fieldName: string, step: number = 0) {
-    item[fieldName] = step % 2 === 1;
-    if (step < 7)
-        setTimeout(() => { flashItem(item, fieldName, step + 1) }, 200);
-}
-
-function interactiveSliderSelect(items: any[], testItem: (itemIndex: number, v: boolean) => string | void, done: (itemIndex: number) => void): void {
-    const panel = window.main.ui.debugFloaterHolder.makeFloatingPanel('SliderSelect');
-    const slider = new Slider();
-    // Revert to default style for clarity
-    slider.elem.querySelector('input')!.classList.remove('Slider');
-    panel.contents.append(slider.elem);
-
-    const textLabel = document.createElement('div');
-    textLabel.style.padding = '1em';
-    panel.contents.append(textLabel);
-
-    const doneButton = document.createElement('div');
-    doneButton.textContent = 'Select';
-    doneButton.style.background = '#333';
-    doneButton.style.cursor = 'pointer';
-    doneButton.style.padding = '1em';
-    panel.contents.append(doneButton);
-
-    slider.setRange(-1, items.length - 1, 1);
-
-    slider.onvalue = (v: number) => {
-        slider.setLabel('' + v);
-
-        for (let i = 0; i < items.length; i++) {
-            const label = testItem(i, (i <= v));
-            if (i === v)
-                textLabel.textContent = label ? label : '';
-        }
-
-        if (v < 0)
-            textLabel.textContent = '';
-    };
-
-    slider.setValue(items.length - 1, true);
-
-    doneButton.onclick = () => {
-        const index = slider.getValue();
-        panel.close();
-        done(index);
-    };
-
-    panel.onclose = () => {
-        done(-1);
-    };
-}
-
-export function interactiveVizSliderSelect(items: any[], fieldName: string = 'visible', callback: ((obj: any, itemIndex: number) => void) | null = null): void {
-    const visibleItems = items.filter((v) => v[fieldName]);
-
-    interactiveSliderSelect(visibleItems, (i, v) => {
-        const item = visibleItems[i];
-        item[fieldName] = v;
-        return item.name || item.constructor.name;
-    }, (index) => {
-        visibleItems.forEach((v) => v[fieldName] = true);
-        if (index >= visibleItems.length || index < 0)
-            return;
-        const item = visibleItems[index];
-        const origIndex = items.indexOf(item);
-        flashItem(item, fieldName);
-        console.log(`Found item @ ${origIndex}:`, item);
-        if (callback !== null)
-            callback(item, origIndex);
-    });
-}
-
-export function bindSliderSelect(items: any[], fieldName: string = 'visible', callback: ((obj: any, itemIndex: number) => void) | null = null): void {
-    interactiveVizSliderSelect(items, fieldName, (obj, itemIndex) => {
-        window.main.ui.debugFloaterHolder.bindPanel(obj);
-        if (callback !== null)
-            callback(obj, itemIndex);
-    });
-}
-
 function downloadBufferAny(name: any, buffer: any) {
     if (name.name && name.arrayBuffer)
         downloadBufferSlice(name.name, name);
@@ -457,8 +398,6 @@ export function magicstr(v: number): string {
 
 // This goes on window.main and is meant as a global "helper utils" thing.
 export const debugJunk: any = {
-    interactiveVizSliderSelect,
-    bindSliderSelect,
     hexdump,
     magicstr,
     ghidraDecode,

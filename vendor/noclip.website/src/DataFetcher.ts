@@ -34,8 +34,8 @@ class DataFetcherRequest {
     private request: Request;
     private response: Response | null = null;
     private abortController = new AbortController();
-    private resolve: (slice: NamedArrayBufferSlice) => void;
-    private reject: (e: Error | null) => void;
+    private resolve!: (slice: NamedArrayBufferSlice) => void;
+    private reject!: (e: Error | null) => void;
     private retriesLeft = 2;
 
     constructor(private cache: Cache | null, public url: string, private options: DataFetcherOptions) {
@@ -364,7 +364,10 @@ export class DataFetcher {
             this.debugDisplay.style.whiteSpace = `pre`;
             this.debugDisplay.style.textAlign = `right`;
             this.debugDisplay.style.pointerEvents = `none`;
-            window.main.ui.elem.appendChild(this.debugDisplay);
+            // noclip's app object lives on window.main; the MKW Track Editor has no such
+            // shell, so fall back to the document body.
+            const uiElem = (window as any).main?.ui?.elem as HTMLElement | undefined;
+            (uiElem ?? document.body).appendChild(this.debugDisplay);
         }
 
         let S = '';

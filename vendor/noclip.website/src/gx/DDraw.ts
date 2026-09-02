@@ -38,14 +38,14 @@ abstract class TDDrawBase {
     protected indexBufferDescriptor: GfxIndexBufferDescriptor;
 
     // Global information
-    protected currentVertex: number;
-    protected currentIndex: number;
-    protected indexData: Uint16Array;
-    protected vertexData: DataView;
+    protected currentVertex!: number;
+    protected currentIndex!: number;
+    protected indexData!: Uint16Array;
+    protected vertexData!: DataView;
 
     // Current primitive information
-    protected currentPrimVertex: number;
-    protected currentPrim: GX.Command;
+    protected currentPrimVertex!: number;
+    protected currentPrim!: GX.Command;
 
     constructor(protected name: string) {
         for (let i = GX.Attr.POS; i <= GX.Attr.TEX7; i++) {
@@ -166,7 +166,7 @@ export class TDDraw extends TDDrawBase {
     private recreateVertexBuffer: boolean = true;
     private recreateIndexBuffer: boolean = true;
 
-    private startIndex: number;
+    private startIndex!: number;
 
     constructor(name: string = '') {
         super(name);

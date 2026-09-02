@@ -344,13 +344,12 @@ export enum GfxQueryPoolType {
 }
 
 export interface GfxSwapChain {
-    // WebXR requires presenting to a platform-defined framebuffer, for all that is unholy.
-    // This hopefully is less terrible in the future. See https://github.com/immersive-web/webxr/issues/896
+    // NOTE(MKW Track Editor): upstream noclip also declares createWebXRLayer() here; the
+    // WebXR presentation path is not part of this vendored trim, so it is omitted.
     configureSwapChain(width: number, height: number, platformFramebuffer?: GfxPlatformFramebuffer): void;
     getDevice(): GfxDevice;
     getCanvas(): HTMLCanvasElement | OffscreenCanvas;
     getOnscreenTexture(): GfxTexture;
-    createWebXRLayer(webXRSession: XRSession): PromiseLike<XRWebGLLayer>;
 }
 
 export interface GfxRenderPass {

@@ -12,7 +12,7 @@ import { GlobalSaveManager } from './SaveManager.js';
 // TODO(jstpierre): All of the cameras and camera controllers need a pretty big overhaul.
 
 export class Camera {
-    public clipSpaceNearZ: GfxClipSpaceNearZ;
+    public clipSpaceNearZ!: GfxClipSpaceNearZ;
 
     // Converts to view space from world space.
     // Should be called viewFromWorldMatrix
@@ -35,16 +35,16 @@ export class Camera {
 
     public frustum = new Frustum();
     public fovY: number = MathConstants.TAU / 6;
-    public aspect: number;
+    public aspect!: number;
     public isOrthographic: boolean = false;
 
     // Frustum configuration.
-    public left: number;
-    public right: number;
-    public bottom: number;
-    public top: number;
-    public near: number;
-    public far: number;
+    public left!: number;
+    public right!: number;
+    public bottom!: number;
+    public top!: number;
+    public near!: number;
+    public far!: number;
 
     private forceInfiniteFarPlane: boolean = false;
 
@@ -213,7 +213,7 @@ function vec3QuantizeMajorAxis(dst: vec3, m: vec3): void {
 }
 
 export class FPSCameraController implements CameraController {
-    public camera: Camera;
+    public camera!: Camera;
     public forceUpdate: boolean = false;
     public useViewUp: boolean = true;
     public onkeymovespeed: () => void = () => {};
@@ -415,7 +415,7 @@ export class FPSCameraController implements CameraController {
 }
 
 export class OrbitCameraController implements CameraController {
-    public camera: Camera;
+    public camera!: Camera;
     public forceUpdate: boolean = false;
     public onkeymovespeed: () => void = () => {};
 
@@ -565,7 +565,7 @@ function snapToMultIncr(n: number, incr: number): number {
 }
 
 export class OrthoCameraController implements CameraController {
-    public camera: Camera;
+    public camera!: Camera;
     public forceUpdate: boolean = false;
     public onkeymovespeed: () => void = () => {};
 

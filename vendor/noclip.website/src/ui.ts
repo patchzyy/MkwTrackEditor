@@ -151,7 +151,7 @@ export class TextEntry implements Widget {
     protected toplevel: HTMLElement;
     public textfield: TextField;
     protected clearButton: HTMLElement;
-    protected svgIcon: SVGSVGElement;
+    protected svgIcon!: SVGSVGElement;
 
     constructor() {
         this.toplevel = document.createElement('div');
@@ -532,7 +532,7 @@ export function ensureFlairIndex(flairs: Flair[], index: number): Flair {
 
 export class SingleSelect extends ScrollSelect {
     public highlightedIndex: number = -1;
-    public onselectionchange: (index: number) => void;
+    public onselectionchange!: (index: number) => void;
     public setHighlightFlair = true;
 
     constructor() {
@@ -612,8 +612,8 @@ export class SingleSelect extends ScrollSelect {
 
 export class MultiSelect extends ScrollSelect {
     public itemIsOn: boolean[] = [];
-    public onitemchanged: (index: number, v: boolean) => void;
-    private itemShouldBeOn: boolean;
+    public onitemchanged!: (index: number, v: boolean) => void;
+    private itemShouldBeOn!: boolean;
 
     constructor() {
         super();
@@ -754,7 +754,7 @@ export class Panel implements Widget {
     public customHeaderBackgroundColor: string = '';
     protected header: HTMLElement;
     protected headerContainer: HTMLElement;
-    protected svgIcon: SVGSVGElement;
+    protected svgIcon!: SVGSVGElement;
 
     private toplevel: HTMLElement;
     private ignoreAutoCloseTimeout: number = 0;

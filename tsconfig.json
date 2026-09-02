@@ -2,7 +2,8 @@
   "compilerOptions": {
     "target": "ES2022",
     "useDefineForClassFields": true,
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // ES2024 for ArrayBuffer.prototype.transfer(), which the vendored noclip gfx code uses.
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
     "allowJs": false,
     "skipLibCheck": true,
     "esModuleInterop": true,
@@ -14,7 +15,12 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    // Mirrors the `noclip-rust-support` alias in vite.config.ts. The vendored noclip code
+    // imports the upstream Rust/WASM helper module; we substitute a pure-TS stub.
+    "paths": {
+      "noclip-rust-support": ["./src/noclipRustStub.ts"]
+    }
   },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts"],

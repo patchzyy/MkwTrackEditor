@@ -154,7 +154,7 @@ export class GfxRenderInst {
     private _renderPipelineDescriptor: GfxRenderPipelineDescriptor;
 
     // Bindings building.
-    private _uniformBuffer: GfxRenderDynamicUniformBuffer;
+    private _uniformBuffer!: GfxRenderDynamicUniformBuffer;
     private _bindingDescriptors: GfxBindingsDescriptor[] = nArray(1, () => ({ bindingLayout: null!, samplerBindings: [], uniformBufferBindings: [] }));
     private _dynamicUniformBufferByteOffsets: number[] = nArray(4, () => 0);
 

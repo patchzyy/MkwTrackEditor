@@ -263,7 +263,7 @@ export interface TagProcessor {
 
 const materialParams = new MaterialParams();
 export class CharWriter {
-    public font: ResFont;
+    public font!: ResFont;
     public cursor = vec3.create();
     public origin = vec3.create();
     public scale = vec3.create();
@@ -403,8 +403,8 @@ export class CharWriter {
         this.font.materialHelper.allocateMaterialParamsDataOnInst(template, materialParams);
     }
 
-    private renderInstManager: GfxRenderInstManager;
-    private ddraw: TDDraw;
+    private renderInstManager!: GfxRenderInstManager;
+    private ddraw!: TDDraw;
 
     public writeCharacter(char: number, addSpacing: boolean): void {
         if (addSpacing)

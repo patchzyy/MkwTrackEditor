@@ -110,15 +110,15 @@ function copyAlphaTest(alphaTest: AlphaTest): AlphaTest {
 }
 
 export class GXMaterialBuilder {
-    private cullMode: GX.CullMode;
+    private cullMode!: GX.CullMode;
     private lightChannels: LightChannelControl[] = [];
     private texGens: TexGen[] = [];
     private tevStages: TevStage[] = [];
     private indTexStages: IndTexStage[] = [];
-    private alphaTest: AlphaTest;
-    private ropInfo: RopInfo;
-    private usePnMtxIdx: boolean;
-    private hasDynamicAlphaTest: boolean;
+    private alphaTest!: AlphaTest;
+    private ropInfo!: RopInfo;
+    private usePnMtxIdx!: boolean;
+    private hasDynamicAlphaTest!: boolean;
 
     constructor(private name: string | null = null) {
         this.reset();
