@@ -6,6 +6,9 @@ const base = process.env.GITHUB_PAGES ? '/MkwTrackEditor/' : '/';
 
 export default defineConfig({
   base,
+  test: {
+    exclude: ['**/node_modules/**', '**/dist/**', '.claude/**', 'vendor/**'],
+  },
   plugins: [react()],
   resolve: {
     alias: {
