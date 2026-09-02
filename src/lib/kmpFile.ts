@@ -112,8 +112,12 @@ export interface KmpPathGroup {
   prev: number[];
   /** Up to 6 next group indices; 0xFF marks an unused slot. */
   next: number[];
-  /** Unused 2 bytes at 0x0E. Some CT tools store a group id here. */
-  unknown: number;
+  /**
+   * Bitfield at 0x0E. Always 0 in racing tracks and pure padding for ITPH/CKPH. For ENPH in
+   * battle arenas, bits 0-5 mean "link to the first point of the matching previous group"
+   * and bits 6-11 mean "link to the last point of the matching next group".
+   */
+  linkFlags: number;
 }
 
 /** CKPT — one checkpoint, defined by a line segment on the XZ plane. */
@@ -152,8 +156,9 @@ export interface KmpObject {
   /** The eight per-object parameter words. */
   settings: number[];
   /**
-   * Which modes the object exists in. Bit 0 = single player, bit 1 = 2P, bit 2 = 3-4P,
-   * bit 3 = online/battle, bits 4-5 = time trial variants.
+   * Which modes the object exists in. Only the three low bits do anything in the retail
+   * game: bit 0 = single player and Time Trials, bit 1 = two players, bit 2 = three or four
+   * players. Bits 6-15 are LE-CODE's extended presence flags. 0x3F is the normal value.
    */
   presenceFlags: number;
 }
@@ -180,7 +185,7 @@ export interface KmpRoute {
 export interface KmpArea {
   /** 0 = box, 1 = cylinder. */
   shape: number;
-  /** Area type (0 = camera, 1 = enemy fall, 2 = mapping to a route, …). */
+  /** Area type; see {@link areaTypeName}. */
   type: number;
   /** CAME index for type 0 areas, 0xFF otherwise. */
   cameraIndex: number;
@@ -188,7 +193,10 @@ export interface KmpArea {
   priority: number;
   position: Vec3;
   rotation: Vec3;
-  /** Half-extents multiplier; the base box is 10000 units, the base cylinder r=10000 h=10000. */
+  /**
+   * Multiplier on the base volume. A box of scale 1 spans 5000 units either side in X and Z
+   * and 10000 units upwards in Y, with the origin at the bottom centre.
+   */
   scale: Vec3;
   setting1: number;
   setting2: number;
@@ -202,7 +210,7 @@ export interface KmpArea {
 
 /** CAME — one camera. */
 export interface KmpCamera {
-  /** Camera type (0 goal, 1 fixed-search, 4 route-following, 5 follow-path, …). */
+  /** Camera type; see {@link cameraTypeName}. */
   type: number;
   /** Next camera in the opening chain, 0xFF to end the chain. */
   nextIndex: number;
@@ -210,11 +218,11 @@ export interface KmpCamera {
   shake: number;
   /** POTI index the camera position follows, 0xFF when unused. */
   routeIndex: number;
-  /** Speed the camera moves along its route (1/100 units per frame). */
+  /** How far the camera itself travels along its route per 100/60 s (1.67 s). */
   pointVelocity: number;
-  /** Speed the field of view interpolates from zoomStart to zoomEnd. */
+  /** How far the field of view moves from zoomStart towards zoomEnd per 100/60 s. */
   zoomVelocity: number;
-  /** Speed the look-at point moves from viewStart to viewEnd. */
+  /** How far the look-at point moves from viewStart towards viewEnd per 100/60 s. */
   viewVelocity: number;
   /** Opening-chain start flag. */
   start: number;
@@ -238,10 +246,14 @@ export interface KmpCamera {
 export interface KmpRespawnPoint {
   position: Vec3;
   rotation: Vec3;
-  /** Respawn id; normally equal to the record index. */
+  /** Respawn id; normally equal to the record index. Checkpoints link by index, not by id. */
   id: number;
-  /** Signed "range" value at 0x1A. Vanilla tracks use -1. */
-  range: number;
+  /**
+   * "Extra user data" at 0x1A (signed). When greater than 0, `value / 100 - 1` is a sound
+   * trigger id played after respawning and `value % 100` is a track-specific tweak.
+   * Vanilla tracks use -1.
+   */
+  extraUserData: number;
 }
 
 /** CNPT — a cannon end point. */
@@ -645,7 +657,7 @@ export function readKmpFile(data: Uint8Array): KmpFile {
     position: c.vec3(),
     rotation: c.vec3(),
     id: c.u16(),
-    range: c.i16(),
+    extraUserData: c.i16(),
   }));
   const cannonPoints = decodeFixed('CNPT', (c) => ({
     position: c.vec3(),
@@ -726,7 +738,7 @@ function decodePathGroup(c: Cursor): KmpPathGroup {
     length: c.u8(),
     prev: c.bytes(6),
     next: c.bytes(6),
-    unknown: c.u16(),
+    linkFlags: c.u16(),
   };
 }
 
@@ -857,7 +869,7 @@ export function writeKmpFile(file: KmpFile): Uint8Array {
     o.vec3(r.position);
     o.vec3(r.rotation);
     o.u16(r.id);
-    o.i16(r.range);
+    o.i16(r.extraUserData);
   });
   emitFixed('CNPT', file.cannonPoints, (o, r) => {
     o.vec3(r.position);
@@ -947,7 +959,7 @@ function encodePathGroup(out: Emitter, group: KmpPathGroup): void {
   out.u8(group.length);
   out.fixedBytes(group.prev, 6, KMP_NULL_INDEX_8);
   out.fixedBytes(group.next, 6, KMP_NULL_INDEX_8);
-  out.u16(group.unknown);
+  out.u16(group.linkFlags);
 }
 
 // ---------------------------------------------------------------------------
@@ -1006,7 +1018,7 @@ export function createStageInfo(): KmpStageInfo {
 }
 
 export function createPathGroup(start = 0, length = 0): KmpPathGroup {
-  return { start, length, prev: [], next: [], unknown: 0 };
+  return { start, length, prev: [], next: [], linkFlags: 0 };
 }
 
 /** Deep copy, so editing helpers can stay pure without sharing sub-objects. */
@@ -1057,4 +1069,119 @@ export function cloneKmpFile(file: KmpFile): KmpFile {
 
 function clonePathGroup(group: KmpPathGroup): KmpPathGroup {
   return { ...group, prev: [...group.prev], next: [...group.next] };
+}
+
+// ---------------------------------------------------------------------------
+// Friendly names for enum-like fields
+// ---------------------------------------------------------------------------
+
+/** AREA types 0x00-0x0A are Nintendo's; 0x0C+ are the community "AREA Expander" additions. */
+export const AREA_TYPE_NAMES: Record<number, string> = {
+  0x00: 'Camera trigger',
+  0x01: 'Weather effect control',
+  0x02: 'Fog preset swap',
+  0x03: 'Moving road',
+  0x04: 'CPU destination point',
+  0x05: 'Minimap control',
+  0x06: 'Bloom preset swap',
+  0x07: 'Flying Boos',
+  0x08: 'Object group',
+  0x09: 'Object group unloading',
+  0x0a: 'Fall boundary',
+  0x0c: 'Rail riding',
+  0x0d: 'Pole bouncing',
+  0x0e: 'Air movement',
+  0x0f: 'Teleport',
+  0x10: 'Configurable gravity',
+  0x11: 'Launch pad activation',
+  0x12: 'Launch pad direction',
+};
+
+export function areaTypeName(type: number): string {
+  return AREA_TYPE_NAMES[type] ?? `Area type ${type}`;
+}
+
+export const AREA_SHAPE_NAMES: Record<number, string> = { 0: 'Box', 1: 'Cylinder' };
+
+export function areaShapeName(shape: number): string {
+  return AREA_SHAPE_NAMES[shape] ?? `Shape ${shape}`;
+}
+
+export const CAMERA_TYPE_NAMES: Record<number, string> = {
+  0x00: 'Finish line',
+  0x01: 'Fixed, looks at the player',
+  0x02: 'Route start, looks at the player',
+  0x03: 'Follows the player',
+  0x04: 'Fixed, pans between two look-at points',
+  0x05: 'Opening pan along a route',
+  0x06: 'Moves with the player along a route',
+  0x07: 'Mini-game (unused)',
+  0x08: 'Mission success (unused)',
+  0x09: 'Battle finish',
+};
+
+export function cameraTypeName(type: number): string {
+  return CAMERA_TYPE_NAMES[type] ?? `Camera type ${type}`;
+}
+
+/** Camera types that read a POTI route. */
+export function cameraUsesRoute(type: number): boolean {
+  return type === 0x02 || type === 0x05 || type === 0x06;
+}
+
+/** Human-readable description of a checkpoint's `type` byte. */
+export function checkpointTypeName(type: number): string {
+  if (type === 0) return 'Lap counter';
+  if (type === KMP_NULL_INDEX_8) return 'Normal checkpoint';
+  return `Key checkpoint ${type}`;
+}
+
+export const CANNON_SHOOT_EFFECT_NAMES: Record<number, string> = {
+  [-1]: 'Straight',
+  0: 'Straight',
+  1: 'Curved',
+  2: 'Curved and slow',
+};
+
+export function cannonShootEffectName(effect: number): string {
+  return CANNON_SHOOT_EFFECT_NAMES[effect] ?? `Effect ${effect}`;
+}
+
+/** Player-count slots a GOBJ presence-flag word enables. */
+export function presenceFlagLabels(flags: number): string[] {
+  const out: string[] = [];
+  if (flags & 0x01) out.push('Single player and Time Trials');
+  if (flags & 0x02) out.push('Two players');
+  if (flags & 0x04) out.push('Three or four players');
+  return out;
+}
+
+/** True when the object is visible in every mode the retail game checks. */
+export function isAlwaysPresent(flags: number): boolean {
+  return (flags & 0x07) === 0x07;
+}
+
+/**
+ * The effective global speed multiplier. A stored value of 0 means "not set", and the game
+ * substitutes 1.0 for backwards compatibility.
+ */
+export function effectiveSpeedModifier(stage: KmpStageInfo | undefined): number {
+  if (!stage || !Number.isFinite(stage.speedModifier) || stage.speedModifier === 0) return 1;
+  return stage.speedModifier;
+}
+
+/** Decodes the JGPT "extra user data" word into its sound trigger id and extra value. */
+export function decodeRespawnExtraData(value: number): { soundTriggerId: number | null; extra: number } {
+  if (value <= 0) return { soundTriggerId: null, extra: 0 };
+  return { soundTriggerId: Math.floor(value / 100) - 1, extra: value % 100 };
+}
+
+/** Total number of route points across every POTI route, i.e. the POTI section header value. */
+export function totalRoutePointCount(file: KmpFile): number {
+  return file.routes.reduce((sum, route) => sum + route.points.length, 0);
+}
+
+/** The single STGI record, or a sensible default when the section is empty. */
+export function getStageInfo(file: KmpFile): KmpStageInfo {
+  return file.stage[0] ?? createStageInfo();
 }
