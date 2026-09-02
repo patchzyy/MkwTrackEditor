@@ -92,3 +92,14 @@ A track editor a Mario Kart Wii custom-track author would actually use:
 End your work with a report that lists: what was completed, what was verified and how
 (commands, browser checks), what is not done, files touched, and any wiring the
 orchestrator has to do in files you did not own.
+
+## Progress log
+
+- 2026-09-02 wave 1 merged: App.tsx split into modules (`docs/ARCHITECTURE.md`); vendor trimmed
+  874→73 files; typecheck clean; real-renderer thumbnails (`src/lib/thumbnail`); data layer
+  audited (kmpFile/kmpGraph/kmpValidation/kclRaycast, byte-exact on 338 tracks); renderer camera
+  gizmos + preview playback and mesh picking/per-mesh transforms (`docs/viewport-api.md`).
+- 2026-09-02 mode scaffold: each mode is a hook in `src/ui/{kmp,camera,model,visual}/` returning a
+  `ModeUi` (`src/ui/modes/types.ts`); `App.tsx` composes them. Default mode is KMP.
+- Wave 2 (in progress): F camera UI, G model UI + BRRES writer, H visual mode, J KMP parity,
+  K UI redesign (design system in `src/ui/components`, `docs/UI.md`).
