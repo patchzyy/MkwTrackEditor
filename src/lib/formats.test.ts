@@ -134,45 +134,7 @@ describe('U8', () => {
   });
 });
 
-describe('KCL raycasting', () => {
-  it('intersects collision triangles from either side for 3D picking', () => {
-    const mesh = {
-      warnings: [],
-      triangles: [
-        {
-          a: { x: 0, y: 0, z: 0 },
-          b: { x: 100, y: 0, z: 0 },
-          c: { x: 0, y: 0, z: 100 },
-          flag: 0,
-          typeName: 'Road',
-          normal: { x: 0, y: 1, z: 0 },
-        },
-      ],
-    };
-    expect(raycastMesh(mesh, { x: 20, y: 50, z: 20 }, { x: 0, y: -1, z: 0 })?.position.y).toBeCloseTo(0);
-    expect(raycastMesh(mesh, { x: 20, y: -50, z: 20 }, { x: 0, y: 1, z: 0 })?.position.y).toBeCloseTo(0);
-  });
-
-  it('snaps hit points to the nearest triangle vertex or edge feature', () => {
-    const triangle = {
-      a: { x: 0, y: 0, z: 0 },
-      b: { x: 100, y: 0, z: 0 },
-      c: { x: 0, y: 0, z: 100 },
-      flag: 0,
-      typeName: 'Road',
-      normal: { x: 0, y: 1, z: 0 },
-    };
-    const nearVertex = snapPointToTriangleFeature({ x: -4, y: 0, z: -6 }, triangle);
-    expect(nearVertex.kind).toBe('vertex');
-    expect(nearVertex.position).toEqual({ x: 0, y: 0, z: 0 });
-
-    const nearEdge = snapPointToTriangleFeature({ x: 46, y: 0, z: 8 }, triangle);
-    expect(nearEdge.kind).toBe('edge');
-    expect(nearEdge.position.x).toBeCloseTo(46);
-    expect(nearEdge.position.y).toBeCloseTo(0);
-    expect(nearEdge.position.z).toBeCloseTo(0);
-  });
-});
+// KCL parsing, raycasting and snapping are covered in kcl.test.ts.
 
 describe('MKW track loading', () => {
   it.runIf(existsSync(sampleTrack))('opens a real custom track and parses KMP sections', async () => {

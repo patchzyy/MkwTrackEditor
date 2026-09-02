@@ -14,9 +14,9 @@ export interface KclTriangle {
   /**
    * Index of this prism in the KCL's own triangle section. Degenerate prisms are dropped
    * during parsing, so this is not the same as the index in {@link KclMesh.triangles}, and
-   * it is what the KCL octree stores.
+   * it is what the KCL octree stores. Meshes built by hand may leave it undefined.
    */
-  prismIndex: number;
+  prismIndex?: number;
 }
 
 /** The fixed 0x3C-byte KCL header, as documented on https://wiki.tockdom.com/wiki/KCL. */

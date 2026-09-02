@@ -1,8 +1,22 @@
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const courseRoot = '/mnt/g/Games/Wii/mkwii-europe/Race/Course';
-const outputPath = '/mnt/g/ai/MkwTrackEditor/public/data/MarioKartWii/Race/Course/course-asset-db.json';
+/** Repo root, so the scripts work from any working directory and on any host. */
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/** Where the extracted Mario Kart Wii disc lives. Override with MKW_DUMP=... */
+const discRoot = process.env.MKW_DUMP ?? 'G:/Games/Wii/mkwii-europe';
+
+function requireDir(dir, what) {
+  if (existsSync(dir)) return dir;
+  console.error(`Cannot find ${what} at ${dir}.`);
+  console.error('Point MKW_DUMP at an extracted Mario Kart Wii disc and run this again.');
+  process.exit(1);
+}
+
+const courseRoot = requireDir(path.join(discRoot, 'Race/Course'), 'the game course folder');
+const outputPath = path.join(repoRoot, 'public/data/MarioKartWii/Race/Course/course-asset-db.json');
 
 function isYaz0(data) {
   return data.length >= 16 && Buffer.from(data.subarray(0, 4)).toString('ascii') === 'Yaz0';
