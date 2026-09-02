@@ -301,6 +301,53 @@ describe('KMP validation', () => {
     expect(codes(validateKmpFile(file))).toContain('camera.opening-out-of-range');
   });
 
+  it('reports a selection-screen camera index that does not exist', () => {
+    const file = validTrack();
+    file.cameras.push(camera());
+    file.firstSelectionCamera = 4;
+    expect(codes(validateKmpFile(file))).toContain('camera.selection-out-of-range');
+  });
+
+  it('reports an opening shot that lasts no time and has nothing to animate', () => {
+    const file = validTrack();
+    file.cameras.push(camera({ type: 4, time: 0, nextIndex: 0xff }));
+    file.firstOpeningCamera = 0;
+    const issue = validateKmpFile(file).find((candidate) => candidate.code === 'camera.zero-duration');
+    expect(issue?.entityId).toBe('CAME-0');
+  });
+
+  it('accepts a zero-length opening shot that still pans, zooms or travels', () => {
+    const panning = validTrack();
+    panning.cameras.push(camera({ type: 4, time: 0, viewVelocity: 100, viewStart: { x: 0, y: 0, z: 0 }, viewEnd: { x: 500, y: 0, z: 0 } }));
+    panning.firstOpeningCamera = 0;
+    expect(codes(validateKmpFile(panning))).not.toContain('camera.zero-duration');
+
+    const zooming = validTrack();
+    zooming.cameras.push(camera({ type: 4, time: 0, zoomVelocity: 50, zoomStart: 80, zoomEnd: 30 }));
+    zooming.firstOpeningCamera = 0;
+    expect(codes(validateKmpFile(zooming))).not.toContain('camera.zero-duration');
+
+    const travelling = validTrack();
+    travelling.routes.push({
+      setting1: 0,
+      setting2: 0,
+      points: [
+        { position: { x: 0, y: 0, z: 0 }, setting1: 10, setting2: 0 },
+        { position: { x: 100, y: 0, z: 0 }, setting1: 10, setting2: 0 },
+      ],
+    });
+    travelling.cameras.push(camera({ type: 5, time: 0, routeIndex: travelling.routes.length - 1 }));
+    travelling.firstOpeningCamera = 0;
+    expect(codes(validateKmpFile(travelling))).not.toContain('camera.zero-duration');
+  });
+
+  it('leaves a zero-length camera alone when it is not part of the opening pan', () => {
+    const file = validTrack();
+    file.cameras.push(camera({ type: 4, time: 0 }));
+    file.firstOpeningCamera = 0xff;
+    expect(codes(validateKmpFile(file))).not.toContain('camera.zero-duration');
+  });
+
   it('reports lap counts and speed multipliers the game cannot use', () => {
     const file = validTrack();
     file.stage[0].lapCount = 12;

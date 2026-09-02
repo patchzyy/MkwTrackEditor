@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   buildOpeningCameraChain,
   computeFrustumCorners,
+  eulerFromLookDirection,
+  formatFrames,
+  framesToSeconds,
   getCameraAnimationFrames,
+  lookDirectionFromEuler,
+  secondsToFrames,
   getCameraTypeInfo,
   getOpeningSequenceDuration,
   getRouteDistanceAtFrame,
@@ -219,5 +224,46 @@ describe('computeFrustumCorners', () => {
       expect(Number.isFinite(corner.y)).toBe(true);
       expect(Number.isFinite(corner.z)).toBe(true);
     }
+  });
+});
+
+describe('frames and seconds', () => {
+  it('converts at 60 fps in both directions', () => {
+    expect(framesToSeconds(120)).toBeCloseTo(2);
+    expect(secondsToFrames(1.5)).toBeCloseTo(90);
+    expect(formatFrames(90)).toBe('90 frames (1.50 s)');
+    expect(formatFrames(Number.NaN)).toBe('0 frames (0.00 s)');
+  });
+});
+
+describe('KMP rotation and look direction', () => {
+  it('round-trips a look direction through the rotation field', () => {
+    const directions = [
+      { x: 0, y: 0, z: 1 },
+      { x: 1, y: 0, z: 0 },
+      { x: -1, y: 0, z: 0 },
+      { x: 0, y: 0, z: -1 },
+      { x: 0.5, y: 0.5, z: -0.7071 },
+      { x: -0.3, y: -0.8, z: 0.4 },
+    ];
+    for (const direction of directions) {
+      const length = Math.hypot(direction.x, direction.y, direction.z);
+      const unit = { x: direction.x / length, y: direction.y / length, z: direction.z / length };
+      const back = lookDirectionFromEuler(eulerFromLookDirection(unit));
+      expect(back.x).toBeCloseTo(unit.x, 5);
+      expect(back.y).toBeCloseTo(unit.y, 5);
+      expect(back.z).toBeCloseTo(unit.z, 5);
+    }
+  });
+
+  it('uses +Z as the zero-rotation facing and +X as a quarter turn', () => {
+    expect(eulerFromLookDirection({ x: 0, y: 0, z: 1 })).toEqual({ x: 0, y: 0, z: 0 });
+    expect(eulerFromLookDirection({ x: 1, y: 0, z: 0 }).y).toBeCloseTo(90);
+    // Looking down is a positive pitch in the KMP rotation field.
+    expect(eulerFromLookDirection({ x: 0, y: -1, z: 0 }).x).toBeCloseTo(90);
+  });
+
+  it('falls back to no rotation for a zero-length direction', () => {
+    expect(eulerFromLookDirection({ x: 0, y: 0, z: 0 })).toEqual({ x: 0, y: 0, z: 0 });
   });
 });

@@ -434,6 +434,13 @@ function validateCameras(file: KmpFile): TrackIssue[] {
         message: `The opening pan starts at camera #${file.firstOpeningCamera}, which does not exist.`,
       });
     }
+    if (file.firstSelectionCamera >= file.cameras.length && file.firstSelectionCamera !== KMP_NULL_INDEX_8) {
+      issues.push({
+        level: 'error',
+        code: 'camera.selection-out-of-range',
+        message: `The character-selection pan starts at camera #${file.firstSelectionCamera}, which does not exist.`,
+      });
+    }
     // Walk the opening chain and stop if it loops.
     const seen = new Set<number>();
     let cursor = file.firstOpeningCamera;
@@ -450,6 +457,32 @@ function validateCameras(file: KmpFile): TrackIssue[] {
       seen.add(cursor);
       cursor = file.cameras[cursor].nextIndex;
     }
+    issues.push(...validateChainDurations(file, seen));
+  }
+  return issues;
+}
+
+/**
+ * A shot the game can never advance past: it is part of the opening pan but has no duration and
+ * nothing to animate, so the camera sticks there forever.
+ */
+function validateChainDurations(file: KmpFile, openingChain: ReadonlySet<number>): TrackIssue[] {
+  const issues: TrackIssue[] = [];
+  for (const index of openingChain) {
+    const camera = file.cameras[index];
+    if (!camera || camera.time > 0) continue;
+    const pansView =
+      camera.viewVelocity > 0 &&
+      (camera.viewStart.x !== camera.viewEnd.x || camera.viewStart.y !== camera.viewEnd.y || camera.viewStart.z !== camera.viewEnd.z);
+    const pansZoom = camera.zoomVelocity > 0 && Math.abs(camera.zoomEnd - camera.zoomStart) > 1e-6;
+    const travels = camera.routeIndex !== KMP_NULL_INDEX_8 && (file.routes[camera.routeIndex]?.points.length ?? 0) > 1;
+    if (pansView || pansZoom || travels) continue;
+    issues.push({
+      level: 'error',
+      code: 'camera.zero-duration',
+      message: `Camera #${index} is part of the opening pan but lasts 0 frames and has nothing to animate, so the pan stops on it.`,
+      entityId: `CAME-${index}`,
+    });
   }
   return issues;
 }

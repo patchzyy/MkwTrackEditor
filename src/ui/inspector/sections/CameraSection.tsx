@@ -1,8 +1,43 @@
 import type { getKmpCameraHeader, KmpCameraField, KmpCameraHeaderField, KmpEntity, Vec3 } from '../../../lib/kmp';
 import type { ReferenceCounts } from '../../../lib/kmpEdit';
-import { ReferenceSelect } from '../fields/ReferenceSelect';
-import { VectorInputs } from '../fields/VectorInputs';
+import { CameraFields, Field } from '../../camera/CameraFields';
+import { NO_CAMERA_LINK, type CameraValues } from '../../camera/cameraDocument';
 
+function ChainStartSelect({
+  label,
+  hint,
+  value,
+  count,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  value: number;
+  count: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <Field label={label} hint={hint}>
+      <select aria-label={label} value={String(value)} onChange={(event) => onChange(Number(event.currentTarget.value))}>
+        <option value={NO_CAMERA_LINK}>None</option>
+        {value !== NO_CAMERA_LINK && value >= count && <option value={value}>Missing camera {value}</option>}
+        {Array.from({ length: count }, (_, index) => (
+          <option key={index} value={index}>
+            Camera {index}
+          </option>
+        ))}
+      </select>
+    </Field>
+  );
+}
+
+/**
+ * Camera settings for the KMP-mode inspector. It renders the same friendly editor Camera mode
+ * uses ({@link CameraFields}) so a camera reads identically wherever it is selected, and adds the
+ * two "which camera starts a pan" pickers that live in the camera section header.
+ *
+ * Placement is left to the inspector's own General/Transform sections.
+ */
 export function CameraSection({
   entity,
   cameraHeader,
@@ -18,81 +53,46 @@ export function CameraSection({
   onChangeCameraHeaderField: (field: KmpCameraHeaderField, value: number) => void;
   onChangeCameraViewPosition: (side: 'start' | 'end', position: Vec3) => void;
 }) {
+  if (!entity.camera) return null;
+
+  // The KMP inspector patches one field per edit, and every control here changes exactly one.
+  function applyValues(values: Partial<CameraValues>) {
+    for (const [key, value] of Object.entries(values)) {
+      if (value === undefined) continue;
+      if (key === 'viewStart') onChangeCameraViewPosition('start', value as Vec3);
+      else if (key === 'viewEnd') onChangeCameraViewPosition('end', value as Vec3);
+      else if (key !== 'position' && key !== 'rotation') onChangeCameraField(key as KmpCameraField, value as number);
+    }
+  }
+
   return (
     <>
-      {entity.camera && (
+      <div className="detailsSectionHeader">Camera</div>
+      {cameraHeader && (
         <>
-          {cameraHeader && (
-            <label>
-              Camera Starts
-              <div className="vectorInputs">
-                <ReferenceSelect
-                  label="Intro start camera"
-                  value={cameraHeader.firstIntroCam}
-                  noneValue={0xff}
-                  count={referenceCounts.cameras}
-                  optionLabel="Camera"
-                  onChange={(next) => onChangeCameraHeaderField('firstIntroCam', next)}
-                />
-                <ReferenceSelect
-                  label="Selection start camera"
-                  value={cameraHeader.firstSelectionCam}
-                  noneValue={0xff}
-                  count={referenceCounts.cameras}
-                  optionLabel="Camera"
-                  onChange={(next) => onChangeCameraHeaderField('firstSelectionCam', next)}
-                />
-                <span>Camera Chain</span>
-              </div>
-            </label>
-          )}
-          <label>
-            Camera Settings
-            <div className="settingInputs">
-              {(Object.entries(entity.camera) as Array<[KmpCameraField, number]>).map(([field, value]) => {
-                const floatField = field === 'zoomStart' || field === 'zoomEnd' || field === 'time';
-                const byteField = field === 'type' || field === 'nextCam' || field === 'shake' || field === 'routeIndex' || field === 'start' || field === 'movie';
-                if (field === 'nextCam') {
-                  return <ReferenceSelect key={field} label={field} value={value} noneValue={0xff} count={referenceCounts.cameras} optionLabel="Camera" onChange={(next) => onChangeCameraField(field, next)} />;
-                }
-                if (field === 'routeIndex') {
-                  return <ReferenceSelect key={field} label={field} value={value} noneValue={0xff} count={referenceCounts.routes} optionLabel="Route" onChange={(next) => onChangeCameraField(field, next)} />;
-                }
-                return (
-                  <input
-                    key={field}
-                    aria-label={field}
-                    title={field}
-                    type="number"
-                    min={floatField ? undefined : 0}
-                    max={floatField ? undefined : byteField ? 255 : 65535}
-                    step={floatField ? 0.1 : 1}
-                    value={Number.isFinite(value) ? Number(value.toFixed(floatField ? 3 : 0)) : 0}
-                    onChange={(event) => {
-                      const next = Number(event.currentTarget.value);
-                      if (!Number.isFinite(next)) return;
-                      if (floatField) onChangeCameraField(field, next);
-                      else onChangeCameraField(field, Math.max(0, Math.min(byteField ? 0xff : 0xffff, Math.trunc(next))));
-                    }}
-                  />
-                );
-              })}
-            </div>
-          </label>
-          {entity.cameraView && (
-            <>
-              <label>
-                View Start
-                <VectorInputs value={entity.cameraView.start} onChange={(position) => onChangeCameraViewPosition('start', position)} />
-              </label>
-              <label>
-                View End
-                <VectorInputs value={entity.cameraView.end} onChange={(position) => onChangeCameraViewPosition('end', position)} />
-              </label>
-            </>
-          )}
+          <ChainStartSelect
+            label="Opening pan starts at"
+            hint="The first shot of the pan the game plays over the track before the countdown."
+            value={cameraHeader.firstIntroCam}
+            count={referenceCounts.cameras}
+            onChange={(next) => onChangeCameraHeaderField('firstIntroCam', next)}
+          />
+          <ChainStartSelect
+            label="Selection pan starts at"
+            hint="The first shot of the pan that plays behind the character-selection screen."
+            value={cameraHeader.firstSelectionCam}
+            count={referenceCounts.cameras}
+            onChange={(next) => onChangeCameraHeaderField('firstSelectionCam', next)}
+          />
         </>
       )}
+      <CameraFields
+        entity={entity}
+        cameraCount={referenceCounts.cameras}
+        routeCount={referenceCounts.routes}
+        showPlacement={false}
+        onChange={applyValues}
+      />
     </>
   );
 }
