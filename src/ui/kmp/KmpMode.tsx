@@ -195,6 +195,8 @@ export function useKmpMode(ctx: EditorModeContext): ModeUi {
         objectOptions={ctx.objectOptions}
         canBatchReplaceObjects={ctx.canBatchReplaceObjects}
         hasCollision={!!track?.kcl}
+        commonArchive={ctx.commonArchive}
+        commonBrresSummaries={ctx.commonBrresSummaries}
         onSelectEntity={selectAndFrame}
         onOffsetSelection={(offset) => editActions.offsetSelectedEntitiesBy(offset)}
         onReplaceObjectTypes={editActions.replaceSelectedObjectTypes}

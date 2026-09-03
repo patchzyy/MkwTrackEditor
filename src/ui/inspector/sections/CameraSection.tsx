@@ -2,6 +2,7 @@ import type { getKmpCameraHeader, KmpCameraField, KmpCameraHeaderField, KmpEntit
 import type { ReferenceCounts } from '../../../lib/kmpEdit';
 import { CameraFields, Field } from '../../camera/CameraFields';
 import { NO_CAMERA_LINK, type CameraValues } from '../../camera/cameraDocument';
+import type { InspectorScope } from './scope';
 
 function ChainStartSelect({
   label,
@@ -33,13 +34,15 @@ function ChainStartSelect({
 
 /**
  * Camera settings for the KMP-mode inspector. It renders the same friendly editor Camera mode
- * uses ({@link CameraFields}) so a camera reads identically wherever it is selected, and adds the
- * two "which camera starts a pan" pickers that live in the camera section header.
+ * uses ({@link CameraFields}) so a camera reads identically wherever it is selected.
  *
- * Placement is left to the inspector's own General/Transform sections.
+ * The two "which camera starts a pan" pickers are track-wide rather than a property of the
+ * selected shot, so they sit in Advanced; Camera mode's chain editor is the place to build a
+ * pan. Placement is left to the inspector's own placement section.
  */
 export function CameraSection({
   entity,
+  scope,
   cameraHeader,
   referenceCounts,
   onChangeCameraField,
@@ -47,6 +50,7 @@ export function CameraSection({
   onChangeCameraViewPosition,
 }: {
   entity: KmpEntity;
+  scope: InspectorScope;
   cameraHeader: ReturnType<typeof getKmpCameraHeader> | null;
   referenceCounts: ReferenceCounts;
   onChangeCameraField: (field: KmpCameraField, value: number) => void;
@@ -54,6 +58,28 @@ export function CameraSection({
   onChangeCameraViewPosition: (side: 'start' | 'end', position: Vec3) => void;
 }) {
   if (!entity.camera) return null;
+
+  if (scope === 'advanced') {
+    if (!cameraHeader) return null;
+    return (
+      <div className="propertyGrid">
+        <ChainStartSelect
+          label="Opening pan starts at"
+          hint="Track-wide"
+          value={cameraHeader.firstIntroCam}
+          count={referenceCounts.cameras}
+          onChange={(next) => onChangeCameraHeaderField('firstIntroCam', next)}
+        />
+        <ChainStartSelect
+          label="Selection pan starts at"
+          hint="Track-wide"
+          value={cameraHeader.firstSelectionCam}
+          count={referenceCounts.cameras}
+          onChange={(next) => onChangeCameraHeaderField('firstSelectionCam', next)}
+        />
+      </div>
+    );
+  }
 
   // The KMP inspector patches one field per edit, and every control here changes exactly one.
   function applyValues(values: Partial<CameraValues>) {
@@ -66,33 +92,8 @@ export function CameraSection({
   }
 
   return (
-    <>
-      <div className="detailsSectionHeader">Camera</div>
-      {cameraHeader && (
-        <>
-          <ChainStartSelect
-            label="Opening pan starts at"
-            hint="The first shot of the pan the game plays over the track before the countdown."
-            value={cameraHeader.firstIntroCam}
-            count={referenceCounts.cameras}
-            onChange={(next) => onChangeCameraHeaderField('firstIntroCam', next)}
-          />
-          <ChainStartSelect
-            label="Selection pan starts at"
-            hint="The first shot of the pan that plays behind the character-selection screen."
-            value={cameraHeader.firstSelectionCam}
-            count={referenceCounts.cameras}
-            onChange={(next) => onChangeCameraHeaderField('firstSelectionCam', next)}
-          />
-        </>
-      )}
-      <CameraFields
-        entity={entity}
-        cameraCount={referenceCounts.cameras}
-        routeCount={referenceCounts.routes}
-        showPlacement={false}
-        onChange={applyValues}
-      />
-    </>
+    <div className="propertyGrid">
+      <CameraFields entity={entity} cameraCount={referenceCounts.cameras} routeCount={referenceCounts.routes} showPlacement={false} onChange={applyValues} />
+    </div>
   );
 }

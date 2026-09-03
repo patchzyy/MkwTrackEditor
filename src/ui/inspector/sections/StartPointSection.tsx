@@ -14,8 +14,7 @@ export function StartPointSection({
   if (entity.section !== 'KTPT' || entity.ktptPlayerIndex === undefined) return null;
   const playerIndex = entity.ktptPlayerIndex;
   return (
-    <>
-      <div className="detailsSectionHeader">Start Point</div>
+    <div className="propertyGrid">
       <label>
         Used by
         <select
@@ -37,6 +36,6 @@ export function StartPointSection({
             : `Only player ${playerIndex + 1} starts here. Battle arenas use this; a race track normally should not.`}
         </span>
       </label>
-    </>
+    </div>
   );
 }

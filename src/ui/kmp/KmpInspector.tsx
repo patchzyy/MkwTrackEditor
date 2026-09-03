@@ -1,10 +1,34 @@
 import { useState, type ReactNode } from 'react';
-import { TriangleAlert } from 'lucide-react';
+import {
+  Box,
+  Camera,
+  Copy,
+  Crosshair,
+  Flag,
+  ListOrdered,
+  MoveVertical,
+  Package,
+  Repeat,
+  Rocket,
+  Route,
+  Settings2,
+  Trash2,
+  TriangleAlert,
+  Wand2,
+} from 'lucide-react';
 import type { KmpEntity, Vec3 } from '../../lib/kmp';
+import type { NoclipBrresSummary } from '../../lib/noclipBrres';
+import type { CommonResourceArchive } from '../../lib/objflow';
 import type { TrackIssue } from '../../lib/kmpValidation';
+import type { MenuItem, MenuSection } from '../components/Menu';
+import { ObjectThumbnail } from '../contentBrowser/ObjectThumbnail';
 import type { ObjectOption } from '../objects/objectCatalog';
 import { ObjectIdSelect } from '../inspector/fields/ObjectIdSelect';
 import { VectorInputs } from '../inspector/fields/VectorInputs';
+import { InspectorActionsHost } from '../inspector/InspectorActionsContext';
+import { InspectorActionsMenu, InspectorHeader } from '../inspector/InspectorHeader';
+import { describeKmpRecord } from '../inspector/recordSummary';
+import '../inspector/inspector.css';
 import type { KmpSelectionContext } from './kmpSelectionContext';
 
 export interface KmpQuickFix {
@@ -28,6 +52,9 @@ export interface KmpInspectorProps {
   /** True when every selected record is an object, so a batch type swap makes sense. */
   canBatchReplaceObjects: boolean;
   hasCollision: boolean;
+  /** Supplies the object thumbnail in the header. Optional so the panel works without game data. */
+  commonArchive?: CommonResourceArchive | null;
+  commonBrresSummaries?: Record<string, NoclipBrresSummary>;
 
   onSelectEntity: (entityId: string) => void;
   onOffsetSelection: (offset: Vec3) => void;
@@ -65,8 +92,9 @@ export interface KmpInspectorProps {
 /**
  * Inspector body for KMP mode.
  *
- * Order matches how a track is actually edited: what is selected, what you can do to it right
- * now, then the full property sheet, then everything the track still gets wrong.
+ * One header names the selection and holds every rare or destructive command in a single "⋯"
+ * menu — including the ones the property sheet registers from inside. Below it come only the
+ * tools that apply to what is selected, then the property sheet itself, then the export check.
  */
 export function KmpInspector(props: KmpInspectorProps) {
   const { entity, entities, context, issues, loadWarnings } = props;
@@ -75,20 +103,22 @@ export function KmpInspector(props: KmpInspectorProps) {
 
   return (
     <div className="kmpInspector">
-      <SelectionHeader {...props} />
-      {entities.length > 1 && <BatchTools {...props} />}
-      {context.path && <PathTools {...props} path={context.path} />}
-      {context.checkpoint && <CheckpointTools {...props} checkpoint={context.checkpoint} />}
-      {context.route && <RouteTools {...props} route={context.route} />}
-
-      {entity ? (
-        <section className="kmpToolGroup">
-          <h3>Properties</h3>
-          {props.selectedInspector}
-        </section>
-      ) : (
-        <p className="muted">Pick something in the track list or the viewport to edit it.</p>
-      )}
+      <InspectorActionsHost
+        render={(recordSections) => (
+          <>
+            <SelectionHeader {...props} recordSections={recordSections} />
+            {entities.length > 1 && <BatchTools {...props} />}
+            {context.path && <PathTools {...props} path={context.path} />}
+            {context.checkpoint && <CheckpointTools {...props} checkpoint={context.checkpoint} />}
+            {context.route && <RouteTools {...props} route={context.route} />}
+            {entity ? (
+              <section className="kmpToolGroup">{props.selectedInspector}</section>
+            ) : (
+              <p className="muted">Pick something in the track list or the viewport to edit it.</p>
+            )}
+          </>
+        )}
+      />
 
       <section className="kmpToolGroup kmpValidation">
         <h3>Before you export</h3>
@@ -134,28 +164,91 @@ export function KmpInspector(props: KmpInspectorProps) {
   );
 }
 
-function SelectionHeader({ entity, entities, entityLabel, hasCollision, onSnapToCollision, onDuplicateSelection, onDeleteSelection }: KmpInspectorProps) {
+/** A small square for the selection: the real object render when there is one, an icon otherwise. */
+function SelectionMedia({ entity, commonArchive, commonBrresSummaries }: Pick<KmpInspectorProps, 'entity' | 'commonArchive' | 'commonBrresSummaries'>) {
+  if (!entity) return null;
+  if (entity.section === 'GOBJ' && entity.objectId !== undefined && commonArchive?.objFlow) {
+    const flow = commonArchive.objFlow.byId.get(entity.objectId);
+    if (flow) return <ObjectThumbnail object={flow} common={commonArchive} summaries={commonBrresSummaries ?? {}} />;
+  }
+  const icon = recordIcon(entity.section);
+  return (
+    <div className="thumbnail kmp" data-state="available">
+      {icon}
+    </div>
+  );
+}
+
+function recordIcon(section: string) {
+  switch (section) {
+    case 'GOBJ':
+      return <Package size={20} aria-hidden="true" />;
+    case 'CAME':
+      return <Camera size={20} aria-hidden="true" />;
+    case 'AREA':
+      return <Box size={20} aria-hidden="true" />;
+    case 'JGPT':
+      return <Crosshair size={20} aria-hidden="true" />;
+    case 'CNPT':
+      return <Rocket size={20} aria-hidden="true" />;
+    case 'ENPT':
+    case 'ITPT':
+    case 'POTI':
+      return <Route size={20} aria-hidden="true" />;
+    case 'STGI':
+      return <Settings2 size={20} aria-hidden="true" />;
+    default:
+      return <Flag size={20} aria-hidden="true" />;
+  }
+}
+
+/** Name, type and the single actions menu. `recordSections` comes from the property sheet. */
+function SelectionHeader({
+  entity,
+  entities,
+  entityLabel,
+  hasCollision,
+  commonArchive,
+  commonBrresSummaries,
+  onSnapToCollision,
+  onDuplicateSelection,
+  onDeleteSelection,
+  recordSections,
+}: KmpInspectorProps & { recordSections: MenuSection[] }) {
+  const multiple = entities.length > 1;
+  const summary = entity ? describeKmpRecord(entity) : null;
+  // A track has exactly one settings record; copying or deleting it makes no sense.
+  const unique = summary?.kind === 'stage';
+  const title = entity ? entityLabel(entity) : 'Nothing selected';
+  const selectionItems: MenuItem[] = [];
+  if (entity && !unique) {
+    selectionItems.push({
+      id: 'snap',
+      label: 'Drop onto the track surface',
+      icon: <MoveVertical size={14} />,
+      disabled: !hasCollision,
+      disabledReason: 'This track has no collision data',
+      onSelect: onSnapToCollision,
+    });
+  }
+  const sections: MenuSection[] = [];
+  if (selectionItems.length > 0) sections.push({ id: 'selection', title: multiple ? `${entities.length} selected` : undefined, items: selectionItems });
+  sections.push(...recordSections);
+  if (entity && !unique && !recordSections.some((section) => section.items.some((item) => item.id === 'delete'))) {
+    sections.push({ id: 'kmp-danger', items: [{ id: 'delete', label: 'Delete', icon: <Trash2 size={14} />, danger: true, onSelect: onDeleteSelection }] });
+  }
+
   return (
     <section className="kmpToolGroup kmpSelectionHeader">
-      <h3>{entities.length > 1 ? `${entities.length} selected` : 'Selection'}</h3>
-      <p className="kmpSelectionName">{entity ? entityLabel(entity) : 'Nothing selected'}</p>
-      <div className="kmpButtonRow">
-        <button type="button" className="button" disabled={!entity} onClick={onDuplicateSelection}>
-          Duplicate
-        </button>
-        <button type="button" className="button" disabled={!entity} onClick={onDeleteSelection}>
-          Delete
-        </button>
-        <button
-          type="button"
-          className="button"
-          disabled={!entity || !hasCollision}
-          title={hasCollision ? 'Drop the selection straight down onto the track surface' : 'This track has no collision data'}
-          onClick={onSnapToCollision}
-        >
-          Drop to ground
-        </button>
-      </div>
+      {multiple && <h3>{entities.length} selected</h3>}
+      <InspectorHeader
+        media={<SelectionMedia entity={entity} commonArchive={commonArchive} commonBrresSummaries={commonBrresSummaries} />}
+        title={title}
+        typeName={summary && !title.toLowerCase().includes(summary.typeName.toLowerCase()) ? summary.typeName : undefined}
+        description={multiple ? `${entities.length} records selected. The details below apply to the first one.` : summary?.description}
+        primary={entity && !unique ? { label: 'Duplicate', icon: <Copy size={14} />, onClick: onDuplicateSelection } : undefined}
+        sections={sections}
+      />
     </section>
   );
 }
@@ -196,6 +289,10 @@ function BatchTools({ entities, objectOptions, canBatchReplaceObjects, onOffsetS
   );
 }
 
+/**
+ * Path editing for the selected enemy / item / checkpoint point. The three edits an author
+ * makes constantly stay as buttons; reversing and deleting whole groups move into the menu.
+ */
 function PathTools({
   path,
   onInsertPointBefore,
@@ -246,17 +343,7 @@ function PathTools({
         >
           Join with next
         </button>
-        <button type="button" className="button" onClick={onReverseGroup} title="Reverse the driving direction of this group">
-          Reverse group
-        </button>
-      </div>
-      <div className="kmpButtonRow">
-        <button type="button" className="button" onClick={onReversePath} title={`Reverse the whole ${path.pathLabel}`}>
-          Reverse whole path
-        </button>
-        <button type="button" className="button" onClick={onDeleteGroup} title="Delete this group and reconnect its neighbours">
-          Delete group
-        </button>
+        <GroupOverflowMenu onReverseGroup={onReverseGroup} onReversePath={onReversePath} onDeleteGroup={onDeleteGroup} pathLabel={path.pathLabel} />
       </div>
 
       <h3>Connections</h3>
@@ -268,6 +355,35 @@ function PathTools({
       <LinkEditor label="Comes from" links={path.prevGroups} groupCount={path.groupCount} onChange={(links) => onChangeGroupLinks('prev', links)} />
       <LinkEditor label="Leads to" links={path.nextGroups} groupCount={path.groupCount} onChange={(links) => onChangeGroupLinks('next', links)} />
     </section>
+  );
+}
+
+/** The rarely used whole-group commands, out of the button row. */
+function GroupOverflowMenu({
+  pathLabel,
+  onReverseGroup,
+  onReversePath,
+  onDeleteGroup,
+}: {
+  pathLabel: string;
+  onReverseGroup: () => void;
+  onReversePath: () => void;
+  onDeleteGroup: () => void;
+}) {
+  return (
+    <InlineMenuButton
+      label="More group actions"
+      sections={[
+        {
+          id: 'group',
+          items: [
+            { id: 'reverse-group', label: 'Reverse this group', icon: <Repeat size={14} />, onSelect: onReverseGroup },
+            { id: 'reverse-path', label: `Reverse the whole ${pathLabel}`, icon: <Repeat size={14} />, onSelect: onReversePath },
+            { id: 'delete-group', label: 'Delete this group', icon: <Trash2 size={14} />, danger: true, onSelect: onDeleteGroup },
+          ],
+        },
+      ]}
+    />
   );
 }
 
@@ -358,11 +474,22 @@ function CheckpointTools({
             {kind === 'lap' ? 'Finish line' : kind === 'key' ? 'Key' : 'Ordinary'}
           </button>
         ))}
-      </div>
-      <div className="kmpButtonRow">
-        <button type="button" className="button" onClick={onRenumberKeyCheckpoints} title="Number the key checkpoints 1, 2, 3 … in the order drivers reach them">
-          Renumber key checkpoints
-        </button>
+        <InlineMenuButton
+          label="More lap actions"
+          sections={[
+            {
+              id: 'laps',
+              items: [
+                {
+                  id: 'renumber',
+                  label: 'Renumber the key checkpoints',
+                  icon: <ListOrdered size={14} />,
+                  onSelect: onRenumberKeyCheckpoints,
+                },
+              ],
+            },
+          ]}
+        />
       </div>
 
       <h3>Respawn</h3>
@@ -383,11 +510,24 @@ function CheckpointTools({
             Show respawn
           </button>
         )}
-      </div>
-      <div className="kmpButtonRow">
-        <button type="button" className="button" disabled={checkpoint.respawnCount === 0} onClick={onAssignAllRespawns} title="Fill in every checkpoint that has no respawn point yet">
-          Fill in the missing ones
-        </button>
+        <InlineMenuButton
+          label="More respawn actions"
+          sections={[
+            {
+              id: 'respawns',
+              items: [
+                {
+                  id: 'fill',
+                  label: 'Fill in every missing respawn',
+                  icon: <Wand2 size={14} />,
+                  disabled: checkpoint.respawnCount === 0,
+                  disabledReason: 'This track has no respawn points yet',
+                  onSelect: onAssignAllRespawns,
+                },
+              ],
+            },
+          ]}
+        />
       </div>
     </section>
   );
@@ -397,17 +537,27 @@ function RouteTools({ route, onAppendRoutePoint, onReverseRoute }: KmpInspectorP
   return (
     <section className="kmpToolGroup">
       <h3>
-        Route {route.routeIndex + 1} · point {route.pointIndex + 1} of {route.pointCount}
+        Path {route.routeIndex + 1} · point {route.pointIndex + 1} of {route.pointCount}
       </h3>
       <div className="kmpButtonRow">
         <button type="button" className="button" onClick={onAppendRoutePoint}>
           Add point at end
         </button>
-        <button type="button" className="button" onClick={onReverseRoute}>
-          Reverse route
-        </button>
+        <InlineMenuButton
+          label="More path actions"
+          sections={[{ id: 'route', items: [{ id: 'reverse', label: 'Reverse this path', icon: <Repeat size={14} />, onSelect: onReverseRoute }] }]}
+        />
       </div>
     </section>
+  );
+}
+
+/** A "⋯" button that sits at the end of a tool row, sharing the header's menu implementation. */
+function InlineMenuButton({ label, sections }: { label: string; sections: MenuSection[] }) {
+  return (
+    <span className="kmpRowMenu">
+      <InspectorActionsMenu label={label} sections={sections} />
+    </span>
   );
 }
 

@@ -62,34 +62,39 @@ function renderInspector(entity: KmpEntity, pathInfo: PathInfo | null = null): s
 }
 
 describe('Inspector', () => {
-  it('always shows the general section with a position editor', () => {
-    const markup = renderInspector(entityOf({ section: 'JGPT', respawn: { id: 0, soundData: 0 } }));
+  it('leads with a friendly header and the placement editor', () => {
+    const markup = renderInspector(entityOf({ section: 'JGPT', rotation: origin, respawn: { id: 0, soundData: 0 } }));
     expect(markup).toContain('class="propertyGrid"');
-    expect(markup).toContain('General');
+    expect(markup).toContain('Respawn point');
     expect(markup).toContain('Position');
-    expect(markup).toContain('Respawn Settings');
+    expect(markup).toContain('Rotation');
+    // The two raw respawn words are Advanced, so they must not be in the closed sheet.
+    expect(markup).not.toContain('Respawn id and sound');
   });
 
-  it('shows checkpoint endpoints and reference pickers for a checkpoint', () => {
+  it('shows checkpoint endpoints and the respawn picker, and hides the link chain', () => {
     const markup = renderInspector(
       entityOf({
         section: 'CKPT',
         checkpoint: { left: origin, right: origin, respawnIndex: 0, type: 0xff, prev: 0xff, next: 0xff },
       }),
     );
-    expect(markup).toContain('Left Endpoint');
-    expect(markup).toContain('Right Endpoint');
-    expect(markup).toContain('Checkpoint Data');
+    expect(markup).toContain('Left end');
+    expect(markup).toContain('Right end');
+    expect(markup).toContain('Respawn used here');
+    expect(markup).not.toContain('Previous checkpoint');
+    expect(markup).not.toContain('Checkpoint type byte');
   });
 
-  it('shows the route/point section with friendly enemy-route wording', () => {
+  it('shows the enemy-route choices in plain language and hides the spare byte', () => {
     const markup = renderInspector(entityOf({ section: 'ENPT', pointSettings: [0, 0, 0], pointDeviation: 25 }));
-    expect(markup).toContain('Route / Point Data');
-    expect(markup).toContain('Mushroom / Wheelie');
-    expect(markup).toContain('Drift Behavior');
+    expect(markup).toContain('Mushroom / wheelie');
+    expect(markup).toContain('Drifting');
+    expect(markup).not.toContain('Spare byte');
+    expect(markup).not.toContain('Corridor width');
   });
 
-  it('shows the behaviour section for an area', () => {
+  it('shows what an area does and keeps its priority byte for Advanced', () => {
     const markup = renderInspector(
       entityOf({
         section: 'AREA',
@@ -98,15 +103,14 @@ describe('Inspector', () => {
         area: { shape: 0, type: 0, cameraIndex: 0xff, priority: 0, setting1: 0, setting2: 0, routeIndex: 0xff, enemyIndex: 0xff },
       }),
     );
-    expect(markup).toContain('Behavior');
-    expect(markup).toContain('Area Type');
-    expect(markup).toContain('Area Shape');
-    expect(markup).toContain('Transform');
+    expect(markup).toContain('What it does');
+    expect(markup).toContain('Shape');
     expect(markup).toContain('Rotation');
-    expect(markup).toContain('Scale');
+    expect(markup).toContain('Size');
+    expect(markup).not.toContain('Overlap priority');
   });
 
-  it('shows the route binding and advanced sections for an object', () => {
+  it('offers an object a single movement-path row and hides every raw value', () => {
     const markup = renderInspector(
       entityOf({
         section: 'GOBJ',
@@ -118,14 +122,16 @@ describe('Inspector', () => {
         scale: { x: 1, y: 1, z: 1 },
       }),
     );
-    expect(markup).toContain('Route Binding');
+    expect(markup).toContain('Movement path');
+    expect(markup).toContain('Does not follow a path');
     expect(markup).toContain('Advanced');
-    expect(markup).toContain('Advanced object data');
-    expect(markup).toContain('Object Slots');
-    expect(markup).toContain('Presence Flags');
+    // Everything technical is behind the closed disclosure, so none of it is rendered.
+    expect(markup).not.toContain('Raw setting slots');
+    expect(markup).not.toContain('Presence flags');
+    expect(markup).not.toContain('Object id');
   });
 
-  it('shows path group tools when the point belongs to a group', () => {
+  it('keeps the low-level path group links out of the open sheet', () => {
     const pathInfo: PathInfo = {
       groupSection: 'ENPH',
       groupIndex: 1,
@@ -135,10 +141,9 @@ describe('Inspector', () => {
       nextGroups: [2, 3],
     };
     const markup = renderInspector(entityOf({ section: 'ENPT', pointSettings: [0, 0, 0] }), pathInfo);
-    expect(markup).toContain('Path Group');
-    expect(markup).toContain('Group Links');
-    expect(markup).toContain('0');
-    expect(markup).toContain('2, 3');
+    expect(markup).toContain('Advanced');
+    expect(markup).not.toContain('Group links');
+    expect(markup).not.toContain('2, 3');
   });
 });
 

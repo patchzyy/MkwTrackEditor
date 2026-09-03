@@ -19,7 +19,7 @@ export const itemBoxSettingOptions = [
   { value: 0x000e, label: 'Empty -> Mushroom' },
   { value: 0x000f, label: 'Empty -> Mushroom' },
   { value: 0x0010, label: 'Empty -> Mushroom' },
-  { value: 0x0255, label: 'Default Item Set (0x0255)' },
+  { value: 0x0255, label: 'Default Item Set (alternate value some tracks use)' },
 ];
 export const itemBoxTimingOptions = [
   { value: 0x0000, label: 'Normal Roulette, Fast Respawn' },
@@ -123,8 +123,14 @@ export const audienceFlashSkateOptions = [
   { value: 0, label: 'Flash Skate A' },
   { value: 1, label: 'Flash Skate B' },
 ];
+/**
+ * The three player-count modes an object can appear in.
+ *
+ * `label` is the short chip used in compact controls; `friendlyLabel` is the sentence-friendly
+ * wording the inspector shows a track author, who should never have to read a bit mask.
+ */
 export const gobjPresenceModeOptions = [
-  { mask: 0x01, label: '1P / Time Trial' },
-  { mask: 0x02, label: '2P Split-Screen' },
-  { mask: 0x04, label: '3P / 4P Split-Screen' },
+  { mask: 0x01, label: '1P / Time Trial', friendlyLabel: 'Single player and time trials' },
+  { mask: 0x02, label: '2P Split-Screen', friendlyLabel: 'Two-player split-screen' },
+  { mask: 0x04, label: '3P / 4P Split-Screen', friendlyLabel: 'Three and four-player split-screen' },
 ];

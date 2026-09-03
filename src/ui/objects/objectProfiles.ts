@@ -738,6 +738,19 @@ export function getObjectVariantOptions(profile: ObjectInspectorProfile, objectO
     .map((id) => byId.get(id))
     .filter((option): option is ObjectOption => option !== undefined);
 }
+/**
+ * Plain-language summary of which modes an object shows up in. No hex, no bit masks — the raw
+ * value stays in the inspector's Advanced section where {@link describePresenceFlags} is used.
+ */
+export function describePresenceModes(value: number): string {
+  const active = gobjPresenceModeOptions.filter((option) => (value & option.mask) !== 0);
+  if (active.length === 0) return 'Hidden everywhere — this object will never appear in a race.';
+  if (active.length === gobjPresenceModeOptions.length) return 'Appears in every mode.';
+  const names = active.map((option) => option.friendlyLabel.toLowerCase());
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `Appears in ${list} only.`;
+}
+
 export function describePresenceFlags(value: number): string {
   const activeLabels = gobjPresenceModeOptions.filter((option) => (value & option.mask) !== 0).map((option) => option.label);
   const lowBits = value & 0x0007;

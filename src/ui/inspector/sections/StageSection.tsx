@@ -1,5 +1,6 @@
 import type { KmpEntity, KmpStageField } from '../../../lib/kmp';
 import { RgbaColorField } from '../fields/RgbaColorField';
+import type { InspectorScope } from './scope';
 
 /** One row per STGI field, in the order a track author cares about them. */
 const STAGE_FIELDS: Array<{
@@ -9,15 +10,17 @@ const STAGE_FIELDS: Array<{
   min: number;
   max: number;
   step?: number;
+  scope: InspectorScope;
   options?: Array<{ value: number; label: string }>;
 }> = [
-  { field: 'lapCount', label: 'Laps', help: 'How many laps a race on this track takes. Three is what every retail track uses.', min: 1, max: 9 },
+  { field: 'lapCount', label: 'Laps', help: 'How many laps a race on this track takes. Three is what every retail track uses.', min: 1, max: 9, scope: 'essentials' },
   {
     field: 'polePosition',
     label: 'Pole position',
     help: 'Which side of the grid the first-place driver starts on.',
     min: 0,
     max: 1,
+    scope: 'essentials',
     options: [
       { value: 0, label: 'Left' },
       { value: 1, label: 'Right' },
@@ -29,6 +32,7 @@ const STAGE_FIELDS: Array<{
     help: 'How far apart the drivers stand on the starting grid.',
     min: 0,
     max: 1,
+    scope: 'essentials',
     options: [
       { value: 0, label: 'Normal' },
       { value: 1, label: 'Narrow' },
@@ -40,6 +44,7 @@ const STAGE_FIELDS: Array<{
     help: 'Turns on the white flash the sun flare makes as it passes the camera.',
     min: 0,
     max: 1,
+    scope: 'essentials',
     options: [
       { value: 0, label: 'Off' },
       { value: 1, label: 'On' },
@@ -52,26 +57,31 @@ const STAGE_FIELDS: Array<{
     min: 0,
     max: 10,
     step: 0.1,
+    scope: 'essentials',
   },
-  { field: 'unknown1', label: 'Reserved byte 1', help: 'Unused by the game. Kept so an export matches the original file.', min: 0, max: 255 },
-  { field: 'unknown2', label: 'Reserved byte 2', help: 'Unused by the game. Kept so an export matches the original file.', min: 0, max: 255 },
+  { field: 'unknown1', label: 'Reserved byte 1', help: 'Unused by the game. Kept so an export matches the original file.', min: 0, max: 255, scope: 'advanced' },
+  { field: 'unknown2', label: 'Reserved byte 2', help: 'Unused by the game. Kept so an export matches the original file.', min: 0, max: 255, scope: 'advanced' },
 ];
 
 /** Track-wide settings (STGI): laps, grid layout, lens flare and the global speed multiplier. */
 export function StageSection({
   entity,
+  scope,
   onChangeStageField,
   onChangeStageFlareColor,
 }: {
   entity: KmpEntity;
+  scope: InspectorScope;
   onChangeStageField: (field: KmpStageField, value: number) => void;
   onChangeStageFlareColor: (channelIndex: number, value: number) => void;
 }) {
   const stage = entity.stage;
   if (!stage) return null;
+  const fields = STAGE_FIELDS.filter((meta) => meta.scope === scope);
+  if (fields.length === 0 && scope === 'advanced') return null;
   return (
-    <>
-      {STAGE_FIELDS.map((meta) => {
+    <div className="propertyGrid">
+      {fields.map((meta) => {
         const value = stage[meta.field];
         return (
           <label key={meta.field}>
@@ -109,18 +119,20 @@ export function StageSection({
           </label>
         );
       })}
-      <label>
-        Lens flare colour
-        <RgbaColorField
-          value={[stage.flareColor[0] ?? 0, stage.flareColor[1] ?? 0, stage.flareColor[2] ?? 0, stage.flareColor[3] ?? 0]}
-          onChange={(next) => {
-            for (let channel = 0; channel < 4; channel++) {
-              if (next[channel] !== stage.flareColor[channel]) onChangeStageFlareColor(channel, next[channel]);
-            }
-          }}
-        />
-        <span>The colour and strength of the sun flare drawn over the track.</span>
-      </label>
-    </>
+      {scope === 'essentials' && (
+        <label>
+          Sun flare colour
+          <RgbaColorField
+            value={[stage.flareColor[0] ?? 0, stage.flareColor[1] ?? 0, stage.flareColor[2] ?? 0, stage.flareColor[3] ?? 0]}
+            onChange={(next) => {
+              for (let channel = 0; channel < 4; channel++) {
+                if (next[channel] !== stage.flareColor[channel]) onChangeStageFlareColor(channel, next[channel]);
+              }
+            }}
+          />
+          <span>The colour and strength of the sun flare drawn over the track.</span>
+        </label>
+      )}
+    </div>
   );
 }
