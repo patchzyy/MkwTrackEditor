@@ -103,3 +103,32 @@ orchestrator has to do in files you did not own.
   `ModeUi` (`src/ui/modes/types.ts`); `App.tsx` composes them. Default mode is KMP.
 - Wave 2 (in progress): F camera UI, G model UI + BRRES writer, H visual mode, J KMP parity,
   K UI redesign (design system in `src/ui/components`, `docs/UI.md`).
+
+### Agent F — Camera (CAME) mode (wave 2)
+
+Camera mode is complete and works on real tracks. Shipped:
+
+- **Camera outliner** (`src/ui/camera/CameraOutliner.tsx`): every CAME entry with a per-family
+  icon, a friendly type name, and badges for opening/selection order, the areas that trigger it
+  and its movement path. Filter box; add / duplicate / delete / reorder; "set as opening start"
+  and "set as selection-screen start".
+- **Chain editors** (`ChainEditor.tsx`): the opening pan and the character-select pan as
+  drag-reorderable lists with per-shot durations and a running total, plus a play button.
+  Editing a chain rewrites the `nextCam` links and the CAME header's first camera.
+- **Friendly inspector** (`CameraInspector.tsx`, `CameraFields.tsx`, `cameraFieldMeta.ts`): every
+  CAME field under a plain-language label with a one-line hint, irrelevant fields hidden per
+  camera type, duration in both frames and seconds, and X/Y/Z-labelled full-width vector rows.
+  Shared with the KMP-mode camera section so a camera reads the same everywhere.
+- **Viewport handles**: camera position via the normal gizmo, the two look-at points via
+  draggable handles, and the camera's route via the existing POTI points. Camera mode also turns
+  the racing-line overlays off so the camera gizmos are actually visible.
+- **Playback** (`CameraPlaybackControls.tsx`): play/pause/stop/loop and a scrubber that flies the
+  real viewport camera through a shot or the whole opening chain; Escape stops and restores the
+  free camera.
+- **Replay cameras**: types 0-3 are first-class in the type picker and the outliner shows which
+  AREA triggers each one.
+
+Verified with `npx tsc --noEmit -p tsconfig.json` (clean), `npx vitest run` (359 passed),
+`npx vite build` (ok), and browser probes against `nintendo_1.szs` and `Z0.szs`
+(`scripts/camera-ui-probe.mjs` with `scripts/probe-camera-ui.js` and
+`scripts/probe-camera-handle-drag.js`). Screenshots: `docs/screenshots/camera-mode-*.png`.

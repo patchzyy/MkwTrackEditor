@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type DragEvent, type MouseEvent, type MutableRefObject, type PointerEvent, type ReactNode } from 'react';
 import { Eye, EyeOff, Move3D, RotateCcw, Scale3D } from 'lucide-react';
 import { mat4, vec3, vec4 } from 'gl-matrix';
 import ArrayBufferSlice from '../../vendor/noclip.website/src/ArrayBufferSlice';
@@ -38,6 +38,7 @@ import {
 } from '../lib/brresEditor';
 import {
   buildOpeningCameraChain,
+  eulerFromLookDirection,
   getOpeningSequenceDuration,
   sampleCameraPose,
   sampleOpeningSequence,
@@ -78,8 +79,15 @@ interface Noclip3DViewportProps {
   /** Drives the in-viewport CAME playback. `null` restores the free camera. */
   cameraPreview?: CameraPreviewRequest | null;
   onCameraPreviewEnd?: () => void;
+  /** Reports the playback clock every rendered frame. Written into a ref, never into state. */
+  onCameraPreviewProgress?: (progress: CameraPreviewProgress) => void;
   /** Fired when a CAME view-point handle is dragged in the viewport. */
   onMoveCameraViewPoint?: (entity: KmpEntity, which: 'start' | 'end', position: Vec3) => void;
+  /**
+   * Camera mode: filled in with a small imperative API for the free camera and for picking the
+   * point under the middle of the viewport. Cleared when the viewport unmounts.
+   */
+  cameraViewportApiRef?: MutableRefObject<CameraViewportApi | null>;
   /** Model mode: how much geometry one click selects. Uncontrolled by default. */
   meshGranularity?: MeshSelectionGranularity;
   /** Model mode: mesh edits to re-apply to the renderer when the scene (re)loads. */
@@ -126,6 +134,35 @@ export interface CameraPreviewRequest {
   time: number;
   /** Play the whole opening chain starting at this camera instead of just this one. */
   sequence?: boolean;
+  /**
+   * Bump this to restart the playback clock at `time` without leaving preview mode. Used for
+   * scrubbing while playing, for the replay button and for looping.
+   */
+  seek?: number;
+}
+
+/** Where the playback clock is, reported once per rendered frame. */
+export interface CameraPreviewProgress {
+  /** Playback position within the whole preview (a single shot, or the whole chain). */
+  frames: number;
+  /** The camera currently on screen. */
+  cameraIndex: number;
+  /** Playback position within that camera's own shot. */
+  localFrames: number;
+  /** How long the whole preview runs for; `0` when it has no fixed length. */
+  totalFrames: number;
+}
+
+/** Free-camera and viewport-picking helpers the camera inspector needs. */
+export interface CameraViewportApi {
+  /** The free camera's eye, a point 2000 units ahead of it, and the matching KMP rotation. */
+  getFreeCameraPose(): { position: Vec3; target: Vec3; rotation: Vec3 } | null;
+  /** Puts the free camera at `position` looking at `target` (KMP units). */
+  lookFrom(position: Vec3, target: Vec3): boolean;
+  /** Pulls the free camera back so a camera marker and its sight line are both in view. */
+  frameCamera(position: Vec3, target: Vec3): boolean;
+  /** The collision (or ground-plane) point under the middle of the viewport, in KMP units. */
+  pickCenterPoint(): Vec3 | null;
 }
 export type { ViewportTransformSelection } from '../lib/brresRenderAdapter';
 export type { MeshSelectionGranularity, EditorMeshTarget } from '../lib/brresEditor';
@@ -578,7 +615,9 @@ export function Noclip3DViewport({
   mode = 'kmp',
   cameraPreview = null,
   onCameraPreviewEnd,
+  onCameraPreviewProgress,
   onMoveCameraViewPoint,
+  cameraViewportApiRef,
   meshGranularity,
   meshEdits,
   onSelectMesh,
@@ -721,7 +760,9 @@ export function Noclip3DViewport({
     active: boolean;
     sequence: ReturnType<typeof buildOpeningCameraChain> | null;
     startIndex: number;
-  }>({ frames: 0, lastTimeMs: null, savedCameraMatrix: null, savedFovY: null, active: false, sequence: null, startIndex: 0 });
+    seek: number | undefined;
+  }>({ frames: 0, lastTimeMs: null, savedCameraMatrix: null, savedFovY: null, active: false, sequence: null, startIndex: 0, seek: undefined });
+  const onCameraPreviewProgressRef = useRef(onCameraPreviewProgress);
   const cameraPreviewMatrixRef = useRef(mat4.create());
   const cameraPreviewDefsRef = useRef<CameraPreviewDef[]>([]);
   const previousCameraControllerRef = useRef<CameraController | null>(null);
@@ -757,6 +798,7 @@ export function Noclip3DViewport({
   onTransformMeshRef.current = onTransformMesh;
   onChangeMeshGranularityRef.current = onChangeMeshGranularity;
   onCameraPreviewEndRef.current = onCameraPreviewEnd;
+  onCameraPreviewProgressRef.current = onCameraPreviewProgress;
   modeRef.current = devModeOverrideRef.current ?? mode;
   meshGranularityRef.current = activeMeshGranularity;
   meshSelectionsRef.current = meshSelections;
@@ -1136,6 +1178,17 @@ export function Noclip3DViewport({
     syncSceneOverlay(trackRef.current, selectedIdRef.current);
   }, [mode, viewerReady, sceneKey]);
 
+  // Camera mode is about cameras, so it starts with the racing-line overlays (enemy/item routes,
+  // checkpoints, respawns, object routes) switched off; camera markers, the routes they fly and
+  // the areas that trigger them stay on. The eye menu still overrides this, and leaving the mode
+  // puts the user's own choices back.
+  useEffect(() => {
+    if (mode !== 'camera') return;
+    const saved = routeVisibilityRef.current;
+    setRouteVisibility({ ...saved, ENPT: false, ITPT: false, CKPT: false, JGPT: false, POTI_OBJECT: false, POTI_CAMERA: true, AREA: true, CAME: true });
+    return () => setRouteVisibility(saved);
+  }, [mode]);
+
   // Re-apply persisted mesh edits after the scene (re)loads.
   useEffect(() => {
     const scene = getMeshScene();
@@ -1231,8 +1284,15 @@ export function Noclip3DViewport({
         if (started) devCameraPreviewRef.current = cameraPreviewRef.current;
         return started;
       },
-      getCameraOverlay: () => buildCameraOverlay(trackRef.current?.kmp ?? null),
+      getCameraOverlay: () =>
+        buildCameraOverlay(trackRef.current?.kmp ?? null, {
+          selectedIds: new Set([...(selectedIdsRef.current ?? []), ...(selectedIdRef.current ? [selectedIdRef.current] : [])]),
+          hoveredId: hoveredIdRef.current,
+        }),
       getCameras: () => cameraPreviewDefsRef.current,
+      /** The overlay handle under a screen point — how probes locate a camera view-point handle. */
+      pickHandleAt: (clientX: number, clientY: number) =>
+        canvasRef.current ? pickSceneHandle(sceneRef.current, clientX, clientY, canvasRef.current) : null,
       /** Grabs the WebGL frame as a PNG data URL (the drawing buffer is not preserved). */
       captureFrame: async (): Promise<string | null> => {
         devCaptureRef.current = { request: true, dataUrl: null };
@@ -2329,8 +2389,16 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
         state.lastTimeMs = null;
       }
       state.startIndex = startDef.index;
+      state.seek = request.seek;
       beginCameraPreview(viewer);
       state.sequence = request.sequence ? buildOpeningCameraChain(cameraPreviewDefsRef.current, startDef.index) : null;
+    }
+
+    // A bumped `seek` restarts the clock at `request.time` without leaving preview mode.
+    if (request.seek !== state.seek) {
+      state.seek = request.seek;
+      state.frames = Math.max(0, request.time);
+      state.lastTimeMs = null;
     }
 
     if (request.playing) {
@@ -2370,6 +2438,12 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
       cameraPreviewLabelRef.current = label;
       setCameraPreviewLabel(label);
     }
+    onCameraPreviewProgressRef.current?.({
+      frames: state.frames,
+      cameraIndex: def.index,
+      localFrames,
+      totalFrames: state.sequence ? getOpeningSequenceDuration(state.sequence) : Math.max(0, startDef.time),
+    });
   }
 
   /** Chains through the opening cameras starting at the CAME header's intro camera. */
@@ -2385,6 +2459,100 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     cameraPreviewRef.current = { cameraId: `CAME-${first.cameraIndex}`, playing: true, time: 0, sequence: true };
     return true;
   }
+
+  /**
+   * The free camera's world matrix. While a preview is playing the live matrix belongs to the
+   * CAME pose, so the saved pre-preview matrix is used instead: the "from viewport" buttons
+   * always mean the camera the user was flying.
+   */
+  function getFreeCameraMatrix(): mat4 | null {
+    const viewer = viewerRef.current;
+    if (!viewer) return null;
+    const state = cameraPreviewStateRef.current;
+    return state.active && state.savedCameraMatrix ? state.savedCameraMatrix : viewer.camera.worldMatrix;
+  }
+
+  function getFreeCameraController(viewer: Viewer): FPSCameraController {
+    if (viewer.cameraController instanceof FPSCameraController) return viewer.cameraController;
+    const controller = new FPSCameraController();
+    viewer.setCameraController(controller);
+    return controller;
+  }
+
+  const cameraViewportApi: CameraViewportApi = {
+    getFreeCameraPose() {
+      const world = getFreeCameraMatrix();
+      if (!world) return null;
+      const position = { x: world[12] / MKW_RENDER_SCALE, y: world[13] / MKW_RENDER_SCALE, z: world[14] / MKW_RENDER_SCALE };
+      // gl-matrix `targetTo` puts `eye - target` in the third column, so forward is its negation.
+      const forward = { x: -world[8], y: -world[9], z: -world[10] };
+      const length = Math.hypot(forward.x, forward.y, forward.z) || 1;
+      const unit = { x: forward.x / length, y: forward.y / length, z: forward.z / length };
+      const reach = 2000;
+      return {
+        position,
+        target: { x: position.x + unit.x * reach, y: position.y + unit.y * reach, z: position.z + unit.z * reach },
+        rotation: eulerFromLookDirection(unit),
+      };
+    },
+    lookFrom(position, target) {
+      const viewer = viewerRef.current;
+      if (!viewer) return false;
+      const controller = getFreeCameraController(viewer);
+      applyFPSCameraFrame(controller, {
+        eye: vec3.fromValues(position.x * MKW_RENDER_SCALE, position.y * MKW_RENDER_SCALE, position.z * MKW_RENDER_SCALE),
+        target: vec3.fromValues(target.x * MKW_RENDER_SCALE, target.y * MKW_RENDER_SCALE, target.z * MKW_RENDER_SCALE),
+      });
+      controller.update(viewer.inputManager, 0);
+      viewer.camera.worldMatrixUpdated();
+      return true;
+    },
+    frameCamera(position, target) {
+      const viewer = viewerRef.current;
+      if (!viewer) return false;
+      let dx = target.x - position.x;
+      let dy = target.y - position.y;
+      let dz = target.z - position.z;
+      const span = Math.hypot(dx, dy, dz);
+      if (span <= 1e-4) {
+        dx = 0;
+        dy = 0;
+        dz = 1;
+      } else {
+        dx /= span;
+        dy /= span;
+        dz /= span;
+      }
+      const distance = Math.max(900, Math.min(9000, span * 0.45));
+      const eye = vec3.fromValues(
+        (position.x - dx * distance) * MKW_RENDER_SCALE,
+        (position.y - dy * distance + distance * 0.35) * MKW_RENDER_SCALE,
+        (position.z - dz * distance) * MKW_RENDER_SCALE,
+      );
+      const controller = getFreeCameraController(viewer);
+      applyFPSCameraFrame(controller, {
+        eye,
+        target: vec3.fromValues(position.x * MKW_RENDER_SCALE, position.y * MKW_RENDER_SCALE, position.z * MKW_RENDER_SCALE),
+      });
+      controller.update(viewer.inputManager, 0);
+      viewer.camera.worldMatrixUpdated();
+      return true;
+    },
+    pickCenterPoint() {
+      const canvas = canvasRef.current;
+      if (!canvas) return null;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return null;
+      return placeFromScreen(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    },
+  };
+  if (cameraViewportApiRef) cameraViewportApiRef.current = cameraViewportApi;
+  useEffect(() => {
+    if (!cameraViewportApiRef) return;
+    return () => {
+      cameraViewportApiRef.current = null;
+    };
+  }, [cameraViewportApiRef]);
 
   //#endregion
 
