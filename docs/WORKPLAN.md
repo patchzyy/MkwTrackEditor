@@ -507,3 +507,20 @@ skipped, up from the 651 baseline), `npx vite build` (ok), and real-browser prob
 disturbs 0 of the other 67 components and restores exactly. `probe-kmp-mode-ui.js`,
 `probe-camera-ui.js`, `probe-model-mode-ui.js` and `probe-visual-ui.js` were re-run unmodified and
 are green. Screenshots: `docs/screenshots/fog-*.png`, `docs/screenshots/component-split-*.png`.
+
+### Final integration (orchestrator)
+
+All six wave-2/3 branches are merged into `main` and the agent worktrees are gone. Final state:
+
+- `npx tsc --noEmit -p tsconfig.json` clean · `npx vitest run` **705 passed, 1 skipped** · `npx vite build` ok.
+- `node scripts/batch-track-check.mjs --noclip` — **338 / 338 real tracks pass**, every stage
+  including `noclip-reparse` (the renderer's own parser reads back every edited export). The three
+  `mesh-mode-edit` skips are course models with fewer than two independently-drawn pieces.
+- All eight browser probes green on the merged tree (kmp, camera, model, visual, fog,
+  component-split, ui-shell, thumbnails); `docs/screenshots/` was regenerated from that run.
+
+One trap worth recording: while the five agent worktrees still existed under `.claude/worktrees/`,
+the dev server in the main checkout served static files at ~80 KB/s and the scene never finished
+building its mesh picker, which looks exactly like a mesh-picking regression. It is not — removing
+the nested worktrees and `node_modules/.vite` restored a 564 ms mesh list on the same commit. Delete
+merged worktrees before browser-testing the main checkout.
