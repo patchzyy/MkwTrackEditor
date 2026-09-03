@@ -11,7 +11,7 @@
 import { mat3, mat4, vec3 } from 'gl-matrix';
 import type { MeshTransform } from '../brresEditor';
 import { splitTrianglesIntoComponents, type TriangleComponentSplit } from '../meshPick';
-import { GX_ATTR } from './gxVertex';
+import { GX_ATTR, maxAttributeIndex, type GxVertexDescriptor } from './gxVertex';
 import type { Mdl0Editor, Mdl0DrawList, Mdl0DrawOp, Mdl0ShapeInfo } from './mdl0Raw';
 
 /** How much geometry the renderer let one click select; mirrors `MeshSelectionGranularity`. */
@@ -111,6 +111,10 @@ export interface ShapeGeometryCache {
   positionIndices: Int32Array;
   normalIndices: Int32Array | null;
   indices: Uint32Array;
+  /** Byte offset of each display-list vertex inside the shape's primitive display list. */
+  vertexOffsets: Int32Array;
+  /** The shape's vertex descriptor, which says how wide each attribute reference is. */
+  vcd: GxVertexDescriptor;
   joint: mat4;
   split: TriangleComponentSplit | null;
 }
@@ -139,6 +143,8 @@ export function readShapeGeometryCache(model: Mdl0Editor, shape: Mdl0ShapeInfo, 
     positionIndices,
     normalIndices: geometry.attributeIndices.get(GX_ATTR.NRM) ?? null,
     indices: geometry.indices,
+    vertexOffsets: geometry.vertexOffsets,
+    vcd: geometry.vcd,
     joint,
     split: null,
   };
@@ -204,9 +210,17 @@ export function collectAffectedVertices(cache: ShapeGeometryCache, componentInde
 }
 
 /**
- * True when no other component of the same shape uses any of `positions`. Components are
- * disjoint vertex sets by construction (they are welded by position), so this should always
- * hold; it is checked because a shape that violated it would be silently corrupted.
+ * True when no other component of the same shape uses any of `positions`.
+ *
+ * For *positions* this always holds, and provably so: two display-list vertices that name the
+ * same position-array entry read back bit-identical coordinates, so they land in the same weld
+ * cell, and `splitTrianglesIntoComponents` unions every vertex inside a cell unconditionally —
+ * they cannot end up in different components. Measured over the 338 real tracks on this machine:
+ * 0 violations in 261,154 components. Kept as a guard, because a change to the welding rule
+ * would otherwise corrupt a shape silently.
+ *
+ * *Normals* are a different story and are not covered by this: nothing welds them, so two
+ * components routinely share a normal-array entry. `splitSharedVertexData` handles that.
  */
 export function componentOwnsVerticesExclusively(cache: ShapeGeometryCache, componentIndex: number, positions: ReadonlySet<number>): boolean {
   const split = ensureComponentSplit(cache);
@@ -219,6 +233,102 @@ export function componentOwnsVerticesExclusively(cache: ShapeGeometryCache, comp
     }
   }
   return true;
+}
+
+export interface VertexSplitOutcome {
+  /** The entries the caller should now transform: the component's own, after any splitting. */
+  entries: Set<number>;
+  /** How many entries were duplicated so this component stopped sharing them. */
+  splitCount: number;
+  /** True when the array had to be promoted to float32 to hold the copies. */
+  promoted: boolean;
+  /**
+   * Set when the split could not be done. The only way this happens is an array that would grow
+   * past what the display list's attribute reference can address (an 8-bit reference cannot name
+   * entry 256) or past the 16-bit entry count in the array header.
+   */
+  blocked: 'index-width' | 'entry-count' | null;
+}
+
+/**
+ * Gives one connected component private copies of any vertex-array entries it shares with
+ * another component of the same shape, and repoints that component's display-list references at
+ * the copies. After this, transforming `entries` moves only this component.
+ *
+ * This is what makes a per-component edit safe on the common case where two components share a
+ * normal: rotating one tree used to re-light its neighbour, because both named normal-array
+ * entry 12 for "straight up". 95,801 of the 261,154 components in the 338 real tracks here have
+ * at least one such shared normal.
+ *
+ * Nothing is written when there is nothing shared, so an edit that never had the problem still
+ * produces the same bytes it did before.
+ */
+export function splitSharedVertexData(
+  model: Mdl0Editor,
+  cache: ShapeGeometryCache,
+  componentIndex: number,
+  kind: 'vtxPos' | 'vtxNrm',
+  arrayId: number,
+  entries: ReadonlySet<number>,
+): VertexSplitOutcome {
+  const attr = kind === 'vtxPos' ? GX_ATTR.POS : GX_ATTR.NRM;
+  const sourceIndices = kind === 'vtxPos' ? cache.positionIndices : cache.normalIndices;
+  const unchanged: VertexSplitOutcome = { entries: new Set(entries), splitCount: 0, promoted: false, blocked: null };
+  if (!sourceIndices || entries.size === 0) return unchanged;
+
+  const array = model.getVertexArray(kind, arrayId);
+  if (!array) return unchanged;
+
+  // Which of this component's entries are also named by a triangle outside it.
+  const split = ensureComponentSplit(cache);
+  const triangleCount = cache.indices.length / 3;
+  const shared = new Set<number>();
+  for (let t = 0; t < triangleCount; t++) {
+    if (split.triangleComponent[t] === componentIndex) continue;
+    for (let k = 0; k < 3; k++) {
+      const source = sourceIndices[cache.indices[t * 3 + k]];
+      if (source >= 0 && entries.has(source)) shared.add(source);
+    }
+  }
+  if (shared.size === 0) return unchanged;
+
+  const newCount = array.count + shared.size;
+  if (newCount > 0xffff) return { ...unchanged, blocked: 'entry-count' };
+  const maxIndex = maxAttributeIndex(cache.vcd, attr);
+  if (maxIndex < 0 || newCount - 1 > maxIndex) return { ...unchanged, blocked: 'index-width' };
+
+  // Append a copy of each shared entry.
+  const format = model.vertexArrayFormat(array);
+  const values = model.readVertexArrayValues(array);
+  const grown = new Float32Array(newCount * format.componentCount);
+  grown.set(values.subarray(0, Math.min(values.length, array.count * format.componentCount)), 0);
+  const replacement = new Map<number, number>();
+  let next = array.count;
+  for (const source of shared) {
+    const target = next++;
+    if (source >= 0 && source < array.count) {
+      grown.set(values.subarray(source * format.componentCount, (source + 1) * format.componentCount), target * format.componentCount);
+    }
+    replacement.set(source, target);
+  }
+
+  const result = model.growVertexArray(array, grown, newCount);
+
+  // Point this component's display-list vertices at the copies.
+  for (let t = 0; t < triangleCount; t++) {
+    if (split.triangleComponent[t] !== componentIndex) continue;
+    for (let k = 0; k < 3; k++) {
+      const vertex = cache.indices[t * 3 + k];
+      const target = replacement.get(sourceIndices[vertex]);
+      if (target === undefined) continue;
+      model.setPrimitiveAttributeIndex(cache.shape, cache.vcd, cache.vertexOffsets[vertex], attr, target);
+      sourceIndices[vertex] = target;
+    }
+  }
+
+  const nextEntries = new Set<number>();
+  for (const entry of entries) nextEntries.add(replacement.get(entry) ?? entry);
+  return { entries: nextEntries, splitCount: shared.size, promoted: result.promoted, blocked: null };
 }
 
 /** Applies `local` to the listed entries of a position array, in place. */

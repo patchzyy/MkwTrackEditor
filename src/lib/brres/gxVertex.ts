@@ -236,6 +236,37 @@ export interface GxPrimitiveVertices {
   vertexCount: number;
   /** Triangle list over the emitted vertices, matching noclip's topology conversion. */
   indices: Uint32Array;
+  /**
+   * Byte offset, within the primitive display list, of each emitted vertex's attribute block.
+   * Add `vcd.offsets[attr]` to reach one attribute's index, so a caller can point a single
+   * display-list vertex at a different entry of a vertex array. That is what lets an edit to one
+   * connected component stop sharing vertex data with its neighbours.
+   */
+  vertexOffsets: Int32Array;
+}
+
+/** Writes one attribute's source-array index back into a display list, in place. */
+export function writeAttributeIndex(dl: Uint8Array, vertexOffset: number, vcd: GxVertexDescriptor, attr: number, index: number): void {
+  const type = vcd.types[attr] ?? 0;
+  const at = vertexOffset + vcd.offsets[attr];
+  if (type === 2) {
+    if (index < 0 || index > 0xff) throw new Error(`GX: index ${index} does not fit an 8-bit attribute reference.`);
+    dl[at] = index;
+  } else if (type === 3) {
+    if (index < 0 || index > 0xffff) throw new Error(`GX: index ${index} does not fit a 16-bit attribute reference.`);
+    dl[at] = (index >>> 8) & 0xff;
+    dl[at + 1] = index & 0xff;
+  } else {
+    throw new Error('GX: attribute is not indexed, so it has no reference to rewrite.');
+  }
+}
+
+/** The largest source-array index an attribute's display-list reference can hold. */
+export function maxAttributeIndex(vcd: GxVertexDescriptor, attr: number): number {
+  const type = vcd.types[attr] ?? 0;
+  if (type === 2) return 0xff;
+  if (type === 3) return 0xffff;
+  return -1;
 }
 
 /**
@@ -277,11 +308,13 @@ export function readPrimitiveVertices(dl: Uint8Array, vcd: GxVertexDescriptor, a
 
   const attributeIndices = new Map<number, Int32Array>();
   for (const attr of attributes) attributeIndices.set(attr, new Int32Array(totalVertices).fill(-1));
+  const vertexOffsets = new Int32Array(totalVertices);
 
   let vertex = 0;
   for (const draw of draws) {
     for (let v = 0; v < draw.vertexCount; v++) {
       const base = draw.srcOffset + v * vcd.vertexSize;
+      vertexOffsets[vertex] = base;
       for (const attr of attributes) {
         const type = vcd.types[attr] ?? 0;
         if (type !== 2 && type !== 3) continue;
@@ -331,5 +364,5 @@ export function readPrimitiveVertices(dl: Uint8Array, vcd: GxVertexDescriptor, a
     baseVertex += draw.vertexCount;
   }
 
-  return { attributeIndices, vertexCount: totalVertices, indices: indices.subarray(0, cursor) };
+  return { attributeIndices, vertexCount: totalVertices, indices: indices.subarray(0, cursor), vertexOffsets };
 }

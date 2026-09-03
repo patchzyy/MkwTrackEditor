@@ -30,6 +30,8 @@ export interface VisualSceneCapabilities {
   dof: boolean;
   lighting: boolean;
   wireframe: boolean;
+  /** True when the track ships a `posteffect.bfg` whose selected preset actually draws fog. */
+  fog?: boolean;
 }
 
 export interface VisualRendererScene extends EditorMeshRendererScene {
@@ -44,15 +46,19 @@ export interface VisualRendererScene extends EditorMeshRendererScene {
   setEditorVertexColorsEnabled?: (enabled: boolean) => void;
   setEditorTexturesEnabled?: (enabled: boolean) => void;
   setEditorLightingEnabled?: (enabled: boolean) => void;
+  /** Preview-only course-fog switch. Does not touch `posteffect.bfg`. */
+  setEditorFogEnabled?: (enabled: boolean) => void;
   setEditorWireframe?: (enabled: boolean) => boolean;
   setEditorBloomEnabled?: (enabled: boolean) => void;
   setEditorPostProcessingEnabled?: (enabled: boolean) => void;
   setEditorDOFMode?: (mode: 'full' | 'reduced' | 'off') => void;
   getEditorVisualCapabilities?: () => VisualSceneCapabilities;
   /**
-   * Re-applies one edited `posteffect/*` file (`.bblm`, `.bdof`, `.blight`) to the live scene.
-   * Returns false when the renderer does not consume that file. `posteffect.bfg` is not in the
-   * list: this renderer has no course-fog draw path, so fog is editable but not previewed.
+   * Re-applies one edited `posteffect/*` file (`.bfg`, `.bblm`, `.bdof`, `.blight`) to the live
+   * scene. Returns false when the renderer does not consume that file.
+   *
+   * `.bfg` is course fog: the renderer turns the selected preset into real per-material GX fog
+   * (the `FogBlock` in `ub_MaterialParams`), so a fog edit shows in the viewport straight away.
    */
   applyEditorPostEffectFile?: (path: string, data: Uint8Array) => boolean;
   reloadEditorTexture?: (
@@ -67,6 +73,7 @@ export interface VisualRenderSettings {
   textures: boolean;
   vertexColors: boolean;
   lighting: boolean;
+  fog: boolean;
   bloom: boolean;
   depthOfField: boolean;
   wireframe: boolean;
@@ -78,6 +85,7 @@ export const defaultVisualRenderSettings: VisualRenderSettings = {
   textures: true,
   vertexColors: true,
   lighting: true,
+  fog: true,
   bloom: true,
   depthOfField: false,
   wireframe: false,
@@ -99,20 +107,20 @@ export const visualPresets: VisualPreset[] = [
   {
     id: 'game',
     label: 'Game look',
-    hint: 'Everything on: textures, lighting and bloom, exactly as the track ships.',
-    settings: { textures: true, vertexColors: true, lighting: true, bloom: true, wireframe: false, skybox: true },
+    hint: 'Everything on: textures, lighting, fog and bloom, exactly as the track ships.',
+    settings: { textures: true, vertexColors: true, lighting: true, fog: true, bloom: true, wireframe: false, skybox: true },
   },
   {
     id: 'flat',
     label: 'Flat',
-    hint: 'Textures without lighting or bloom — the clearest way to read the artwork.',
-    settings: { textures: true, vertexColors: false, lighting: false, bloom: false, wireframe: false, skybox: true },
+    hint: 'Textures without lighting, fog or bloom — the clearest way to read the artwork.',
+    settings: { textures: true, vertexColors: false, lighting: false, fog: false, bloom: false, wireframe: false, skybox: true },
   },
   {
     id: 'wireframe',
     label: 'Wireframe',
     hint: 'Untextured wireframe over a hidden skybox, for looking at the geometry itself.',
-    settings: { textures: false, vertexColors: false, lighting: false, bloom: false, wireframe: true, skybox: false },
+    settings: { textures: false, vertexColors: false, lighting: false, fog: false, bloom: false, wireframe: true, skybox: false },
   },
 ];
 
@@ -126,6 +134,7 @@ export function applyVisualRenderSettings(
   scene.setEditorTexturesEnabled?.(settings.textures);
   scene.setEditorVertexColorsEnabled?.(settings.vertexColors);
   scene.setEditorLightingEnabled?.(settings.lighting);
+  scene.setEditorFogEnabled?.(settings.fog);
   scene.setEditorBloomEnabled?.(settings.bloom);
   scene.setEditorDOFMode?.(settings.depthOfField ? 'full' : 'off');
   scene.setEditorWireframe?.(settings.wireframe);

@@ -382,6 +382,56 @@ function findAnimationData_PAT0(pat0: BRRES.PAT0, materialName: string, texMapID
 }
 
 const materialParams = new MaterialParams();
+
+/**
+ * Course fog, as the Mario Kart Wii scene reads it out of `posteffect/posteffect.bfg`.
+ *
+ * `startZ`/`endZ` are distances from the camera in *scene* units (the MKWii scene draws the
+ * course at 0.1x, so a KMP-unit distance has to be scaled before it gets here). This is real
+ * per-material GX fog: the values end up in `ub_MaterialParams`' `FogBlock` and the generated
+ * fragment shader mixes towards `Color`. Nothing is drawn as a screen-space pass.
+ */
+export interface RRESFogSettings {
+    /** GX fog type. `GX.FogType.NONE` is not a valid member here — pass `null` instead. */
+    type: GX.FogType;
+    startZ: number;
+    endZ: number;
+    color: Color;
+}
+
+/**
+ * Fills the A/B/C terms of a `FogBlock`.
+ *
+ * This is `GX_Material.fogBlockSet`'s perspective case, with two deliberate differences:
+ *
+ * - It tolerates an infinite far plane. noclip's viewer installs one (`Camera.setClipPlanes(5)`
+ *   leaves `far === Infinity`), which trips `fogBlockSet`'s `assert(Number.isFinite(farZ))`.
+ *   The terms used here are that function's limit as `far` goes to infinity: `A -> near / range`
+ *   and `B -> 1`, which is exactly right for the reversed infinite projection the viewer builds.
+ * - It always uses the perspective mapping, even for the `ORTHO_*` fog types. The viewport camera
+ *   is always perspective, so the perspective depth mapping is the correct one; the ortho types
+ *   still select their own fog *curve*, because the shader masks the type with 0x07 and the two
+ *   families share those low bits.
+ */
+function fillFogBlockParams(dst: GX_Material.FogBlock, fog: RRESFogSettings, camera: Camera): void {
+    const near = camera.near;
+    const far = camera.far;
+    // A zero-width band is a division by zero. Collapse it to a hair's width so the fog reads as
+    // a hard cut at startZ rather than as NaN, which would blank the pixel.
+    const range = fog.endZ - fog.startZ;
+    const denom = Math.abs(range) < 1e-5 ? (range < 0 ? -1e-5 : 1e-5) : range;
+
+    if (Number.isFinite(far)) {
+        dst.A = (far * near) / ((far - near) * denom);
+        dst.B = far / (far - near);
+    } else {
+        dst.A = near / denom;
+        dst.B = 1.0;
+    }
+    dst.C = fog.startZ / denom;
+    dst.AdjCenter = 0;
+}
+
 class MaterialInstance {
     private srt0Animators: (BRRES.SRT0TexMtxAnimator | null)[] = [];
     private pat0Animators: (BRRES.PAT0TexAnimator | null)[] = [];
@@ -390,6 +440,7 @@ class MaterialInstance {
     public sortKey: number = 0;
     public visible = true;
     public usesSkinning = false;
+    private fogSettings: RRESFogSettings | null = null;
 
     constructor(private modelInstance: MDL0ModelInstance, public materialData: MaterialData) {
         const material = this.materialData.material;
@@ -398,6 +449,9 @@ class MaterialInstance {
         const gxMaterial = Object.assign({}, material.gxMaterial);
         gxMaterial.lightChannels = arrayCopy(gxMaterial.lightChannels, lightChannelCopy);
         gxMaterial.useTexMtxIdx = nArray(8, () => false);
+        // `Object.assign` is shallow, so `ropInfo` would still be the MDL0 material's own object,
+        // shared with every other instance of this model. Fog is set per instance, so copy it.
+        gxMaterial.ropInfo = Object.assign({}, gxMaterial.ropInfo);
 
         this.materialHelper = new GXMaterialHelperGfx(gxMaterial, materialData.materialHacks);
         const layer = this.materialData.material.translucent ? GfxRendererLayer.TRANSLUCENT : GfxRendererLayer.OPAQUE;
@@ -430,6 +484,25 @@ class MaterialInstance {
 
     public setMaterialHacks(materialHacks: GX_Material.GXMaterialHacks): void {
         this.materialHelper.setMaterialHacks(materialHacks);
+    }
+
+    /**
+     * Turns GX fog on (or off, with `null`) for this material.
+     *
+     * Whether the material has a fog block at all is baked into the generated shader and into the
+     * size of `ub_MaterialParams`, so changing the fog *type* has to invalidate the material —
+     * the same dance `fillMaterialParamsData` does when a light set appears or disappears.
+     * Changing only the distances or the colour is free: those are uniforms.
+     */
+    public setFogSettings(fog: RRESFogSettings | null): void {
+        this.fogSettings = fog;
+        const type = fog !== null ? fog.type : GX.FogType.NONE;
+        const material = this.materialHelper.material;
+        if (material.ropInfo.fogType === type)
+            return;
+        material.ropInfo.fogType = type;
+        material.hasFogBlock = undefined;
+        this.materialHelper.invalidateMaterial();
     }
 
     public bindSRT0(animationController: AnimationController | null, srt0: BRRES.SRT0 | null): void {
@@ -646,6 +719,13 @@ class MaterialInstance {
                 }
             }
         }
+
+        // Course fog. The A/B/C terms depend on the camera's clip planes, so they are recomputed
+        // per draw rather than cached on the settings object.
+        if (this.fogSettings !== null) {
+            fillFogBlockParams(materialParams.u_FogBlock, this.fogSettings, camera);
+            colorCopy(materialParams.u_FogBlock.Color, this.fogSettings.color);
+        }
     }
 
     public setOnRenderInst(cache: GfxRenderCache, renderInst: GfxRenderInst): void {
@@ -750,6 +830,7 @@ export class MDL0ModelInstance {
     private chr0NodeAnimator: BRRES.CHR0NodesAnimator | null = null;
     private vis0NodeAnimator: BRRES.VIS0NodesAnimator | null = null;
     private instanceStateData = new InstanceStateData();
+    private fogSettings: RRESFogSettings | null = null;
 
     private debugBones = false;
 
@@ -796,6 +877,25 @@ export class MDL0ModelInstance {
     public setTexturesEnabled(v: boolean): void {
         for (let i = 0; i < this.materialInstances.length; i++)
             this.materialInstances[i].setMaterialHacks({ disableTextures: !v });
+    }
+
+    /**
+     * Applies course fog to the materials this model marks as fogged, and turns it off on the
+     * rest. Which materials those are is the BRRES's own decision: `MDL0_MaterialEntry.fogIdx`
+     * is `-1` on a material the artist excluded from fog (the sky dome, self-lit signage) and
+     * `>= 0` on one that receives it, which is exactly how the console decides.
+     *
+     * Cheap to call every frame: it returns immediately unless the settings object changed, and
+     * a settings object only changes when `posteffect.bfg` does.
+     */
+    public setFogSettings(fog: RRESFogSettings | null): void {
+        if (this.fogSettings === fog)
+            return;
+        this.fogSettings = fog;
+        for (let i = 0; i < this.materialInstances.length; i++) {
+            const instance = this.materialInstances[i];
+            instance.setFogSettings(instance.materialData.material.fogIdx >= 0 ? fog : null);
+        }
     }
 
     public bindCHR0(animationController: AnimationController, chr0: BRRES.CHR0): void {
