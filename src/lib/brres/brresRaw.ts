@@ -83,12 +83,18 @@ export function readBrresRaw(file: Uint8Array): BrresRaw {
       if (size <= 0 || entry.dataOffset + size > file.length) {
         throw new Error(`BRRES: "${entry.name}" has an out-of-range size.`);
       }
+      const magic = readCString(file.subarray(entry.dataOffset, entry.dataOffset + 4), 0);
       const subFile: BrresSubFileRaw = {
         name: entry.name,
-        magic: readCString(file.subarray(entry.dataOffset, entry.dataOffset + 4), 0),
+        magic,
         data: file.slice(entry.dataOffset, entry.dataOffset + size),
         sourceOffset: entry.dataOffset,
-        stringRefs: null,
+        // Textures and palettes hold exactly one outbound pointer, their name at +0x14. Naming
+        // it up front makes them free to move, which is what lets the writer slot a new texture
+        // in ahead of the animation sub-files it cannot describe.
+        stringRefs: magic === 'TEX0' || magic === 'PLT0'
+          ? [{ offset: 0x14, value: readCString(file, entry.dataOffset + view.getUint32(entry.dataOffset + 0x14)) }]
+          : null,
       };
       entries.push(subFile);
       all.push({ subFile, offset: entry.dataOffset });
@@ -133,7 +139,11 @@ export function writeBrres(raw: BrresRaw): Uint8Array {
   const placement = new Map<BrresSubFileRaw, number>();
   let cursor = rootOffset + rootSectionSize;
   for (const subFile of raw.layout) {
-    cursor += raw.padBefore.get(subFile)?.length ?? 0;
+    const pad = raw.padBefore.get(subFile);
+    // Sub-files read from the source keep the exact padding they had, which is what makes an
+    // untouched round trip byte-identical. Ones the editor added just get GX's 32-byte alignment.
+    if (pad) cursor += pad.length;
+    else cursor = (cursor + 0x1f) & ~0x1f;
     placement.set(subFile, cursor);
     cursor += subFile.data.length;
   }
@@ -173,8 +183,9 @@ export function writeBrres(raw: BrresRaw): Uint8Array {
       throw new Error(`BRRES: new sub-file "${subFile.name}" must declare its string references.`);
     } else if (target - subFile.sourceOffset !== poolShift) {
       throw new Error(
-        `BRRES: "${subFile.name}" moved by ${target - subFile.sourceOffset} but the string pool moved by ${poolShift}; ` +
-          'its names would dangle. Sub-files that change position relative to the pool must declare their string references.',
+        `BRRES: ${subFile.magic} "${subFile.name}" moved by ${target - subFile.sourceOffset} but the string pool moved by ` +
+          `${poolShift}; its names would dangle. Sub-files that change position relative to the pool must declare their ` +
+          'string references, and anything the editor adds has to go in ahead of the ones that cannot.',
       );
     }
   }
@@ -235,3 +246,4 @@ export function makeSubFileNameReader(raw: BrresRaw, subFile: BrresSubFileRaw): 
 
 export const BRRES_MODELS_GROUP = '3DModels(NW4R)';
 export const BRRES_TEXTURES_GROUP = 'Textures(NW4R)';
+export const BRRES_PALETTES_GROUP = 'Palettes(NW4R)';

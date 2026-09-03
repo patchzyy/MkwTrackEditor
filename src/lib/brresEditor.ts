@@ -115,6 +115,18 @@ export interface ImportedMesh {
   modelName: string;
   transform: MeshTransform;
   visible: boolean;
+  /** Friendly name shown in the outliner and inspector. */
+  label?: string;
+  /**
+   * Set when this mesh is a duplicate of geometry that is already in the course model rather
+   * than an import from another file. The exporter clones that draw call instead of merging a
+   * second archive.
+   */
+  sourceShape?: {
+    modelName: string;
+    drawOpIndex: number;
+    componentIndex: number | null;
+  };
 }
 
 export const IDENTITY_MESH_TRANSFORM: MeshTransform = {

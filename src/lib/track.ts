@@ -6,6 +6,8 @@ import { validateKmpFile, validateTrackFiles, type ObjectResourceLookup, type Tr
 import { parseKcl, type KclMesh } from './kcl';
 import { parseNoclipBrresSummary, type NoclipBrresSummary } from './noclipBrres';
 import { getObjFlowResourceNames, type CommonResourceArchive } from './objflow';
+import { bakeCourseModel, type BakeWarning } from './brres/bakeCourseModel';
+import type { ImportedMesh, MeshEdit } from './brresEditor';
 
 export type { TrackIssue } from './kmpValidation';
 
@@ -23,7 +25,19 @@ export interface TrackDocument {
   brresFiles: string[];
   brresSummaries: Record<string, NoclipBrresSummary>;
   warnings: string[];
+  /** Model-mode mesh edits, baked into `course_model.brres` on export. */
+  meshEdits?: MeshEdit[];
+  /** Objects placed as course geometry in Model mode, merged into the course model on export. */
+  importedMeshes?: ImportedMesh[];
+  /**
+   * BRRES bytes for each `ImportedMesh.sourcePath`. Held on the document so exporting stays
+   * synchronous and does not have to reach back into the content browser.
+   */
+  meshImportSources?: Record<string, Uint8Array>;
 }
+
+/** Where in the archive the geometry the Model mode edits lives. */
+export const COURSE_MODEL_PATH = './course_model.brres';
 
 export async function loadTrackFile(file: File): Promise<TrackDocument> {
   const raw = new Uint8Array(await file.arrayBuffer());
@@ -200,10 +214,40 @@ export function validateExportBytes(track: TrackDocument, bytes: Uint8Array, opt
   return results;
 }
 
-export function getExportArchiveEntries(track: TrackDocument, common?: CommonResourceArchive | null): U8Entry[] {
-  if (!common || !track.kmp) return track.archiveEntries;
+/**
+ * Folds the Model-mode edits into `course_model.brres`. Returns the entry list unchanged, and
+ * the very same `Uint8Array`s, when there is nothing to bake — that is what keeps an untouched
+ * track exporting byte-for-byte.
+ */
+export function bakeMeshEdits(entries: readonly U8Entry[], track: TrackDocument): { entries: U8Entry[]; warnings: BakeWarning[] } {
+  const edits = track.meshEdits ?? [];
+  const imports = track.importedMeshes ?? [];
+  if (edits.length === 0 && imports.length === 0) return { entries: [...entries], warnings: [] };
 
-  const out = [...track.archiveEntries];
+  const index = entries.findIndex(
+    (entry) => entry.type === 'file' && entry.path.toLowerCase().endsWith('course_model.brres') && entry.data,
+  );
+  if (index < 0) {
+    return {
+      entries: [...entries],
+      warnings: [{ code: 'model.no-course-model', message: 'This track has no course model, so the geometry edits were left out of the export.' }],
+    };
+  }
+
+  const importSources = new Map<string, Uint8Array>(Object.entries(track.meshImportSources ?? {}));
+  const result = bakeCourseModel(entries[index].data!, { edits, importedMeshes: imports, importSources });
+  if (!result.changed) return { entries: [...entries], warnings: result.warnings };
+
+  const next = [...entries];
+  next[index] = { ...next[index], data: result.data };
+  return { entries: next, warnings: result.warnings };
+}
+
+export function getExportArchiveEntries(track: TrackDocument, common?: CommonResourceArchive | null): U8Entry[] {
+  const baked = bakeMeshEdits(track.archiveEntries, track).entries;
+  if (!common || !track.kmp) return baked;
+
+  const out = [...baked];
   const existingBaseNames = new Set(
     out
       .filter((entry) => entry.type === 'file')
