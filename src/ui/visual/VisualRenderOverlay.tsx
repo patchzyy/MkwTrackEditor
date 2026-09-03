@@ -25,6 +25,7 @@ const toggles: ToggleSpec[] = [
   { key: 'textures', label: 'Textures', title: 'Draw materials with their textures instead of flat colours' },
   { key: 'vertexColors', label: 'Vertex colours', title: 'Use the baked per-vertex colours' },
   { key: 'lighting', label: 'Lighting', title: 'Light the course with posteffect.blight', capability: 'lighting' },
+  { key: 'fog', label: 'Fog', title: 'Draw the course fog from posteffect.bfg', capability: 'fog' },
   { key: 'bloom', label: 'Bloom', title: 'Draw the bloom pass from posteffect.bblm', capability: 'bloom' },
   { key: 'depthOfField', label: 'Depth of field', title: 'Draw the depth-of-field pass from posteffect.bdof', capability: 'dof' },
   { key: 'skybox', label: 'Skybox', title: 'Show vrcorn_model.brres' },

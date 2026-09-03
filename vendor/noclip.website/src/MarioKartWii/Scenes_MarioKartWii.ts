@@ -11,7 +11,7 @@ import * as Yaz0 from '../Common/Compression/Yaz0.js';
 import { assert, readString, hexzero, assertExists } from '../util.js';
 import ArrayBufferSlice from '../ArrayBufferSlice.js';
 import { mat4, vec3, vec4, type ReadonlyVec3 } from 'gl-matrix';
-import { RRESTextureHolder, MDL0Model, MDL0ModelInstance } from '../rres/render.js';
+import { RRESTextureHolder, MDL0Model, MDL0ModelInstance, RRESFogSettings } from '../rres/render.js';
 import AnimationController from '../AnimationController.js';
 import { fillSceneParamsDataOnTemplate, GXRenderHelperGfx } from '../gx/gx_render.js';
 import { GfxDevice, GfxFrontFaceMode } from '../gfx/platform/GfxPlatform.js';
@@ -22,7 +22,7 @@ import { GfxRendererLayer, GfxRenderInstList, GfxRenderInstManager } from '../gf
 import { CameraController } from '../Camera.js';
 import { makeBackbufferDescSimple, standardFullClearRenderPassDescriptor } from '../gfx/helpers/RenderGraphHelpers.js';
 import { GfxrAttachmentSlot } from '../gfx/render/GfxRenderGraph.js';
-import { EggDrawPathBloom, EggDrawPathDOF, parseBBLM, parseBDOF } from './PostEffect.js';
+import { BFG, EggDrawPathBloom, EggDrawPathDOF, getBFGFogSettings, parseBBLM, parseBDOF, parseBFG } from './PostEffect.js';
 import { BTI, BTIData } from '../Common/JSYSTEM/JUTTexture.js';
 import { GXMaterialHacks } from '../gx/gx_material.js';
 import { Cyan, Green, Magenta, Red, White, Yellow, colorNewFromRGBA, type Color } from '../Color.js';
@@ -494,6 +494,16 @@ class MarioKartWiiRenderer {
     public eggBloom: EggDrawPathBloom | null = null;
     public eggDOF: EggDrawPathDOF | null = null;
     public eggLightManager: EggLightManager | null = null;
+    /** `posteffect/posteffect.bfg`, the course fog table. Null when the track ships without one. */
+    public eggFog: BFG | null = null;
+    private eggFogPreset = 0;
+    private editorFogEnabled = true;
+    /**
+     * The settings object handed to every model instance. Its *identity* is the change signal —
+     * `MDL0ModelInstance.setFogSettings` returns immediately when it has seen this object — so it
+     * is rebuilt only when the fog table, the preset or the enable flag changes, never per frame.
+     */
+    private eggFogSettings: RRESFogSettings | null = null;
     public baseObjects: BaseObject[] = [];
     public modelCache = new ModelCache();
     public materialHacks?: GXMaterialHacks;
@@ -851,12 +861,13 @@ class MarioKartWiiRenderer {
     }
 
     /** Which of the visual toggles this particular track can actually drive. */
-    public getEditorVisualCapabilities(): { bloom: boolean; dof: boolean; lighting: boolean; wireframe: boolean } {
+    public getEditorVisualCapabilities(): { bloom: boolean; dof: boolean; lighting: boolean; wireframe: boolean; fog: boolean } {
         return {
             bloom: this.eggBloom !== null,
             dof: this.eggDOF !== null,
             lighting: this.eggLightManager !== null,
             wireframe: this.isEditorWireframeSupported(),
+            fog: this.eggFogSettings !== null,
         };
     }
 
@@ -993,6 +1004,67 @@ class MarioKartWiiRenderer {
         return this.textureHolder.textureNames;
     }
 
+    //#region Course fog
+
+    /**
+     * Installs a parsed `posteffect.bfg`. Called once at scene load and again every time the
+     * post-effects panel edits the file, which is what makes a fog edit visible immediately.
+     */
+    public setFogTable(bfg: BFG | null): void {
+        this.eggFog = bfg;
+        this.rebuildFogSettings();
+    }
+
+    /** Which of the four BFG presets to draw. A KMP AREA of type 2 picks this in-game. */
+    public setEditorFogPreset(index: number): void {
+        if (this.eggFogPreset === index)
+            return;
+        this.eggFogPreset = index;
+        this.rebuildFogSettings();
+    }
+
+    public getEditorFogPreset(): number {
+        return this.eggFogPreset;
+    }
+
+    /** Preview-only: hides course fog without touching the track's files. */
+    public setEditorFogEnabled(enabled: boolean): void {
+        if (this.editorFogEnabled === enabled)
+            return;
+        this.editorFogEnabled = enabled;
+        this.rebuildFogSettings();
+    }
+
+    public getEditorFogEnabled(): boolean {
+        return this.editorFogEnabled;
+    }
+
+    /** The fog the viewport is drawing right now, in scene units, or null when there is none. */
+    public getEditorFogSettings(): RRESFogSettings | null {
+        return this.eggFogSettings;
+    }
+
+    private rebuildFogSettings(): void {
+        this.eggFogSettings = this.editorFogEnabled
+            ? getBFGFogSettings(this.eggFog, this.eggFogPreset, scaleFactor)
+            : null;
+    }
+
+    /**
+     * Pushes the current fog at every model instance. Runs per frame so that models which appear
+     * later — an imported mesh, an object preview spawned from a GOBJ — pick fog up too; the
+     * per-instance identity check makes a no-change frame a handful of pointer compares.
+     */
+    private applyFogSettings(): void {
+        for (let i = 0; i < this.baseObjects.length; i++) {
+            const modelInstances = getModelInstances(this.baseObjects[i]);
+            for (let j = 0; j < modelInstances.length; j++)
+                modelInstances[j].setFogSettings(this.eggFogSettings);
+        }
+    }
+
+    //#endregion
+
     /**
      * Re-applies one edited `posteffect/*` file without reloading the scene, so the post-effect
      * editor previews live. Bloom and DOF bake their parameters into GfxPrograms at construction,
@@ -1022,6 +1094,11 @@ class MarioKartWiiRenderer {
             if (previous !== null)
                 next.getIndTextureMapping().copy(previous.getIndTextureMapping());
             this.eggDOF = next;
+            return true;
+        }
+
+        if (name === 'posteffect.bfg') {
+            this.setFogTable(parseBFG(buffer));
             return true;
         }
 
@@ -1460,6 +1537,7 @@ class MarioKartWiiRenderer {
         if (this.eggLightManager !== null)
             for (let i = 0; i < this.baseObjects.length; i++)
                 this.baseObjects[i].bindLightSetting(this.eggLightManager.lightSetting);
+        this.applyFogSettings();
 
         const template = this.renderHelper.pushTemplateRenderInst();
         fillSceneParamsDataOnTemplate(template, viewerInput);
@@ -4567,6 +4645,10 @@ class MarioKartWiiSceneDesc implements Viewer.SceneDesc {
             const eggLightManager = new EggLightManager(blightRes);
             renderer.eggLightManager = eggLightManager;
         }
+
+        const bfgData = arc.findFileData(`./posteffect/posteffect.bfg`);
+        if (bfgData !== null)
+            renderer.setFogTable(parseBFG(bfgData));
 
         const bblmData = arc.findFileData(`./posteffect/posteffect.bblm`);
         if (bblmData !== null) {

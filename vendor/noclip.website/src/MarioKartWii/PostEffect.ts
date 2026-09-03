@@ -13,7 +13,9 @@ import { GfxBindingLayoutDescriptor, GfxBlendFactor, GfxBlendMode, GfxCompareMod
 import { GfxRenderCache } from "../gfx/render/GfxRenderCache.js";
 import { GfxrAttachmentSlot, GfxrGraphBuilder, GfxrRenderTargetDescription, GfxrRenderTargetID, GfxrResolveTextureID } from "../gfx/render/GfxRenderGraph.js";
 import { GfxRenderInst, GfxRenderInstManager } from "../gfx/render/GfxRenderInstManager.js";
+import * as GX from "../gx/gx_enum.js";
 import { GXShaderLibrary } from "../gx/gx_material.js";
+import { RRESFogSettings } from "../rres/render.js";
 import { DeviceProgram } from "../Program.js";
 import { assert, assertExists, nArray, readString } from "../util.js";
 import { gfxDeviceNeedsFlipY } from "../gfx/helpers/GfxDeviceHelpers.js";
@@ -668,6 +670,98 @@ export class EggDrawPathDOF {
     public getIndTextureMapping(): GXTextureMapping {
         return this.textureMapping[1];
     }
+}
+
+//#endregion
+
+//#region Course fog (posteffect.bfg)
+
+/**
+ * One of the four fog presets in `posteffect/posteffect.bfg`. A KMP AREA of type 2 switches
+ * between them at runtime; this renderer draws whichever one the editor selects (preset 0 by
+ * default, which is the one a course starts on).
+ *
+ * The file is 4 records of 0x1c bytes, big-endian. `src/lib/posteffects.ts` mirrors this layout
+ * on the editor side — that is the copy the post-effects panel edits and exports.
+ * See https://wiki.tockdom.com/wiki/BFG_(File_Format).
+ */
+export interface BFGEntry {
+    /** EGG's dense fog-type enum, 0-10. 0 means "no fog". */
+    fogType: number;
+    /** Where fog starts, and where it reaches full strength, in KMP units from the camera. */
+    startZ: number;
+    endZ: number;
+    color: Color;
+    fadeSpeed: number;
+}
+
+export interface BFG {
+    entries: BFGEntry[];
+}
+
+export const BFG_ENTRY_SIZE = 0x1c;
+export const BFG_ENTRY_COUNT = 4;
+
+export function parseBFG(buffer: ArrayBufferSlice): BFG {
+    const view = buffer.createDataView();
+    const entries: BFGEntry[] = [];
+    const count = Math.min(BFG_ENTRY_COUNT, (buffer.byteLength / BFG_ENTRY_SIZE) | 0);
+    for (let i = 0; i < count; i++) {
+        const base = i * BFG_ENTRY_SIZE;
+        entries.push({
+            fogType: view.getInt32(base + 0x00),
+            startZ: view.getFloat32(base + 0x04),
+            endZ: view.getFloat32(base + 0x08),
+            color: colorNewFromRGBA8(view.getUint32(base + 0x0c)),
+            fadeSpeed: view.getFloat32(base + 0x14),
+        });
+    }
+    return { entries };
+}
+
+/**
+ * EGG's fog types are a dense 0-10 list; GX's are bit-encoded, with bit 3 selecting the
+ * orthographic family. Returns `null` for "no fog" and for anything outside the table.
+ */
+export function translateBFGFogType(fogType: number): GX.FogType | null {
+    switch (fogType) {
+    case 1:  return GX.FogType.PERSP_LIN;
+    case 2:  return GX.FogType.PERSP_EXP;
+    case 3:  return GX.FogType.PERSP_EXP2;
+    case 4:  return GX.FogType.PERSP_REVEXP;
+    case 5:  return GX.FogType.PERSP_REVEXP2;
+    case 6:  return GX.FogType.ORTHO_LIN;
+    case 7:  return GX.FogType.ORTHO_EXP;
+    case 8:  return GX.FogType.ORTHO_EXP2;
+    case 9:  return GX.FogType.ORTHO_REVEXP;
+    case 10: return GX.FogType.ORTHO_REVEXP2;
+    default: return null;
+    }
+}
+
+/**
+ * Turns one BFG preset into what `MDL0ModelInstance.setFogSettings` wants, or `null` when the
+ * preset is off. `sceneScale` converts the file's KMP-unit distances into scene units.
+ *
+ * A preset with an empty or inverted band (`endZ <= startZ`) reads as no fog rather than being
+ * clamped: that is a preset the author switched off, and inventing a band for it would put fog
+ * on screen the track never asked for.
+ */
+export function getBFGFogSettings(bfg: BFG | null, presetIndex: number, sceneScale: number): RRESFogSettings | null {
+    const entry = bfg?.entries[presetIndex];
+    if (entry === undefined)
+        return null;
+    const type = translateBFGFogType(entry.fogType);
+    if (type === null)
+        return null;
+    if (!Number.isFinite(entry.startZ) || !Number.isFinite(entry.endZ) || entry.endZ <= entry.startZ)
+        return null;
+    return {
+        type,
+        startZ: entry.startZ * sceneScale,
+        endZ: entry.endZ * sceneScale,
+        color: colorNewCopy(entry.color),
+    };
 }
 
 //#endregion

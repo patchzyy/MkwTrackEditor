@@ -47,11 +47,10 @@ export function VisualInspector({
       <>
         <PostEffectsPanel resources={postEffectResources} {...postEffectActions} />
         {postEffectResources.fogPresets.length > 0 && (
-          <p className="visualNote warning">
-            Bloom, depth of field and lighting update in the viewport as you edit them. Fog does not: noclip's Mario Kart Wii
-            renderer has no course-fog draw path, so the {postEffectResources.fogPresets.length} fog preset
-            {postEffectResources.fogPresets.length === 1 ? '' : 's'} above {postEffectResources.fogPresets.length === 1 ? 'is' : 'are'} edited
-            and exported, but not previewed.
+          <p className="visualNote">
+            Fog, bloom, depth of field and lighting all update in the viewport as you edit them. Fog is drawn the way the game
+            draws it — per material, on the materials the track marks as fogged — so a material set to "Not fogged" stays clear.
+            The viewport shows fog preset 0; the others are what AREA type 2 swaps to in-game.
           </p>
         )}
       </>

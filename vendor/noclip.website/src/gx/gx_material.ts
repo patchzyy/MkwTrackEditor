@@ -1227,9 +1227,14 @@ varying vec4 v_Color1;
             return `1.0 - exp2(-8.0 * ${base});`;
         } else if (fogType === GX.FogType.PERSP_EXP2) {
             return `1.0 - exp2(-8.0 * ${base} * ${base});`;
-        } else if (fogType === GX.FogType.ORTHO_REVEXP) {
+        } else if (fogType === GX.FogType.PERSP_REVEXP) {
+            // `fogType` is masked with 0x07 above, which folds each ORTHO_* type onto its PERSP_*
+            // twin (ORTHO_REVEXP 0x0E -> 0x06, ORTHO_REVEXP2 0x0F -> 0x07). These two branches
+            // therefore have to compare against the PERSP_* constants; comparing against the
+            // unmasked ORTHO_* ones made them unreachable, so every REVEXP fog threw instead of
+            // rendering. Mario Kart Wii's `posteffect.bfg` uses REVEXP more than any other type.
             return `1.0 - exp2(-8.0 * (1.0 - ${base}));`;
-        } else if (fogType === GX.FogType.ORTHO_REVEXP2) {
+        } else if (fogType === GX.FogType.PERSP_REVEXP2) {
             return `1.0 - exp2(-8.0 * (1.0 - ${base}) * (1.0 - ${base}));`;
         } else {
             throw "whoops";
