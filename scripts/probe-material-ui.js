@@ -137,6 +137,12 @@ out.graphNodes = qa('.graphNode').length;
 out.graphNodeTitles = [...new Set(qa('.graphNodeTitle').map((n) => n.textContent.trim()))];
 out.graphWires = qa('.graphWire').length;
 out.graphStatus = q('.materialDockStatusText')?.textContent.trim() ?? null;
+// A stage the graph cannot express comes back as a read-only "Raw stage" card, so nothing is
+// silently lost when a material is opened.
+out.rawStageCards = qa('.graphRawStage').length;
+out.rawStageEditable = qa('.graphNode').some((n) =>
+  n.querySelector('.graphNodeTitle')?.textContent.trim() === 'Raw stage' &&
+  n.querySelector('input, select, textarea') !== null);
 out.graphZoomFit = Number(q('.graphSurface').dataset.zoom);
 out.graphZoomReadable = await zoomTo(0.95);
 await shot('material-03-graph');
@@ -298,15 +304,44 @@ if (cullSelect) {
   await sleep(900);
 }
 
-// A colour edit through the graph's constant node, which writes a konst colour on the material.
-const graphSwatch = q('.graphNode input[type="color"]');
-if (graphSwatch) {
-  setInput(graphSwatch, '#ff2f6a');
+// A colour edit, live. The graph's Color node is the nicest place to do it, but not every
+// material has one — fall back to the inspector's constant swatches, which write the same field.
+const colourSwatch = q('.graphNode input[type="color"]')
+  ?? qa('.materialInspector input[type="color"]').find((n) => /Constant colour/.test(n.getAttribute('aria-label') ?? ''));
+if (colourSwatch) {
+  out.colourEditedIn = colourSwatch.closest('.graphNode') ? 'graph' : 'inspector';
+  setInput(colourSwatch, '#ff2f6a');
   await sleep(1600);
-  out.graphColorAfter = q('.graphNode input[type="color"]')?.value ?? null;
-  out.graphColorStatus = q('.uiStatusMessage')?.textContent.trim() ?? null;
+  out.colourAfter = colourSwatch.value;
+  out.colourStatus = q('.uiStatusMessage')?.textContent.trim() ?? null;
   await shot('material-10-constant-colour');
   await sleep(900);
+}
+
+// A preset does more than swap the graph: `PRESET_WANTS_LIGHTING` says which ones also need
+// channel-0 lighting, which the graph cannot express.
+clickText('Presets', '.materialDockTools button');
+await sleep(500);
+out.presetNames = qa('.uiMenuItem, [role="menuitem"]').map((n) => n.textContent.trim());
+const litPreset = qa('.uiMenuItem, [role="menuitem"]').find((n) => /lit/i.test(n.textContent));
+if (litPreset) {
+  litPreset.click();
+  await sleep(1800);
+  out.presetStatus = q('.uiStatusMessage')?.textContent.trim() ?? null;
+  out.presetGraphNodes = qa('.graphNode').length;
+  // The Lighting section's first "Lit by scene lights" switch is channel 0's colour half.
+  const lightingSection = qa('.materialInspector .uiPanelSectionToggle').find((n) => n.textContent.includes('Lighting'));
+  if (lightingSection?.getAttribute('aria-expanded') === 'false') lightingSection.click();
+  await sleep(500);
+  // `Field` wraps the row in `.uiField`; the switch itself sits in a nested `.uiToggle` label
+  // whose own text is just "On" / "Off".
+  const litField = qa('.materialInspector .uiField').find((n) => /Lit by scene lights/.test(n.querySelector('.uiFieldLabel')?.textContent ?? ''));
+  const litSwitch = litField?.querySelector('input[role="switch"]');
+  out.presetTurnedLightingOn = litSwitch ? litSwitch.checked : null;
+  await shot('material-10b-preset-applied');
+  await sleep(900);
+} else {
+  document.body.click();
 }
 
 // Solo: hide every mesh that is not this material's.

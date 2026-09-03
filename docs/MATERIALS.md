@@ -312,6 +312,8 @@ shell calls with the dock's size, collapse flag and resize handlers (`ModeBottom
 `src/ui/modes/types.ts`). The shell keeps owning that state, so the shader panel resizes and
 collapses exactly like the browser and the browser comes back untouched when the mode is left.
 
+![Back in KMP mode: the content browser is exactly where it was](screenshots/material-13-back-in-kmp.png)
+
 ### The outliner
 
 Archives in the order an author thinks about them — course model, skybox, minimap, then object
@@ -339,7 +341,7 @@ Sections, in the order an author works in:
 | Section | Fields |
 | --- | --- |
 | **Material** | Name, draw pass (opaque / translucent), which sides are drawn, SCN0 light set and fog index, texture-matrix style. |
-| **Layers** | One card per sampler: texture picker with a thumbnail, palette, wrap S/T, min/mag filter, detail (LOD) bias, sharpening (anisotropy), bias clamp, edge mips, map mode; the SRT (scale / rotation / shift, and the reference camera and light for env modes); the texgen (type, source, matrix, normalize). Add, remove and reorder. |
+| **Layers** | One card per sampler: texture picker with a thumbnail, palette (and its TLUT slot, for a paletted texture only), wrap S/T, min/mag filter, detail (LOD) bias, sharpening (anisotropy), bias clamp, edge mips, map mode; the SRT (scale / rotation / shift, and the reference camera and light for env modes); the texgen (type, source, matrix, normalize). Add, remove and reorder. |
 | **Lighting** | Per channel: material and ambient colour, then for the colour and alpha halves — lit by scene lights, where the base and ambient colour come from, falloff, attenuation, and which of the eight lights the half sees. |
 | **Colours** | The three colour registers C0..C2 (s10) and the four constants K0..K3, plus the four swap tables. |
 | **Blend & alpha** | Blend mode, source and destination factors, logic operation, the constant-alpha register, and the two-part alpha test. |
@@ -348,6 +350,14 @@ Sections, in the order an author works in:
 
 Numbers scrub (drag the field, Shift for fine, Ctrl for coarse). A drag is one history entry: the
 values during the drag are transient and only its release commits.
+
+Above the sections is a warning strip listing whatever `collectMaterialIssues` reports about the
+document right now. It is a strip and not a block on purpose: retail content really does ship
+materials whose stage samples a texture slot the material has no layer for, and writing such a
+material back unchanged has to keep working. `applyMaterial` only refuses the defects an edit
+*introduced*, and returns the rest as warnings.
+
+![The material and layer sections](screenshots/material-08-inspector.png)
 
 ![The colour registers and constants](screenshots/material-08b-inspector-colours.png)
 
@@ -380,7 +390,7 @@ TEV stage can do, so compiling is a lowering pass rather than a search.
 | **Material** | The output. Its `color` and `alpha` inputs are the last stage's result. There is exactly one, and it cannot be deleted or duplicated. |
 | **Texture** | Binds a layer and a texture-coordinate set to the stage: `TEXC` / `TEXA`. Shows the layer's thumbnail. |
 | **Vertex colour** | The rasterised lighting channel: `RASC` / `RASA`, and sets the stage's channel. |
-| **Colour** | One of the konst colours K0..K3 (`KONST`). The swatch edits the material's konst colour, so it previews live. |
+| **Colour** | One of the konst colours K0..K3 (`KONST`). The swatch edits the material's konst colour, so it previews live. Its **Advanced** block picks the exact selection (`colorSel` / `alphaSel`) for the cases the slot cannot name: the eight hardware fractions and the single-channel reads. |
 | **Register** | The starting value of C0, C1 or C2. The swatch edits the material's register. |
 | **Value** | The literals 0, 0.5 and 1, which the hardware supplies for free. |
 | **Multiply** | `a x b` — one stage, as `lerp(0, a, b)`. |
@@ -390,14 +400,21 @@ TEV stage can do, so compiling is a lowering pass rather than a search.
 | **Compare** | The TEV compare ops: `(a op b) ? c : 0`, plus `d`. |
 | **Indirect warp** | Routes an indirect stage into the texture sampled after it. |
 | **Comment** | A resizable note. Never compiles to anything. |
-| **Raw stage** | A stage the graph cannot express, kept verbatim and shown read-only, so opening a material never loses one. |
+| **Raw stage** | A stage the graph cannot express — a raster alpha read, a non-default swap table, a compare op the `compare` node does not cover. The decompiler emits one instead of guessing and the compiler copies it out verbatim. Read-only, and never in the palette. Its `prev` input carries no value; it only says which stage runs before it, so a chain of raw stages keeps its order. |
 
 Sockets carry either `rgb` or `alpha`; there is no `rgba` wire, because the colour and alpha
 pipelines are compiled separately and zipped onto the same stages. The maths nodes are
 polymorphic: every socket takes the type of whatever is wired in first, and after that they all
 agree. A wire whose types do not match is refused with a shake and a message.
 
+Nodes also carry a `stageTemplate` the decompiler fills in — the fields of a TEV stage the graph
+has no opinion about (swap tables, the indirect setup, konst and channel selections a stage names
+but never reads). The editor never shows it, but it copies it with the node, so duplicating or
+pasting a node keeps the material recompiling exactly.
+
 ![A rejected connection](screenshots/material-04b-wire-rejected.png)
+
+![A node dragged, with its wires following](screenshots/material-05-graph-node-dragged.png)
 
 #### Navigating and editing
 
@@ -424,9 +441,12 @@ The same list is in the `?` shortcut sheet (`EDITOR_SHORTCUTS`, "Shader graph").
 
 ![The add-node palette](screenshots/material-06-add-node-palette.png)
 
-The toolbar has a **Presets** menu (`SHADER_GRAPH_PRESETS`; applying one also tops the material's
-layers up to the preset's `samplerCount`), **Reset from stages** (re-runs `decompileShader`),
-**Auto layout**, fit, and the graph's own undo/redo.
+The toolbar has a **Presets** menu (`SHADER_GRAPH_PRESETS`), **Reset from stages** (re-runs
+`decompileShader`), **Auto layout**, fit, and the graph's own undo/redo.
+
+Applying a preset does more than swap the graph. It also tops the material's layers up to the
+preset's `samplerCount`, and — for the presets in `PRESET_WANTS_LIGHTING` — turns lighting on for
+channel 0, which is material state the graph has no way to express.
 
 **Auto layout** is left-to-right and "as late as possible": a node's column is set by how far it
 still is from the Material node, so a texture feeding the last stage sits beside that stage rather
@@ -486,7 +506,8 @@ Every committed edit is one history entry:
    editor history through `history.applyEditorChange` — the same path Visual mode's texture
    replacement uses, so undo and export both see it,
 3. the rewritten archive is pushed at the renderer (below),
-4. any `warnings` the encoder returns are toasted, once per distinct message.
+4. any `warnings` the encoder returns are toasted, once per distinct message — including the
+   pre-existing defects it decided to write back rather than refuse.
 
 Continuous drags coalesce: `NumberInput`'s `onChange` marks the edit transient (working document
 only) and its `onCommit` — fired once, on release — does the four steps above.
@@ -497,6 +518,8 @@ mode keeps a `WeakMap<TrackDocument, docs>` instead and puts the exact document 
 version back.
 
 ![Editing the culling, live](screenshots/material-09-cull-draw-nothing.png)
+
+![And back again after Ctrl+Z](screenshots/material-12-after-undo.png)
 
 ### Live preview
 
@@ -544,6 +567,10 @@ which can only replace pixels at the same size and format.
 - The `Solo` toggle and the mesh highlight use the per-draw visibility overrides Model mode
   introduced (`setEditorMeshVisible` / `setEditorMeshHighlight`). Leaving the mode clears both.
 
+![A constant colour edited live](screenshots/material-10-constant-colour.png)
+
+![A preset applied](screenshots/material-10b-preset-applied.png)
+
 ![Solo: every other mesh hidden](screenshots/material-11-solo.png)
 
 ### Tests and the browser probe
@@ -552,8 +579,8 @@ Pure logic is unit tested with no DOM (`npm test`):
 
 | File | Covers |
 | --- | --- |
-| `src/ui/material/graphModel.test.ts` | Node geometry and hit testing, marquee, socket typing and the polymorphic maths nodes, every connection rule (side, self, cycle, type), edge replacement, delete / move / snap / duplicate / copy / paste, pan-zoom-fit maths, auto layout. |
-| `src/ui/material/materialDoc.test.ts` | Every inspector field → document mapping, colour conversion in both directions, the layer list's add / remove / reorder, the light mask. |
+| `src/ui/material/graphModel.test.ts` | Node geometry and hit testing, marquee, socket typing and the polymorphic maths nodes, every connection rule (side, self, cycle, type), edge replacement, delete / move / snap / duplicate / copy / paste (including `stageTemplate` surviving both), pan-zoom-fit maths, auto layout, and the raw-stage node's shape. |
+| `src/ui/material/materialDoc.test.ts` | Every inspector field → document mapping, colour conversion in both directions, the layer list's add / remove / reorder, the light mask, and the preset's channel-0 lighting. |
 | `src/ui/material/materialOutlinerModel.test.ts` | Archive naming and ordering, the tree, the search, the shared-shader badge, reference keys. |
 | `src/ui/material/graphStore.test.ts` | The stage hash and both storage keys. |
 | `src/ui/material/MaterialInspector.test.tsx` | The inspector, the outliner, the dock's tab state and the stage table, rendered with `renderToStaticMarkup`; includes the assertion that no raw GX enum identifier reaches the user. |
@@ -569,7 +596,15 @@ PROBE_PREFIX=material PROBE_PORT=9352 PROBE_SIZE=1720x1000 \
 ```
 
 It enters the mode, resizes the dock, reads the outliner, searches, selects a material, reads the
-graph and the stage table, drags a node, connects a wire and gets one rejected, opens and filters
-the palette, adds a node, runs auto layout, zooms, opens every inspector section, edits the
-culling and a constant colour, solos, undoes back, and leaves the mode — reporting every number it
-saw and writing the screenshots in this document.
+graph and the stage table, checks the raw-stage card is read-only, drags a node, connects a wire
+and gets one rejected, opens and filters the palette, adds a node, runs auto layout, zooms, opens
+every inspector section, edits the culling and a constant colour, applies the lit preset and
+checks it turned channel-0 lighting on, solos, undoes back, leaves the mode and reads the stored
+graphs out of IndexedDB — reporting every number it saw and writing the screenshots in this
+document.
+
+A run on `Z0.szs` at the time of writing: 40 materials in 11 archives, 35 of them sharing a shader
+block; the selected material decompiles to 13 nodes and 22 wires including one raw stage, compiles
+back to its own 3 stages, and its `Draw nothing` culling edit reaches the viewport through
+`reloadEditorMaterial` (the status line says nothing about reloading the track) and comes back on
+`Ctrl+Z`.
