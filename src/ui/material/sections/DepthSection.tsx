@@ -7,7 +7,7 @@ import { patchDepth } from '../materialDoc';
 /** Depth buffer behaviour: whether the material tests, how, whether it writes, and when. */
 export function DepthSection({ doc, onChange }: { doc: GxMaterialDoc; onChange: MaterialDocChange }) {
   return (
-    <FieldGroup>
+    <FieldGroup title="Depth buffer">
       <Field label="Depth test">
         <Toggle
           label={doc.depth.test ? 'On' : 'Off'}

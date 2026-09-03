@@ -12,8 +12,10 @@ import {
   type GraphNodeType,
   type GraphSocketSpec,
   type GraphSocketType,
+  type GxMaterialDoc,
   type ShaderGraph,
 } from '../../lib/gxMaterial/types';
+import { colorRegisterName, konstColorName } from './gxOptions';
 
 // ---------------------------------------------------------------------------- node types
 
@@ -64,24 +66,64 @@ export const NODE_CATEGORY: Record<EditorGraphNodeType, 'source' | 'math' | 'out
   rawStage: 'output',
 };
 
-/** One-line explanation of what a node compiles to, used by the palette and the node tooltip. */
+/** One-line explanation of what a node does, used by the palette and the node tooltip. */
 export const NODE_SUMMARY: Record<EditorGraphNodeType, string> = {
-  output: 'What the material draws. Its colour and alpha inputs are the last TEV stage.',
-  texture: 'Samples one of the material\'s layers. Binds the stage\'s texture and texture coordinate.',
-  vertexColor: 'The rasterised lighting channel — vertex colour, lit when the channel says so.',
-  constant: 'One of the four konst colours, K0..K3. Editable right here.',
-  register: 'The starting value of colour register C0, C1 or C2.',
-  value: 'The literal 0, 0.5 or 1 the hardware can feed a stage for free.',
-  multiply: 'a x b. Compiles to lerp(0, a, b) in one stage.',
-  add: 'a + b.',
-  subtract: 'a - b.',
-  lerp: 'Blends a and b by t — one whole TEV stage, exactly.',
-  scale: 'Multiplies by 0.5, 1, 2 or 4 with an optional +/-0.5 bias and clamp. Free on a stage.',
-  compare: 'The TEV compare ops: (a op b) ? c : 0, plus d.',
-  indirectWarp: 'Routes an indirect stage into the texture sampled after it.',
-  comment: 'A note. Never compiles to anything.',
-  rawStage: 'A TEV stage this editor cannot express as nodes. Kept exactly as it was.',
+  output: 'What the material draws. Whatever is wired into it is the final colour and alpha.',
+  texture: 'Reads one of the material\'s textures.',
+  vertexColor: 'The colour the mesh brings with it — the vertex colours, or the scene lighting when the material is lit.',
+  constant: 'One of the material\'s four colours. The swatch on the card edits it, live.',
+  register: 'The colour a scratch slot starts at, before any step writes to it.',
+  value: 'A plain number the hardware supplies for free: 0, a half, or 1.',
+  multiply: 'Multiplies two things together. Tinting and masking are both this.',
+  add: 'Adds two things together. Brightens, and stacks glows.',
+  subtract: 'Takes one thing away from another.',
+  lerp: 'Fades between two things by a third. One whole hardware step, exactly.',
+  scale: 'Brightens or darkens by a fixed amount, with an optional shift and clamp. Free.',
+  compare: 'Picks one of two things depending on how two others compare.',
+  indirectWarp: 'Uses one texture to push another texture\'s coordinates about — water, heat haze.',
+  comment: 'A note to yourself. Never becomes anything in the material.',
+  rawStage: 'A step this editor cannot draw as nodes, copied out of the file exactly as it was.',
 };
+
+/**
+ * Node titles the way an author reads them, rather than the way the compiler names its types.
+ *
+ * The contract's `GRAPH_NODE_SOCKETS[type].title` is the generic name ("Texture", "Color"); this
+ * folds in *which* one, so a card says "Texture 1" and "Colour 3" instead of leaving the user to
+ * read the slot out of a dropdown. `nodeCaption` supplies the part after the dot — the texture's
+ * actual name, the channel — which the card draws dimmed next to the title.
+ */
+export function nodeTypeTitle(type: EditorGraphNodeType): string {
+  switch (type) {
+    case 'vertexColor': return 'Vertex colour';
+    case 'constant': return 'Colour';
+    case 'register': return 'Start colour';
+    case 'rawStage': return 'Special step';
+    case 'indirectWarp': return 'Warp coordinates';
+    default: return nodeSpec(type).title;
+  }
+}
+
+export function nodeTitle(node: EditorGraphNode): string {
+  switch (node.type) {
+    case 'texture': return `Texture ${node.sampler + 1}`;
+    case 'constant': return konstColorName(node.slot);
+    case 'register': return colorRegisterName(node.slot);
+    default: return nodeTypeTitle(node.type);
+  }
+}
+
+/** The dimmed half of a node's title: which texture, which channel, what the value is. */
+export function nodeCaption(node: EditorGraphNode, doc: GxMaterialDoc | null): string | null {
+  switch (node.type) {
+    case 'texture': return doc?.samplers[node.sampler]?.texture || 'no image';
+    case 'vertexColor': return `channel ${node.channel + 1}`;
+    case 'value': return String(node.value);
+    case 'scale': return `x${node.scale}${node.bias === 0 ? '' : node.bias > 0 ? ' +0.5' : ' -0.5'}`;
+    case 'rawStage': return 'from the file';
+    default: return null;
+  }
+}
 
 // ---------------------------------------------------------------------------- geometry
 
@@ -109,7 +151,8 @@ export function nodeBodyHeight(node: EditorGraphNode): number {
     case 'compare': return 30;
     case 'indirectWarp': return 94;
     case 'vertexColor': return 30;
-    case 'rawStage': return 84;
+    // Four detail rows plus the sentence that explains why the card is read-only.
+    case 'rawStage': return 122;
     default: return 0;
   }
 }

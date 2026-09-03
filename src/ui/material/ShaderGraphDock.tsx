@@ -1,7 +1,7 @@
 import { AlertTriangle, ChevronDown, ChevronUp, LayoutGrid, Maximize2, Redo2, RotateCcw, Undo2, Wand2 } from 'lucide-react';
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { CompiledShader, GxMaterialDoc, GxMaterialRef, GxTextureSummary, ShaderGraphPreset } from '../../lib/gxMaterial';
-import { Button, EmptyState, IconButton, MenuSurface, Tabs } from '../components';
+import { Button, EmptyState, IconButton, Tabs, Tooltip } from '../components';
 import { GraphEditor } from './GraphEditor';
 import { StagesTable } from './StagesTable';
 import type { EditorShaderGraph } from './graphModel';
@@ -52,6 +52,10 @@ export interface ShaderGraphDockProps {
  * The status line is the honest one — how many stages and textures the current graph produces,
  * and the first error when it does not compile, in which case the material keeps the last stages
  * that did.
+ *
+ * The presets sit in the open, as a row of chips above the graph rather than behind a menu: they
+ * are the fastest way out of a graph an author does not understand, and that should not be three
+ * clicks deep.
  */
 export function ShaderGraphDock({
   open,
@@ -81,9 +85,7 @@ export function ShaderGraphDock({
   onAutoLayout,
   onChangeDoc,
 }: ShaderGraphDockProps) {
-  const [presetAnchor, setPresetAnchor] = useState<{ top: number; bottom: number; left: number; right: number } | null>(null);
   const [fitRequest, setFitRequest] = useState(0);
-  const presetButtonRef = useRef<HTMLButtonElement | null>(null);
   const textureInfos = useArchiveTextures(archiveBytes, textures);
 
   const error = compiled?.diagnostics.find((diagnostic) => diagnostic.severity === 'error') ?? null;
@@ -127,38 +129,6 @@ export function ShaderGraphDock({
 
         {open && materialRef && (
           <div className="materialDockTools">
-            <Button
-              ref={presetButtonRef}
-              size="sm"
-              variant="ghost"
-              icon={<Wand2 size={13} />}
-              onClick={() => {
-                const rect = presetButtonRef.current?.getBoundingClientRect();
-                setPresetAnchor(rect && !presetAnchor ? { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right } : null);
-              }}
-            >
-              Presets
-            </Button>
-            {presetAnchor && (
-              <MenuSurface
-                anchor={presetAnchor}
-                label="Shader presets"
-                onClose={() => setPresetAnchor(null)}
-                sections={[
-                  {
-                    id: 'presets',
-                    items: presets.map((preset) => ({
-                      id: preset.id,
-                      label: preset.title,
-                      onSelect: () => {
-                        onApplyPreset(preset.id);
-                        setPresetAnchor(null);
-                      },
-                    })),
-                  },
-                ]}
-              />
-            )}
             <Button size="sm" variant="ghost" icon={<RotateCcw size={13} />} onClick={onResetFromStages}>
               Reset from stages
             </Button>
@@ -214,19 +184,39 @@ export function ShaderGraphDock({
           ) : tab === 'stages' ? (
             <StagesTable stages={stages} />
           ) : graph ? (
-            <GraphEditor
-              graph={graph}
-              doc={doc}
-              compiled={compiled}
-              textures={textureInfos}
-              archivePath={archivePath}
-              archiveBytes={archiveBytes}
-              onChangeGraph={onChangeGraph}
-              onChangeDoc={onChangeDoc}
-              onUndo={onUndo}
-              onRedo={onRedo}
-              fitRequest={fitRequest}
-            />
+            <>
+              {/* Presets used to be a dropdown, which is where a one-click "make this look like a
+                  normal road" went to die. They are the fastest way out of a graph an author does
+                  not understand, so they sit in the open. */}
+              {presets.length > 0 && (
+                <div className="materialPresetBar" role="group" aria-label="Shader presets">
+                  <span className="materialPresetBarLabel">
+                    <Wand2 size={12} aria-hidden="true" />
+                    Start from
+                  </span>
+                  {presets.map((preset) => (
+                    <Tooltip key={preset.id} label={preset.description} side="top">
+                      <button type="button" className="materialPresetChip" onClick={() => onApplyPreset(preset.id)}>
+                        {preset.title}
+                      </button>
+                    </Tooltip>
+                  ))}
+                </div>
+              )}
+              <GraphEditor
+                graph={graph}
+                doc={doc}
+                compiled={compiled}
+                textures={textureInfos}
+                archivePath={archivePath}
+                archiveBytes={archiveBytes}
+                onChangeGraph={onChangeGraph}
+                onChangeDoc={onChangeDoc}
+                onUndo={onUndo}
+                onRedo={onRedo}
+                fitRequest={fitRequest}
+              />
+            </>
           ) : (
             <EmptyState icon={<Wand2 size={22} />} title="Building the graph" description="Reading this material's TEV stages…" />
           )}

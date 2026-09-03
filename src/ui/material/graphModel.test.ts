@@ -15,8 +15,11 @@ import {
   marqueeRect,
   moveNodes,
   nodeAtPoint,
+  nodeCaption,
   nodeSize,
   nodeSpec,
+  nodeTitle,
+  nodeTypeTitle,
   nodesInMarquee,
   parseClipboard,
   pasteNodes,
@@ -382,5 +385,34 @@ describe('stage templates', () => {
     expect(duplicated.graph.nodes.find((node) => node.id === duplicated.newIds[0])).toHaveProperty('stageTemplate', stageTemplate);
     const pasted = pasteNodes(graph, copyNodes(graph, ['t']), 0, 0);
     expect(pasted.graph.nodes.find((node) => node.id === pasted.newIds[0])).toHaveProperty('stageTemplate', stageTemplate);
+  });
+});
+
+describe('what a node is called', () => {
+  it('folds the slot into the title, so the card says which one', () => {
+    expect(nodeTitle({ ...texture('t'), sampler: 1 })).toBe('Texture 2');
+    expect(nodeTitle({ id: 'k', type: 'constant', slot: 2, x: 0, y: 0 })).toBe('Colour 3');
+    expect(nodeTitle({ id: 'r', type: 'register', slot: 0, x: 0, y: 0 })).toBe('Start colour 1');
+  });
+
+  it('never says a hardware name', () => {
+    const titles = [...ADDABLE_NODE_TYPES, 'output', 'rawStage'].map((type) => nodeTypeTitle(type as never));
+    for (const title of titles) {
+      for (const jargon of ['TEV', 'TEXMAP', 'KONST', 'RAS', 'konst', 'Raw']) expect(title).not.toContain(jargon);
+    }
+    expect(nodeTypeTitle('vertexColor')).toBe('Vertex colour');
+    expect(nodeTypeTitle('rawStage')).toBe('Special step');
+  });
+
+  it('captions a texture node with the image it reads', () => {
+    const doc = { samplers: [{ texture: 'road_tex' }, { texture: '' }] } as never;
+    expect(nodeCaption({ ...texture('t'), sampler: 0 }, doc)).toBe('road_tex');
+    expect(nodeCaption({ ...texture('t'), sampler: 1 }, doc)).toBe('no image');
+    expect(nodeCaption({ ...texture('t'), sampler: 0 }, null)).toBe('no image');
+  });
+
+  it('has no caption for a node that needs none', () => {
+    expect(nodeCaption(output('o'), null)).toBeNull();
+    expect(nodeCaption(multiply('m'), null)).toBeNull();
   });
 });

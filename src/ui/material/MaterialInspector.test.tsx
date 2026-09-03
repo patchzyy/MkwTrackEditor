@@ -1,6 +1,13 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { createDefaultMaterialDoc, type GxMaterialDoc, type GxMaterialRef, type MaterialIssue } from '../../lib/gxMaterial';
+import {
+  createDefaultMaterialDoc,
+  type GxMaterialDoc,
+  type GxMaterialRef,
+  type MaterialIssue,
+  type ShaderGraph,
+  type ShaderGraphPreset,
+} from '../../lib/gxMaterial';
 import { MaterialInspector } from './MaterialInspector';
 import { MaterialOutliner } from './MaterialOutliner';
 import { ShaderGraphDock } from './ShaderGraphDock';
@@ -77,11 +84,40 @@ describe('MaterialInspector', () => {
     expect(renderInspector(null, null)).toContain('No material selected');
   });
 
-  it('shows every section for a selected material', () => {
+  it('shows the five plain-language sections for a selected material', () => {
     const markup = renderInspector(docWithLayer());
-    for (const title of ['Material', 'Layers (1)', 'Lighting', 'Colours', 'Blend &amp; alpha', 'Depth', 'Advanced']) {
+    for (const title of ['Textures (1)', 'Transparency', 'Lighting', 'Colours', 'Surface']) {
       expect(markup).toContain(title);
     }
+  });
+
+  it('leads with the simple choices, in words', () => {
+    const markup = renderInspector(docWithLayer());
+    for (const choice of ['Opaque', 'Cutout', 'Transparent', 'Repeat', 'Mirror', 'Clamp', 'Smooth', 'Pixelated', 'Two-sided', 'Environment map']) {
+      expect(markup).toContain(choice);
+    }
+  });
+
+  it('keeps the hardware controls behind closed disclosures', () => {
+    const markup = renderInspector(docWithLayer());
+    // The Advanced blocks are collapsed, so their contents are not even rendered...
+    expect(markup).toContain('Advanced');
+    expect(markup).toContain('aria-expanded="false"');
+    for (const raw of ['Blend source factor', 'Depth comparison', 'Swap table', 'texgen', 'Indirect matrix']) {
+      expect(markup).not.toContain(raw);
+    }
+  });
+
+  it('shows only the colours the shader actually reads', () => {
+    // `sampleStage` reads no konst colour and no register, so there is nothing to show.
+    expect(renderInspector(docWithLayer())).toContain('No colours in the shader');
+
+    const tinted = docWithLayer();
+    // Konst as the C input, selecting K1: exactly one swatch, named "Colour 2".
+    tinted.tevStages = [{ ...tinted.tevStages[0], colorInC: 14, konstColorSel: 0x0d }];
+    const markup = renderInspector(tinted);
+    expect(markup).toContain('Colour 2');
+    expect(markup).not.toContain('Colour 4');
   });
 
   it('names the material, its model and how much of the course it draws', () => {
@@ -92,29 +128,29 @@ describe('MaterialInspector', () => {
   });
 
   it('binds the material fields to the document', () => {
-    const doc = { ...docWithLayer(), cullMode: 1 as never, lightSetIndex: 3, fogIndex: 2, translucent: true };
+    const doc = { ...docWithLayer(), cullMode: 0 as never, translucent: true, blend: { ...docWithLayer().blend, mode: 1 as never } };
     const markup = renderInspector(doc);
-    // The name field holds the document's name and the light set / fog spinboxes hold their values.
+    // The name is the inspector's heading field, and the simple controls read the document.
     expect(markup).toContain('value="road"');
-    expect(markup).toContain('value="3"');
-    expect(markup).toContain('value="2"');
-    expect(markup).toContain('Translucent');
+    expect(markup).toContain('Both sides');
+    expect(markup).toContain('See-through');
   });
 
-  it('shows a layer\'s texture and its SRT', () => {
+  it('shows a layer\'s texture and its placement', () => {
     const doc = docWithLayer();
     doc.texSrts[0] = { ...doc.texSrts[0], rotation: 45, scaleS: 2 };
     const markup = renderInspector(doc);
     expect(markup).toContain('Placement');
-    expect(markup).toContain('Coordinates');
     expect(markup).toContain('45');
+    // The texgen fields moved into the layer's own Advanced block, which starts closed.
+    expect(markup).not.toContain('Generated as');
   });
 
-  it('says so when a material has no layers and no indirect stages', () => {
-    const markup = renderInspector({ ...createDefaultMaterialDoc('flat', 0), channels: [] });
-    expect(markup).toContain('No layers');
+  it('says so when a material has no layers and no colours', () => {
+    const markup = renderInspector({ ...createDefaultMaterialDoc('flat', 0), channels: [], samplers: [], tevStages: [] });
+    expect(markup).toContain('No textures');
     expect(markup).toContain('No lighting channels');
-    expect(markup).toContain('No indirect stages');
+    expect(markup).toContain('No colours in the shader');
   });
 
   it('shows the defects the library reports, without blocking the edit', () => {
@@ -156,7 +192,12 @@ describe('StagesTable', () => {
   });
 });
 
-function renderDock(tab: 'graph' | 'stages', open = true, doc: GxMaterialDoc | null = docWithLayer()): string {
+function renderDock(
+  tab: 'graph' | 'stages',
+  open = true,
+  doc: GxMaterialDoc | null = docWithLayer(),
+  extra: { graph?: ShaderGraph; presets?: ShaderGraphPreset[] } = {},
+): string {
   return renderToStaticMarkup(
     <ShaderGraphDock
       open={open}
@@ -170,10 +211,10 @@ function renderDock(tab: 'graph' | 'stages', open = true, doc: GxMaterialDoc | n
       onChangeTab={noop}
       materialRef={doc ? ref : null}
       doc={doc}
-      graph={{ version: 1, nodes: [{ id: 'o', type: 'output', x: 0, y: 0 }], edges: [] }}
+      graph={extra.graph ?? { version: 1, nodes: [{ id: 'o', type: 'output', x: 0, y: 0 }], edges: [] }}
       compiled={null}
       graphDrivesMaterial={false}
-      presets={[]}
+      presets={extra.presets ?? []}
       historyState={{ undo: 0, redo: 0 }}
       textures={[]}
       archivePath="course_model.brres"
@@ -227,6 +268,50 @@ describe('ShaderGraphDock', () => {
     const markup = renderDock('graph');
     expect(markup).toContain('contentBrowserResizeHandle');
     expect(markup).toContain('height:260px');
+  });
+
+  it('puts the presets in the open, one click each', () => {
+    const presets: ShaderGraphPreset[] = [
+      { id: 'unlit-texture', title: 'Texture x vertex colour', description: 'What most road materials do.', samplerCount: 1, graph: { version: 1, nodes: [], edges: [] } },
+    ];
+    const markup = renderDock('graph', true, docWithLayer(), { presets });
+    expect(markup).toContain('materialPresetBar');
+    expect(markup).toContain('Texture x vertex colour');
+    // ...and only on the graph tab, where they mean something.
+    expect(renderDock('stages', true, docWithLayer(), { presets })).not.toContain('materialPresetBar');
+  });
+
+  it('names the nodes after what they are, not after the hardware', () => {
+    const graph: ShaderGraph = {
+      version: 1,
+      nodes: [
+        { id: 'tex', type: 'texture', sampler: 0, texCoord: 0, x: 0, y: 0 },
+        { id: 'vc', type: 'vertexColor', channel: 0, x: 0, y: 120 },
+        { id: 'k', type: 'constant', slot: 2, x: 0, y: 240 },
+        { id: 'o', type: 'output', x: 300, y: 0 },
+      ],
+      edges: [],
+    };
+    const markup = renderDock('graph', true, docWithLayer(), { graph });
+    expect(markup).toContain('Texture 1');
+    expect(markup).toContain('asphalt');
+    expect(markup).toContain('Vertex colour');
+    expect(markup).toContain('Colour 3');
+    for (const jargon of ['TEXMAP', 'TEXCOORD', 'KCSEL', 'RASC']) expect(markup).not.toContain(jargon);
+  });
+
+  it('explains the read-only stage it cannot draw', () => {
+    const graph: ShaderGraph = {
+      version: 1,
+      nodes: [
+        { id: 'raw', type: 'rawStage', stage: sampleStage(), x: 0, y: 0 },
+        { id: 'o', type: 'output', x: 300, y: 0 },
+      ],
+      edges: [],
+    };
+    const markup = renderDock('graph', true, docWithLayer(), { graph });
+    expect(markup).toContain('Special step');
+    expect(markup).toContain('cannot draw');
   });
 });
 

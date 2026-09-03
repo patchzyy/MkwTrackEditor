@@ -365,3 +365,79 @@ export const TEXTURE_FORMAT_LABELS: Record<number, string> = {
 export function textureFormatLabel(format: number): string {
   return TEXTURE_FORMAT_LABELS[format] ?? `Format ${format}`;
 }
+
+// ---------------------------------------------------------------------------- friendly names
+//
+// The simple inspector and the node graph say what a thing *is* rather than what the hardware
+// calls it. These are the shared spellings, so a konst slot reads "Colour 1" in the graph, in the
+// colour section and in a status message alike.
+
+const WRAP_CHOICE_LABELS: Record<string, string> = {
+  repeat: 'Repeat',
+  mirror: 'Mirror',
+  clamp: 'Clamp',
+};
+
+/** "Repeat" / "Mirror" / "Clamp" — never `GX.WrapMode.REPEAT`. */
+export function wrapChoiceLabel(choice: string): string {
+  return WRAP_CHOICE_LABELS[choice] ?? choice;
+}
+
+const MAP_MODE_LABELS: Record<string, string> = {
+  texcoord: 'Texture coordinates',
+  envCamera: 'Camera reflection',
+  projection: 'Projected from a camera',
+  envLight: 'Light reflection',
+  envSpec: 'Specular reflection',
+};
+
+export function mapModeLabel(mapMode: string): string {
+  return MAP_MODE_LABELS[mapMode] ?? mapMode;
+}
+
+/** The four konst colours, numbered from one. K0 is "Colour 1", never "K0" and never "KCSEL_K0". */
+export function konstColorName(slot: number): string {
+  return `Colour ${slot + 1}`;
+}
+
+/**
+ * The three TEV colour registers. What the user edits is the value the register *starts* at
+ * before any stage writes to it, so that is what it is called.
+ */
+export function colorRegisterName(slot: number): string {
+  return `Start colour ${slot + 1}`;
+}
+
+/**
+ * The two rasterised lighting channels as the graph names them. `channelLabel` above answers the
+ * same question for a `GX.RasColorChannelID`, which also has the bump-alpha values; this one is
+ * for the 0/1 index a `Vertex colour` node carries.
+ */
+export function channelName(channel: number): string {
+  return `Vertex colour ${channel + 1}`;
+}
+
+/**
+ * Socket names in the node graph. The compiler's names are terse (`a`, `t`, `prevAlpha`) because
+ * they are identifiers; these are what the card draws next to the dot.
+ */
+const SOCKET_LABELS: Record<string, string> = {
+  color: 'Colour',
+  alpha: 'Alpha',
+  rgb: 'Colour',
+  uv: 'UV',
+  bump: 'Bump',
+  out: 'Out',
+  x: 'In',
+  a: 'A',
+  b: 'B',
+  c: 'If true',
+  d: 'Plus',
+  t: 'Mix',
+  prev: 'After',
+  prevAlpha: 'After (alpha)',
+};
+
+export function socketLabel(name: string): string {
+  return SOCKET_LABELS[name] ?? name;
+}

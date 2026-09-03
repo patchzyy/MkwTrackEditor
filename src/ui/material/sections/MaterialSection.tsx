@@ -1,31 +1,19 @@
-import type { GxMaterialDoc, GxMaterialSummary } from '../../../lib/gxMaterial';
+import type { GxMaterialDoc } from '../../../lib/gxMaterial';
 import { Field, FieldGroup, NumberInput, Select, Toggle } from '../../components';
 import { CULL_MODE_OPTIONS, TEX_MATRIX_MODE_OPTIONS } from '../gxOptions';
 import type { MaterialDocChange } from '../MaterialInspector';
 
-/** Name, draw pass, culling and the two SCN0 indices — what the material *is*. */
-export function MaterialSection({
-  doc,
-  summary,
-  onChange,
-}: {
-  doc: GxMaterialDoc;
-  summary: GxMaterialSummary | null;
-  onChange: MaterialDocChange;
-}) {
+/**
+ * The material's raw fixed-function identity: draw pass, the exact culling choice, the two SCN0
+ * indices and the texture-matrix style.
+ *
+ * The name is edited in the inspector header and the shared-shader note is shown next to it, so
+ * neither is repeated here. `Two-sided` in the simple view writes `cullMode` too — this is the
+ * four-way choice behind it.
+ */
+export function MaterialSection({ doc, onChange }: { doc: GxMaterialDoc; onChange: MaterialDocChange }) {
   return (
-    <FieldGroup>
-      <Field label="Name" help="Renaming rewrites every reference to this material in the model.">
-        <input
-          className="materialTextInput"
-          type="text"
-          value={doc.name}
-          aria-label="Material name"
-          onChange={(event) => onChange({ ...doc, name: event.currentTarget.value }, { transient: true })}
-          onBlur={(event) => onChange({ ...doc, name: event.currentTarget.value }, { status: `Renamed the material to ${event.currentTarget.value}.` })}
-        />
-      </Field>
-
+    <FieldGroup title="Material">
       <Field label="Draw pass" help="Translucent materials are drawn after the opaque ones, back to front.">
         <Toggle
           label={doc.translucent ? 'Translucent' : 'Opaque'}
@@ -78,12 +66,6 @@ export function MaterialSection({
         />
       </Field>
 
-      {summary && summary.sharedShaderWith.length > 0 && (
-        <p className="materialNote">
-          This material's shader is shared with {summary.sharedShaderWith.join(', ')}. Editing the graph gives this
-          material its own copy so the others are left alone.
-        </p>
-      )}
     </FieldGroup>
   );
 }
