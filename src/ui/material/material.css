@@ -232,6 +232,121 @@
   font-size: var(--font-size-xs);
 }
 
+/* The name is the heading, so it is a heading-sized field with no chrome until it is hovered. */
+.materialNameInput {
+  width: 100%;
+  padding: 2px var(--space-1);
+  margin-left: calc(-1 * var(--space-1));
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+}
+
+.materialNameInput:hover,
+.materialNameInput:focus {
+  background: var(--surface-input);
+  border-color: var(--border);
+  outline: none;
+}
+
+.materialInspectorSummary {
+  color: var(--text-muted) !important;
+  margin-top: 2px;
+}
+
+.materialThumbStrip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+  margin-top: var(--space-2);
+}
+
+/* The strip is a glance, not a control: half-size previews with no labels. */
+.materialThumb {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+}
+
+.materialThumb > * {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ---------------------------------------------------------------- advanced disclosures */
+
+.materialAdvanced {
+  border-top: 1px solid var(--border-subtle);
+  margin-top: var(--space-2);
+}
+
+.materialAdvancedToggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-2) 0;
+  background: none;
+  border: 0;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.materialAdvancedToggle:hover {
+  color: var(--text);
+}
+
+.materialAdvancedTitle {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex: 0 0 auto;
+}
+
+.materialAdvancedHint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  opacity: 0.8;
+}
+
+.materialAdvanced.isOpen .materialAdvancedHint {
+  display: none;
+}
+
+.materialAdvancedBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-bottom: var(--space-2);
+}
+
+/* A scale or an offset is two numbers that belong together; without this they stack. */
+.materialPairRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.materialPairRow > * {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 .materialTextInput {
   width: 100%;
   height: var(--control-height-sm);
@@ -477,11 +592,56 @@
   color: var(--danger-text);
 }
 
+/* A column, so the preset bar can sit above the graph rather than on top of it. The graph surface
+   is `position: relative` for the same reason: its own children are absolutely positioned against
+   it and it used to fill the dock body by being absolute itself. */
 .materialDockBody {
   flex: 1;
   min-height: 0;
   position: relative;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------------------------------------------------------------- preset bar */
+
+.materialPresetBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: var(--space-1) var(--space-3);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.materialPresetBarLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.materialPresetChip {
+  height: var(--control-height-sm);
+  padding: 0 var(--space-2);
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.materialPresetChip:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent-text);
 }
 
 /* ---------------------------------------------------------------- stages table */
@@ -527,8 +687,9 @@
 /* ---------------------------------------------------------------- node editor */
 
 .graphSurface {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
   background:
     radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0) 0 0 / 24px 24px,
@@ -638,6 +799,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+}
+
+/* "Texture 1 · road_tex": the second half is which one, dimmed, and is the first thing to be
+   clipped when the name is long. The whole title is in the card's tooltip. */
+.graphNodeCaption {
+  color: var(--text-dim);
+  font-weight: 400;
 }
 
 .graphNodeBadge {
@@ -733,6 +902,13 @@
   background: var(--accent-soft);
   border-color: var(--accent-border);
   color: var(--accent-text);
+}
+
+.graphRawStageNote {
+  margin: 0 0 var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
 }
 
 .graphRawStage {

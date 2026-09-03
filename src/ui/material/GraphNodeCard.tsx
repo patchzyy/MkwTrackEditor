@@ -15,18 +15,23 @@ import {
   caLabel,
   ccLabel,
   channelLabel,
+  channelName,
+  colorRegisterName,
   defaultKonstAlphaSel,
   defaultKonstColorSel,
-  konstColorLabel,
+  konstColorName,
   registerLabel,
   slotLabel,
+  socketLabel,
   tevOpLabel,
 } from './gxOptions';
 import {
   NODE_CATEGORY,
   NODE_SUMMARY,
+  nodeCaption,
   nodeSize,
   nodeSpec,
+  nodeTitle,
   SOCKET_SPACING,
   SOCKET_TOP,
   socketType,
@@ -76,6 +81,8 @@ export function GraphNodeCard({
   const spec = nodeSpec(node.type);
   const size = nodeSize(node);
   const category = NODE_CATEGORY[node.type];
+  const title = nodeTitle(node);
+  const caption = nodeCaption(node, doc);
   const error = diagnostics.find((entry) => entry.severity === 'error');
   const warning = diagnostics.find((entry) => entry.severity === 'warning');
 
@@ -130,8 +137,13 @@ export function GraphNodeCard({
       onPointerDown={(event) => onPointerDownNode(event, node.id)}
     >
       <header className="graphNodeHeader">
-        <Tooltip label={NODE_SUMMARY[node.type]} side="top">
-          <span className="graphNodeTitle">{spec.title}</span>
+        {/* "Texture 1 · road_tex", not "TEXMAP0 / TEXCOORD0". The caption is the dimmed half and
+            the whole thing is one tooltip, because 176px of card cannot hold both in full. */}
+        <Tooltip label={`${title}${caption ? ` · ${caption}` : ''} — ${NODE_SUMMARY[node.type]}`} side="top">
+          <span className="graphNodeTitle">
+            {title}
+            {caption && <span className="graphNodeCaption"> · {caption}</span>}
+          </span>
         </Tooltip>
         {(error || warning) && (
           <Tooltip label={(error ?? warning)!.message} side="top">
@@ -148,11 +160,11 @@ export function GraphNodeCard({
           className={`graphSocket graphSocket--in graphSocket--${socketType(graph, node.id, input.name, 'input')}`}
           style={{ top: SOCKET_TOP + index * SOCKET_SPACING - 5 }}
           data-socket={`${node.id}|${input.name}|input`}
-          title={`${input.name} (${socketType(graph, node.id, input.name, 'input')})`}
+          title={`${socketLabel(input.name)} — takes ${socketType(graph, node.id, input.name, 'input') === 'alpha' ? 'alpha' : 'colour'}`}
           onPointerDown={(event) => onPointerDownSocket(event, node.id, input.name, 'input')}
         >
           <i />
-          <label>{input.name}</label>
+          <label>{socketLabel(input.name)}</label>
         </span>
       ))}
 
@@ -162,10 +174,10 @@ export function GraphNodeCard({
           className={`graphSocket graphSocket--out graphSocket--${socketType(graph, node.id, output.name, 'output')}`}
           style={{ top: SOCKET_TOP + index * SOCKET_SPACING - 5 }}
           data-socket={`${node.id}|${output.name}|output`}
-          title={`${output.name} (${socketType(graph, node.id, output.name, 'output')})`}
+          title={`${socketLabel(output.name)} — gives ${socketType(graph, node.id, output.name, 'output') === 'alpha' ? 'alpha' : 'colour'}`}
           onPointerDown={(event) => onPointerDownSocket(event, node.id, output.name, 'output')}
         >
-          <label>{output.name}</label>
+          <label>{socketLabel(output.name)}</label>
           <i />
         </span>
       ))}
@@ -180,17 +192,17 @@ export function GraphNodeCard({
               revision={0}
             />
             <Select
-              label="Layer"
+              label="Which texture"
               size="sm"
               value={String(node.sampler)}
-              options={(doc?.samplers ?? []).map((sampler, index) => ({ value: String(index), label: `${index + 1}. ${sampler.texture || 'none'}` }))}
+              options={(doc?.samplers ?? []).map((sampler, index) => ({ value: String(index), label: `Texture ${index + 1} — ${sampler.texture || 'none'}` }))}
               onChange={(value) => onPatch({ sampler: Number(value) } as Partial<EditorGraphNode>)}
             />
             <Select
               label="Coordinates"
               size="sm"
               value={String(node.texCoord)}
-              options={Array.from({ length: Math.max(1, doc?.texGens.length ?? 1) }, (_, index) => ({ value: String(index), label: `Set ${index + 1}` }))}
+              options={Array.from({ length: Math.max(1, doc?.texGens.length ?? 1) }, (_, index) => ({ value: String(index), label: `UV set ${index + 1}` }))}
               onChange={(value) => onPatch({ texCoord: Number(value) } as Partial<EditorGraphNode>)}
             />
           </>
@@ -198,12 +210,12 @@ export function GraphNodeCard({
 
         {node.type === 'vertexColor' && (
           <Select
-            label="Channel"
+            label="Which channel"
             size="sm"
             value={String(node.channel)}
             options={[
-              { value: '0', label: channelLabel(0) },
-              { value: '1', label: channelLabel(1) },
+              { value: '0', label: channelName(0) },
+              { value: '1', label: channelName(1) },
             ]}
             onChange={(value) => onPatch({ channel: Number(value) } as Partial<EditorGraphNode>)}
           />
@@ -213,15 +225,15 @@ export function GraphNodeCard({
           <>
             <div className="graphNodeColorRow">
               <ColorField
-                label={`Constant colour K${node.slot}`}
+                label={konstColorName(node.slot)}
                 value={colorToRgb255(doc.konstColors[node.slot])}
-                onChange={(rgb) => onChangeDoc(setKonstColor(doc, node.slot, rgb255ToColor(rgb, doc.konstColors[node.slot].a)), { status: `Constant colour K${node.slot} changed.` })}
+                onChange={(rgb) => onChangeDoc(setKonstColor(doc, node.slot, rgb255ToColor(rgb, doc.konstColors[node.slot].a)), { status: `${konstColorName(node.slot)} changed.` })}
               />
               <Select
-                label="Constant slot"
+                label="Which colour"
                 size="sm"
                 value={String(node.slot)}
-                options={[0, 1, 2, 3].map((slot) => ({ value: String(slot), label: konstColorLabel(0x0c + slot) }))}
+                options={[0, 1, 2, 3].map((slot) => ({ value: String(slot), label: konstColorName(slot) }))}
                 onChange={(value) => {
                   // Changing the slot resets any explicit selection, so the two cannot disagree.
                   const slot = Number(value);
@@ -254,15 +266,15 @@ export function GraphNodeCard({
         {node.type === 'register' && doc && (
           <div className="graphNodeColorRow">
             <ColorField
-              label={`Colour register C${node.slot}`}
+              label={colorRegisterName(node.slot)}
               value={registerToRgb255(doc.colorRegisters[node.slot])}
-              onChange={(rgb) => onChangeDoc(setColorRegister(doc, node.slot, rgb255ToRegister(rgb, doc.colorRegisters[node.slot].a)), { status: `Colour register C${node.slot} changed.` })}
+              onChange={(rgb) => onChangeDoc(setColorRegister(doc, node.slot, rgb255ToRegister(rgb, doc.colorRegisters[node.slot].a)), { status: `${colorRegisterName(node.slot)} changed.` })}
             />
             <Select
-              label="Register"
+              label="Which slot"
               size="sm"
               value={String(node.slot)}
-              options={[0, 1, 2].map((slot) => ({ value: String(slot), label: `C${slot}` }))}
+              options={[0, 1, 2].map((slot) => ({ value: String(slot), label: colorRegisterName(slot) }))}
               onChange={(value) => onPatch({ slot: Number(value) } as Partial<EditorGraphNode>)}
             />
           </div>
@@ -384,28 +396,35 @@ export function GraphNodeCard({
         {/* Read-only on purpose: this is a stage the graph cannot express, kept exactly as the
             file had it. Its `prev` socket carries no value, only the order it runs in. */}
         {node.type === 'rawStage' && (
-          <dl className="graphRawStage">
-            <div>
-              <dt>Texture</dt>
-              <dd>{`${slotLabel(node.stage.texMap)} · ${channelLabel(node.stage.channelId)}`}</dd>
-            </div>
-            <div>
-              <dt>Colour</dt>
-              <dd title={`${ccLabel(node.stage.colorInA)}, ${ccLabel(node.stage.colorInB)}, ${ccLabel(node.stage.colorInC)}, ${ccLabel(node.stage.colorInD)}`}>
-                {`${ccLabel(node.stage.colorInA)}, ${ccLabel(node.stage.colorInB)}, ${ccLabel(node.stage.colorInC)}, ${ccLabel(node.stage.colorInD)}`}
-              </dd>
-            </div>
-            <div>
-              <dt>Alpha</dt>
-              <dd title={`${caLabel(node.stage.alphaInA)}, ${caLabel(node.stage.alphaInB)}, ${caLabel(node.stage.alphaInC)}, ${caLabel(node.stage.alphaInD)}`}>
-                {`${caLabel(node.stage.alphaInA)}, ${caLabel(node.stage.alphaInB)}, ${caLabel(node.stage.alphaInC)}, ${caLabel(node.stage.alphaInD)}`}
-              </dd>
-            </div>
-            <div>
-              <dt>Op</dt>
-              <dd>{`${tevOpLabel(node.stage.colorOp)} → ${registerLabel(node.stage.colorRegId)}`}</dd>
-            </div>
-          </dl>
+          <>
+            <p className="graphRawStageNote">
+              This step does something the node editor cannot draw, so it is kept exactly as the
+              file had it and written back untouched. Everything else in the graph still compiles
+              around it.
+            </p>
+            <dl className="graphRawStage">
+              <div>
+                <dt>Texture</dt>
+                <dd>{`${slotLabel(node.stage.texMap)} · ${channelLabel(node.stage.channelId)}`}</dd>
+              </div>
+              <div>
+                <dt>Colour</dt>
+                <dd title={`${ccLabel(node.stage.colorInA)}, ${ccLabel(node.stage.colorInB)}, ${ccLabel(node.stage.colorInC)}, ${ccLabel(node.stage.colorInD)}`}>
+                  {`${ccLabel(node.stage.colorInA)}, ${ccLabel(node.stage.colorInB)}, ${ccLabel(node.stage.colorInC)}, ${ccLabel(node.stage.colorInD)}`}
+                </dd>
+              </div>
+              <div>
+                <dt>Alpha</dt>
+                <dd title={`${caLabel(node.stage.alphaInA)}, ${caLabel(node.stage.alphaInB)}, ${caLabel(node.stage.alphaInC)}, ${caLabel(node.stage.alphaInD)}`}>
+                  {`${caLabel(node.stage.alphaInA)}, ${caLabel(node.stage.alphaInB)}, ${caLabel(node.stage.alphaInC)}, ${caLabel(node.stage.alphaInD)}`}
+                </dd>
+              </div>
+              <div>
+                <dt>Op</dt>
+                <dd>{`${tevOpLabel(node.stage.colorOp)} → ${registerLabel(node.stage.colorRegId)}`}</dd>
+              </div>
+            </dl>
+          </>
         )}
       </div>
 

@@ -1,13 +1,13 @@
 import { AlertTriangle, Palette } from 'lucide-react';
 import type { GxMaterialDoc, GxMaterialRef, GxMaterialSummary, GxTextureSummary, MaterialIssue } from '../../lib/gxMaterial';
-import { EmptyState, PanelSection } from '../components';
-import { AdvancedSection } from './sections/AdvancedSection';
-import { BlendSection } from './sections/BlendSection';
-import { ColorsSection } from './sections/ColorsSection';
-import { DepthSection } from './sections/DepthSection';
+import { EmptyState, PanelSection, Tooltip } from '../components';
+import { TexturePreview } from '../visual/TexturePreview';
 import { LayersSection } from './sections/LayersSection';
-import { LightingSection } from './sections/LightingSection';
-import { MaterialSection } from './sections/MaterialSection';
+import { ShadingSection } from './sections/ShadingSection';
+import { SimpleColorsSection } from './sections/SimpleColorsSection';
+import { SurfaceSection } from './sections/SurfaceSection';
+import { TransparencySection } from './sections/TransparencySection';
+import { describeMaterial } from './materialSimple';
 import { useArchiveTextures } from './useArchiveTextures';
 
 export type MaterialDocChange = (next: GxMaterialDoc, options?: { transient?: boolean; status?: string }) => void;
@@ -41,12 +41,20 @@ export interface MaterialInspectorProps {
 }
 
 /**
- * Right-hand inspector for the selected material. Every control writes a whole new
- * `GxMaterialDoc` through `onChange`; nothing here knows what a byte is.
+ * Right-hand inspector for the selected material: **simple by default, advanced on demand**.
  *
- * Sections follow the order an author works in: what the material is, its layers, how it is lit,
- * its colours, how it is composited, and finally the indirect-texture machinery that only a few
- * materials use.
+ * A GX material is a pile of hardware state — blend factors, depth comparisons, konst selectors,
+ * texgen matrices — and showing all of it at once is how the first version of this panel read. So
+ * every section now leads with the handful of choices an author actually makes, in words, and
+ * keeps the machinery behind an `AdvancedBlock` that remembers whether it was open. Nothing is
+ * gone: each raw field is one disclosure away from where it used to be.
+ *
+ * The mapping from a friendly control to the fields underneath lives in `materialSimple.ts`, on
+ * its own, with tests — including the one that matters most, that reading a value and writing it
+ * straight back changes nothing at all.
+ *
+ * Every control writes a whole new `GxMaterialDoc` through `onChange`; nothing here knows what a
+ * byte is.
  */
 export function MaterialInspector({
   materialRef,
@@ -81,7 +89,7 @@ export function MaterialInspector({
         <EmptyState
           icon={<Palette size={22} />}
           title="No material selected"
-          description="Pick a material in the list on the left to edit its layers, colours and shader."
+          description="Pick a material in the list on the left to edit its textures, colours and shader."
         />
       </div>
     );
@@ -90,11 +98,36 @@ export function MaterialInspector({
   return (
     <div className="materialInspector">
       <div className="materialInspectorHeader">
-        <strong>{doc.name}</strong>
-        <span>
+        <input
+          className="materialNameInput"
+          type="text"
+          value={doc.name}
+          aria-label="Material name"
+          title="Renaming rewrites every reference to this material in the model."
+          onChange={(event) => onChange({ ...doc, name: event.currentTarget.value }, { transient: true })}
+          onBlur={(event) => onChange({ ...doc, name: event.currentTarget.value }, { status: `Renamed the material to ${event.currentTarget.value}.` })}
+        />
+        <span className="materialInspectorWhere">
           {materialRef.modelName} · {archivePath.replace(/^\.\//, '')}
           {meshCount > 0 ? ` · ${meshCount} mesh${meshCount === 1 ? '' : 'es'}` : ''}
         </span>
+        <span className="materialInspectorSummary">{describeMaterial(doc)}</span>
+        {doc.samplers.length > 0 && (
+          <div className="materialThumbStrip" aria-label="Textures this material uses">
+            {doc.samplers.map((sampler, index) => (
+              <Tooltip key={index} label={`Texture ${index + 1}: ${sampler.texture || 'none'}`} side="left">
+                <span className="materialThumb">
+                  <TexturePreview
+                    archivePath={archivePath}
+                    archiveBytes={archiveBytes}
+                    texture={textureInfos.find((entry) => entry.name === sampler.texture) ?? null}
+                    revision={0}
+                  />
+                </span>
+              </Tooltip>
+            ))}
+          </div>
+        )}
       </div>
 
       {issues.length > 0 && (
@@ -108,11 +141,7 @@ export function MaterialInspector({
         </div>
       )}
 
-      <PanelSection title="Material" defaultOpen>
-        <MaterialSection doc={doc} summary={summary} onChange={onChange} />
-      </PanelSection>
-
-      <PanelSection title={`Layers (${doc.samplers.length})`} defaultOpen>
+      <PanelSection title={`Textures (${doc.samplers.length})`} defaultOpen>
         <LayersSection
           doc={doc}
           textures={textureInfos}
@@ -123,24 +152,20 @@ export function MaterialInspector({
         />
       </PanelSection>
 
-      <PanelSection title="Lighting" defaultOpen={false}>
-        <LightingSection doc={doc} onChange={onChange} />
+      <PanelSection title="Transparency" defaultOpen>
+        <TransparencySection doc={doc} onChange={onChange} />
+      </PanelSection>
+
+      <PanelSection title="Lighting" defaultOpen>
+        <ShadingSection doc={doc} onChange={onChange} />
       </PanelSection>
 
       <PanelSection title="Colours" defaultOpen>
-        <ColorsSection doc={doc} onChange={onChange} />
+        <SimpleColorsSection doc={doc} onChange={onChange} />
       </PanelSection>
 
-      <PanelSection title="Blend & alpha" defaultOpen={false}>
-        <BlendSection doc={doc} onChange={onChange} />
-      </PanelSection>
-
-      <PanelSection title="Depth" defaultOpen={false}>
-        <DepthSection doc={doc} onChange={onChange} />
-      </PanelSection>
-
-      <PanelSection title="Advanced" defaultOpen={false}>
-        <AdvancedSection doc={doc} onChange={onChange} />
+      <PanelSection title="Surface" defaultOpen>
+        <SurfaceSection doc={doc} summary={summary} onChange={onChange} />
       </PanelSection>
     </div>
   );

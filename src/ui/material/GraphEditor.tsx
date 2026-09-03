@@ -27,6 +27,7 @@ import {
   marqueeRect,
   moveNodes,
   nodeSpec,
+  nodeTypeTitle,
   nodesInMarquee,
   parseClipboard,
   pasteNodes,
@@ -479,7 +480,7 @@ export function GraphEditor({
   const marquee = drag?.kind === 'marquee' ? marqueeRect(drag.x0, drag.y0, drag.x1, drag.y1) : null;
   const paletteTypes = (palette?.types ?? []).filter((type) =>
     paletteQuery.trim().length === 0 ||
-    `${nodeSpec(type).title} ${NODE_SUMMARY[type]}`.toLowerCase().includes(paletteQuery.trim().toLowerCase()),
+    `${nodeTypeTitle(type)} ${NODE_SUMMARY[type]}`.toLowerCase().includes(paletteQuery.trim().toLowerCase()),
   );
 
   return (
@@ -580,7 +581,7 @@ export function GraphEditor({
             {paletteTypes.map((type) => (
               <li key={type}>
                 <button type="button" onClick={() => addFromPalette(type)}>
-                  <strong>{nodeSpec(type).title}</strong>
+                  <strong>{nodeTypeTitle(type)}</strong>
                   <span>{NODE_SUMMARY[type]}</span>
                 </button>
               </li>
