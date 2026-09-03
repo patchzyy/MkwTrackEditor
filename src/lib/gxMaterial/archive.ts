@@ -379,6 +379,21 @@ export function applyMaterial(
     const tevView = viewOf(editor.data);
     tevView.setInt32(located.tevOffset + TEV.mdl0Offset, -located.tevOffset);
     tevView.setUint32(located.tevOffset + TEV.index, keepIndex);
+    // The stage *count* lives in each material's header, not in the shader, so a material that
+    // shares this block would keep running the old number of stages unless it is updated too.
+    for (const entry of materialDic.entries) {
+      if (entry.offset === located.offset) continue;
+      if (entry.offset + tevView.getUint32(entry.offset + MAT.tevOffset) !== located.tevOffset) continue;
+      tevView.setUint8(entry.offset + MAT.numTevStages, doc.tevStages.length);
+      if (tevView.getUint32(entry.offset + MAT.numLayers) !== doc.samplers.length) {
+        warnings.push(
+          `"${entry.name}" shares this shader but has a different number of textures; check how it looks.`,
+        );
+      }
+    }
+    if (sharing.length > 0) {
+      warnings.push(`The shader is shared, so ${sharing.join(', ')} changed too.`);
+    }
   }
 
   {

@@ -393,6 +393,14 @@ export interface GraphNodeBase {
   y: number;
   /** Free text under the title. */
   label?: string;
+  /**
+   * Optional. A TEV stage stores fields the graph has no opinion about: the konst selections and
+   * raster channel it names even when it reads neither, the swap tables, the indirect setup. When
+   * this node is the root of the cluster that becomes a stage, those fields are taken from here.
+   * The decompiler fills it in so recompiling an untouched graph reproduces the material exactly;
+   * the editor never has to show it, and a node built by hand may leave it out.
+   */
+  stageTemplate?: GxTevStageDoc;
 }
 
 export interface GraphOutputNode extends GraphNodeBase {
@@ -417,6 +425,13 @@ export interface GraphConstantNode extends GraphNodeBase {
   type: 'constant';
   /** 0..3, into `GxMaterialDoc.konstColors`. */
   slot: number;
+  /**
+   * Optional. The exact konst selection to use, for the cases `slot` cannot name: the eight
+   * hardware fractions (1, 7/8 ... 1/8) and the single-channel reads (`K1[GGG]`). Defaults to
+   * `KCSEL_K{slot}` / `KASEL_K{slot}_A`.
+   */
+  colorSel?: GX.KonstColorSel;
+  alphaSel?: GX.KonstAlphaSel;
 }
 
 export interface GraphRegisterNode extends GraphNodeBase {
@@ -470,6 +485,10 @@ export interface GraphCommentNode extends GraphNodeBase {
  * (`CC.RASA`), a non-default swap table, a compare op the `compare` node does not cover. The
  * decompiler emits one of these instead of guessing, and the compiler copies `stage` out
  * verbatim (its binding checks still apply). The editor renders it as a read-only card.
+ *
+ * The `prev` input carries no value; it only says which stage runs before this one, so a chain of
+ * raw stages keeps its order. Both outputs are the stage's result, read back from whichever
+ * register it writes.
  */
 export interface GraphRawStageNode extends GraphNodeBase {
   type: 'rawStage';
@@ -535,7 +554,7 @@ export const GRAPH_NODE_SOCKETS: Readonly<Record<GraphNodeType, GraphNodeSpec>> 
   scale: { title: 'Scale', inputs: [{ name: 'x', type: 'rgb', default: 0 }], outputs: [{ name: 'out', type: 'rgb' }] },
   compare: { title: 'Compare', inputs: [{ name: 'a', type: 'rgb', default: 0 }, { name: 'b', type: 'rgb', default: 0 }, { name: 'c', type: 'rgb', default: 1 }, { name: 'd', type: 'rgb', default: 0 }], outputs: [{ name: 'out', type: 'rgb' }] },
   indirectWarp: { title: 'Indirect warp', inputs: [{ name: 'bump', type: 'rgb' }], outputs: [{ name: 'uv', type: 'rgb' }] },
-  rawStage: { title: 'Raw stage', inputs: [], outputs: [{ name: 'out', type: 'rgb' }, { name: 'alpha', type: 'alpha' }] },
+  rawStage: { title: 'Raw stage', inputs: [{ name: 'prev', type: 'rgb' }], outputs: [{ name: 'out', type: 'rgb' }, { name: 'alpha', type: 'alpha' }] },
   comment: { title: 'Comment', inputs: [], outputs: [] },
 });
 
