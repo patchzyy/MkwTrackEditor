@@ -32,7 +32,7 @@ const DEFAULT_FOV_Y_DEGREES = 60;
  * shorter window than a TV, so tilt the look-at point up a little and the kart drops into the
  * bottom third of the frame, leaving the road ahead the rest.
  */
-export const PLAYTEST_CAMERA_PITCH_UP_DEGREES = 7;
+export const PLAYTEST_CAMERA_PITCH_UP_DEGREES = 10;
 
 /** Raises `target` so the view pitches up by `degrees` about the eye, at the same distance. */
 export function pitchTargetUp(position: PlaytestVec3, target: PlaytestVec3, degrees: number, out: PlaytestVec3): PlaytestVec3 {
