@@ -3,7 +3,12 @@ import type { CommonResourceArchive } from '../../lib/objflow';
 import { exportTrack, validateExportBytes, validateTrack, type TrackDocument } from '../../lib/track';
 import { presentValidationIssue } from '../labels';
 
-/** Runs validation, then packs and downloads the edited `.szs`. */
+/**
+ * Runs validation, then packs and downloads the edited `.szs`.
+ *
+ * `downloadExport` reports whether a file was actually written, so the shell can clear its
+ * "edited, not exported yet" marker only when the user really has the bytes.
+ */
 export function useTrackExport({
   track,
   commonArchive,
@@ -13,8 +18,8 @@ export function useTrackExport({
   commonArchive: CommonResourceArchive | null;
   setStatus: Dispatch<SetStateAction<string>>;
 }) {
-  function downloadExport() {
-    if (!track) return;
+  function downloadExport(): boolean {
+    if (!track) return false;
     const issues = validateTrack(track, { common: commonArchive });
     if (issues.length > 0) {
       const errors = issues.filter((issue) => issue.level === 'error').length;
@@ -30,7 +35,7 @@ export function useTrackExport({
       const proceed = window.confirm(`Export with ${errors} errors and ${warnings} warnings?\n\n${summary}${suffix}`);
       if (!proceed) {
         setStatus('Export cancelled after validation review.');
-        return;
+        return false;
       }
       setStatus(`Exporting with ${errors} validation errors and ${warnings} warnings.`);
     }
@@ -50,7 +55,7 @@ export function useTrackExport({
       const proceed = errors === 0 && window.confirm(`Export self-check found ${warnings} warnings.\n\n${summary}${suffix}`);
       if (!proceed) {
         setStatus(errors ? `Export blocked: ${errors} exported archive errors.` : 'Export cancelled after archive self-check.');
-        return;
+        return false;
       }
     }
     const url = URL.createObjectURL(new Blob([bytes.slice().buffer], { type: 'application/octet-stream' }));
@@ -60,6 +65,7 @@ export function useTrackExport({
     link.click();
     URL.revokeObjectURL(url);
     setStatus(`Exported ${link.download} (${bytes.length.toLocaleString()} bytes).`);
+    return true;
   }
 
   return { downloadExport };

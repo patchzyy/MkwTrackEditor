@@ -18,7 +18,9 @@ export const EDITOR_SHORTCUTS: ShortcutGroup[] = [
   {
     title: 'File',
     entries: [
+      { keys: 'Ctrl+O', description: 'Open a track' },
       { keys: 'Ctrl+S', description: 'Export the track' },
+      { keys: 'Ctrl+Alt+R', description: 'Refresh the viewport from your edits' },
       { keys: 'Ctrl+Z', description: 'Undo' },
       { keys: 'Ctrl+Shift+Z', description: 'Redo' },
       { keys: 'Ctrl+Y', description: 'Redo (alternative)' },

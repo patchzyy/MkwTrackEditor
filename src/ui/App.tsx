@@ -2,7 +2,7 @@ import { Boxes, Layers, Palette, Route as RouteIcon, Shapes, Video } from 'lucid
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getKmpCameraHeader, type KmpEntity, type Vec3 } from '../lib/kmp';
 import { getPathInfo, getReferenceCounts } from '../lib/kmpEdit';
-import { describeEntity, validateTrack } from '../lib/track';
+import { describeEntity, validateTrack, type TrackDocument } from '../lib/track';
 import objectNamesById from '../generated/mkwObjectNames.json';
 import { getAreaInspectorResources } from './areas/areaInspectorConfig';
 import { useCameraMode } from './camera/CameraMode';
@@ -22,7 +22,7 @@ import { FillBetweenPanel } from './inspector/FillBetweenPanel';
 import { InspectorPanel } from './inspector/InspectorPanel';
 import { getTrackPostEffectResources } from './inspector/postEffectResources';
 import { SelectedEntityInspector } from './inspector/SelectedEntityInspector';
-import { Noclip3DViewport, type TransformTool, type ViewMode } from './Noclip3DViewport';
+import { Noclip3DViewport, type SceneReloadEvent, type TransformTool, type ViewMode } from './Noclip3DViewport';
 import { browserObjectTitle, isBrowsableObjectChoice, featuredObjectIds, type ObjectOption } from './objects/objectCatalog';
 import { getObjectInspectorProfile, getObjectVariantOptions } from './objects/objectProfiles';
 import type { EditorModeStub, InspectorSection } from './state/types';
@@ -45,6 +45,7 @@ import { TopBar } from './topbar/TopBar';
 import { clearRecentTracks, readRecentTracks, rememberRecentTrack, type RecentTrack } from './topbar/recentFiles';
 import { PanelRail } from './components/Panel';
 import { ShortcutOverlay } from './components/ShortcutOverlay';
+import { WelcomeOverlay } from './components/WelcomeOverlay';
 import { StatusBar, useFrameRate, type StatusBarStat } from './components/StatusBar';
 import { shouldToastStatus, classifyStatusMessage, splitStatusMessage } from './components/statusMessage';
 import { ToastProvider, ToastViewport, useToastStore } from './components/Toast';
@@ -69,6 +70,10 @@ export function App() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [dragTarget, setDragTarget] = useState(false);
   const [recentTracks, setRecentTracks] = useState<RecentTrack[]>(readRecentTracks);
+  /** Bumped by "Refresh track"; the viewport rebuilds its scene whenever this changes. */
+  const [sceneRevision, setSceneRevision] = useState(0);
+  const [refreshingTrack, setRefreshingTrack] = useState(false);
+  const refreshingTrackRef = useRef(false);
   const toasts = useToastStore();
 
   const trackDocument = useTrackDocument({ setStatus });
@@ -247,6 +252,56 @@ export function App() {
   const postEffectActions = usePostEffectActions({ track, postEffectResources, selection, history, setStatus });
   const clipboard = useClipboard({ track, selected, selectedEntities, selection, history, setStatus, entityLabel });
   const { downloadExport } = useTrackExport({ track, commonArchive, setStatus });
+
+  // ------------------------------------------------------- refresh and unsaved changes
+
+  /** The welcome panel's "Open a track" button and `Ctrl+O` both go through this picker. */
+  const openTrackInputRef = useRef<HTMLInputElement | null>(null);
+  const openTrackPicker = useCallback(() => openTrackInputRef.current?.click(), []);
+
+  /**
+   * "Refresh track": rebuild the 3D viewport from the track document as it is now.
+   *
+   * Most edits reach the viewport live, but some cannot — a material on a model the scene never
+   * loaded, a replaced texture of a different size, a whole archive that was swapped. Bumping
+   * `sceneRevision` makes the viewport pack the edited archives and build the scene again, so what
+   * is on screen is what would be exported. The camera, the mode and the selection all survive it.
+   */
+  const refreshTrack = useCallback(() => {
+    if (!trackRef.current) {
+      setStatus('Open a track before refreshing the viewport.');
+      return;
+    }
+    if (refreshingTrackRef.current) return;
+    refreshingTrackRef.current = true;
+    setRefreshingTrack(true);
+    setStatus('Rebuilding the track with your edits...');
+    setSceneRevision((value) => value + 1);
+  }, [trackRef]);
+
+  const onSceneReload = useCallback((event: SceneReloadEvent) => {
+    if (event.phase === 'start') {
+      setStatus(event.message);
+      return;
+    }
+    refreshingTrackRef.current = false;
+    setRefreshingTrack(false);
+    setStatus(event.message);
+  }, []);
+
+  /**
+   * The track as it was the last time the user exported it. Anything else means there are edits
+   * they have not saved, which the top bar marks so Export is never a surprise.
+   */
+  const [exportedTrack, setExportedTrack] = useState<TrackDocument | null>(null);
+  const unsavedChanges = track !== null && track !== exportedTrack && history.historyState.undo > 0;
+  const exportTrackDocument = useCallback(() => {
+    const exported = downloadExport();
+    if (exported) setExportedTrack(trackRef.current);
+    return exported;
+    // `downloadExport` closes over the current track, so it is re-created on every edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [downloadExport, trackRef]);
   const playtest = usePlaytestSession({
     track,
     commonArchive,
@@ -295,6 +350,8 @@ export function App() {
     tool,
     viewMode,
     setEditorMode,
+    refreshScene: refreshTrack,
+    sceneRefreshing: refreshingTrack,
   };
   const kmpModeUi = useKmpMode(modeContext);
   const cameraModeUi = useCameraMode(modeContext);
@@ -344,7 +401,9 @@ export function App() {
     pasteClipboardEntity: clipboard.pasteClipboardEntity,
     duplicateSelectedEntity: clipboard.duplicateSelectedEntity,
     deleteSelectedEntity: editActions.deleteSelectedEntity,
-    downloadExport,
+    downloadExport: exportTrackDocument,
+    refreshTrack,
+    openTrackPicker,
   });
 
   useSmokeHarness({
@@ -421,9 +480,12 @@ export function App() {
         title: `${validationCounts.errorCount} errors, ${validationCounts.warningCount} warnings — see the Track tab`,
       });
     }
+    if (unsavedChanges) {
+      stats.push({ id: 'unsaved', label: 'Edits', value: 'Not exported', tone: 'warning', title: 'This track has changes you have not exported yet' });
+    }
     if (fps !== null) stats.push({ id: 'fps', label: 'FPS', value: String(fps), title: 'Viewport frames per second' });
     return stats;
-  }, [fps, selectedIds.length, track, trackSummary, validationCounts]);
+  }, [fps, selectedIds.length, track, trackSummary, unsavedChanges, validationCounts]);
 
   // The left dock hosts a different panel per mode, so its collapsed rail is labelled per mode.
   const leftDock = useMemo(() => {
@@ -433,6 +495,9 @@ export function App() {
     if (editorMode === 'material') return { title: 'Materials', icon: <Palette size={15} /> };
     return { title: 'Place Assets', icon: <Shapes size={15} /> };
   }, [editorMode]);
+
+  /** The newest recent entry that can actually be re-opened (file picks have no URL). */
+  const reopenableRecentTrack = useMemo(() => recentTracks.find((entry) => entry.url) ?? null, [recentTracks]);
 
   const openRecent = useCallback(
     (entry: RecentTrack) => {
@@ -464,6 +529,18 @@ export function App() {
         if (event.dataTransfer.files.length > 0) void trackDocument.openFiles(event.dataTransfer.files);
       }}
     >
+      <input
+        ref={openTrackInputRef}
+        hidden
+        type="file"
+        accept=".szs"
+        aria-hidden="true"
+        tabIndex={-1}
+        onChange={(event) => {
+          void trackDocument.openFiles(event.currentTarget.files);
+          event.currentTarget.value = '';
+        }}
+      />
       <TopBar
         topBarRef={layout.topBarRef}
         historyState={history.historyState}
@@ -484,7 +561,10 @@ export function App() {
         onToggleLeftDock={() => layout.setPlaceAssetsOpen((value) => !value)}
         onToggleBrowser={() => layout.setBrowserOpen((value) => !value)}
         onShowShortcuts={() => setShortcutsOpen(true)}
-        onExport={downloadExport}
+        onExport={exportTrackDocument}
+        onRefreshTrack={refreshTrack}
+        refreshingTrack={refreshingTrack}
+        unsavedChanges={unsavedChanges}
         onChangeEditorMode={setEditorMode}
         playtestControl={
           <PlaytestMenu
@@ -531,6 +611,8 @@ export function App() {
             fillBetweenPreviewPositions={fillBetweenPreviewPositions}
             smokeCommonUrl={trackDocument.smokeCommonUrl}
             commonArchiveUrl={commonArchiveUrl}
+            sceneRevision={sceneRevision}
+            onSceneReload={onSceneReload}
             tool={tool}
             viewMode={viewMode}
             collisionVisible={collisionVisible}
@@ -567,6 +649,12 @@ export function App() {
             overlay={
               playtest.active ? (
                 <PlaytestHud loading={playtest.loading} hudRef={playtest.hudRef} onRestart={playtest.restart} onExit={playtest.stop} />
+              ) : track === null ? (
+                <WelcomeOverlay
+                  onOpenTrack={openTrackPicker}
+                  recentTrackName={reopenableRecentTrack?.name ?? null}
+                  onOpenRecent={reopenableRecentTrack ? () => openRecent(reopenableRecentTrack) : undefined}
+                />
               ) : null
             }
             topRightOverlay={
