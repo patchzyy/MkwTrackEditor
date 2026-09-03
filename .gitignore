@@ -14,3 +14,7 @@ public/dev-tracks/
 
 # Scratch space for BRRES writer experiments (not part of the build).
 .scratch/
+
+# Emscripten object files for the Kinoko physics build (npm run build:kinoko).
+# The generated src/lib/playtest/wasm/kinoko.{mjs,wasm} ARE committed.
+native/kinoko-shim/build/
