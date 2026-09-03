@@ -52,6 +52,10 @@ export interface ShaderGraphDockProps {
  * The status line is the honest one — how many stages and textures the current graph produces,
  * and the first error when it does not compile, in which case the material keeps the last stages
  * that did.
+ *
+ * The presets sit in the open, as a row of chips above the graph rather than behind a menu: they
+ * are the fastest way out of a graph an author does not understand, and that should not be three
+ * clicks deep.
  */
 export function ShaderGraphDock({
   open,
