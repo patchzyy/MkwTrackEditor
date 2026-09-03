@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { Eye, EyeOff, Move3D, RotateCcw, Scale3D } from 'lucide-react';
 import { mat4, vec3, vec4 } from 'gl-matrix';
 import ArrayBufferSlice from '../../vendor/noclip.website/src/ArrayBufferSlice';
@@ -51,6 +51,14 @@ import {
   type SceneOverlayCameraGizmo,
 } from './viewport/cameraOverlay';
 import { advancePreviewFrames, computePreviewCameraMatrix, toCameraFovY } from './viewport/cameraPlayback';
+import {
+  KMP_VISIBILITY_KEYS,
+  createVisibilityState,
+  pathGroupColorRgb,
+  sectionForEntityId,
+  type KmpVisibilityKey,
+  type KmpVisibilityState,
+} from './kmp/kmpSections';
 import {
   applyMeshSelectionClick,
   describeMeshPick,
@@ -113,7 +121,36 @@ interface Noclip3DViewportProps {
   onInsertRoutePoint?: (target: KmpRouteInsertTarget, position: Vec3) => void;
   onInteractionStart?: () => void;
   onInteractionEnd?: () => void;
+
+  // --- KMP mode ---------------------------------------------------------------
+  /**
+   * Controlled per-layer visibility. When set, the viewport's own eye panel and the KMP
+   * outliner show the same state; when omitted the viewport keeps its own.
+   */
+  sectionVisibility?: Partial<KmpVisibilityState>;
+  onChangeSectionVisibility?: (key: KmpVisibilityKey, visible: boolean) => void;
+  /** Colours path points, segments and route lines by their group index. */
+  pathGroupColors?: boolean;
+  /** Draws the quad between consecutive checkpoints, so the driving corridor is visible. */
+  showCheckpointQuads?: boolean;
+  /**
+   * When set, the start/end handles of that path type's groups are drawn and can be dragged
+   * onto each other to connect two groups.
+   */
+  pathLinkSection?: PathLinkSection | null;
+  onLinkPathGroups?: (section: PathLinkSection, from: number, to: number) => void;
+  onUnlinkPathGroups?: (section: PathLinkSection, from: number, to: number) => void;
+  /** `'checkpoint'` turns a plain left-drag across the track into a new checkpoint. */
+  drawTool?: DrawTool;
+  onDrawCheckpoint?: (start: Vec3, end: Vec3) => void;
+  /** Called when the user finishes a draw gesture, so the shell can leave draw mode. */
+  onDrawToolFinished?: () => void;
+  /** Entity to frame the camera on. Bump `token` to re-frame the same entity. */
+  frameRequest?: { entityId: string; token: number } | null;
 }
+
+export type PathLinkSection = 'ENPT' | 'ITPT' | 'CKPT';
+export type DrawTool = 'none' | 'checkpoint';
 
 export type TransformTool = 'translate' | 'rotate' | 'scale';
 export type ViewMode = 'normal' | 'dev' | 'topdown' | 'ortho';
@@ -139,6 +176,10 @@ interface SceneOverlayPoint {
   position: Vec3;
   markerText?: string;
   specialColor?: 'bulletBillCantStop';
+  /** Per-point RGB override (0..1); used to colour path points by their group. */
+  color?: [number, number, number];
+  /** Marker radius override, for handles that must read larger than a point. */
+  radius?: number;
   selected: boolean;
   hovered: boolean;
   invalid: boolean;
@@ -148,6 +189,8 @@ interface SceneOverlayLine {
   id: string;
   section: string;
   routeKey?: string;
+  color?: [number, number, number];
+  alpha?: number;
   a: Vec3;
   b: Vec3;
 }
@@ -228,7 +271,9 @@ interface SceneOverlayFillBetweenPreview {
 
 interface SceneOverlayRouteDeviationSegment {
   id: string;
-  section: 'ENPT' | 'ITPT';
+  /** `ENPT`/`ITPT` for the route corridor, `CKPT` for the quad between two checkpoints. */
+  section: string;
+  color?: [number, number, number];
   aLeft: Vec3;
   aRight: Vec3;
   bLeft: Vec3;
@@ -239,7 +284,8 @@ interface SceneOverlayRouteDeviationSegment {
 
 interface SceneOverlayRouteDeviationCap {
   id: string;
-  section: 'ENPT' | 'ITPT';
+  section: string;
+  color?: [number, number, number];
   position: Vec3;
   radius: number;
   selected: boolean;
@@ -263,6 +309,15 @@ interface SceneOverlayData {
   routeDeviationCaps: SceneOverlayRouteDeviationCap[];
   cameraGizmos: SceneOverlayCameraGizmo[];
   cameraChainLinks: SceneOverlayCameraChainLink[];
+}
+
+/** Extra KMP-mode overlay content: group colouring, checkpoint quads and the two drag modes. */
+interface KmpOverlayOptions {
+  pathGroupColors?: boolean;
+  showCheckpointQuads?: boolean;
+  pathLinkSection?: PathLinkSection | null;
+  pathLinkDrag?: PathLinkDragState | null;
+  checkpointDraw?: CheckpointDrawState | null;
 }
 
 interface RouteInsertPreview {
@@ -442,13 +497,56 @@ interface RouteVisibilityItem {
   label: string;
 }
 
-type RouteVisibilityKey = 'ENPT' | 'ITPT' | 'CKPT' | 'POTI_OBJECT' | 'POTI_CAMERA' | 'JGPT' | 'AREA' | 'CAME';
+/** In-progress drag from one path group's end handle towards another group's start handle. */
+interface PathLinkDragState {
+  section: PathLinkSection;
+  fromGroup: number;
+  /** `'end'` drags forwards (from -> to); `'start'` drags backwards (to -> from). */
+  fromSide: 'start' | 'end';
+  anchor: Vec3;
+  cursor: Vec3;
+  hoverGroup: number | null;
+}
+
+/** In-progress "draw a checkpoint across the track" gesture. */
+interface CheckpointDrawState {
+  start: Vec3;
+  current: Vec3;
+}
+
+/** Overlay id prefix for the group connection handles; never a real KMP entity id. */
+const PATH_LINK_HANDLE_PREFIX = '__path-link__';
+
+function pathLinkHandleId(section: PathLinkSection, groupIndex: number, side: 'start' | 'end'): string {
+  return `${PATH_LINK_HANDLE_PREFIX}${section}:${groupIndex}:${side}`;
+}
+
+function parsePathLinkHandleId(id: string): { section: PathLinkSection; groupIndex: number; side: 'start' | 'end' } | null {
+  if (!id.startsWith(PATH_LINK_HANDLE_PREFIX)) return null;
+  const [section, rawGroup, side] = id.slice(PATH_LINK_HANDLE_PREFIX.length).split(':');
+  const groupIndex = Number(rawGroup);
+  if (!Number.isInteger(groupIndex) || (side !== 'start' && side !== 'end')) return null;
+  if (section !== 'ENPT' && section !== 'ITPT' && section !== 'CKPT') return null;
+  return { section, groupIndex, side };
+}
+
+/** The KMP outliner and the viewport share one vocabulary of visibility layers. */
+type RouteVisibilityKey = KmpVisibilityKey;
 type DofMode = 'full' | 'reduced' | 'off';
 
 const MKW_RENDER_SCALE = 0.1;
 const ENTITY_DRAG_START_THRESHOLD_PX = 4;
 const MAX_CAMERA_LOOK_DELTA_PX = 240;
 const ROUTE_INSERT_SNAP_MAX_DISTANCE = 900;
+/** Shorter drags than this are treated as a mis-click rather than a new checkpoint. */
+const MIN_CHECKPOINT_DRAW_WIDTH = 200;
+/** Numpad view shortcuts, matching the habit of every other 3D editor. */
+const NUMPAD_VIEW_MODES: Record<string, ViewMode | undefined> = {
+  Numpad1: 'normal',
+  Numpad5: 'ortho',
+  Numpad7: 'topdown',
+  Numpad0: 'dev',
+};
 const CAMERA_MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyQ', 'KeyE', 'PageUp', 'PageDown', 'Space', 'KeyC', 'ControlLeft', 'ControlRight'] as const;
 const startSlotPixelCenterX = 59;
 const startSlotWidePixelWidth = 50;
@@ -610,6 +708,17 @@ export function Noclip3DViewport({
   onInsertRoutePoint,
   onInteractionStart,
   onInteractionEnd,
+  sectionVisibility,
+  onChangeSectionVisibility,
+  pathGroupColors = false,
+  showCheckpointQuads = false,
+  pathLinkSection = null,
+  onLinkPathGroups,
+  onUnlinkPathGroups,
+  drawTool = 'none',
+  onDrawCheckpoint,
+  onDrawToolFinished,
+  frameRequest = null,
 }: Noclip3DViewportProps) {
   const smokeMode = typeof window !== 'undefined' && new URL(window.location.href).searchParams.has('smokeTrack');
   const smokeAddObjectId =
@@ -640,16 +749,7 @@ export function Noclip3DViewport({
   const selectedIdsRef = useRef<string[]>(selectedIds);
   const toolRef = useRef<TransformTool>(tool);
   const viewModeRef = useRef<ViewMode>(viewMode);
-  const routeVisibilityRef = useRef<Record<RouteVisibilityKey, boolean>>({
-    ENPT: true,
-    ITPT: true,
-    CKPT: true,
-    POTI_OBJECT: true,
-    POTI_CAMERA: true,
-    JGPT: true,
-    AREA: true,
-    CAME: true,
-  });
+  const routeVisibilityRef = useRef<Record<RouteVisibilityKey, boolean>>(createVisibilityState(true));
   const hoveredIdRef = useRef<string | null>(null);
   const hoveredHandleRef = useRef<GizmoHandleKey | null>(null);
   const activeHandleRef = useRef<GizmoHandleKey | null>(null);
@@ -669,16 +769,30 @@ export function Noclip3DViewport({
   const [routeInsertPreview, setRouteInsertPreview] = useState<RouteInsertPreview | null>(null);
   const [routePanelOpen, setRoutePanelOpen] = useState(false);
   const [dofMode, setDofMode] = useState<DofMode>('off');
-  const [routeVisibility, setRouteVisibility] = useState<Record<RouteVisibilityKey, boolean>>({
-    ENPT: true,
-    ITPT: true,
-    CKPT: true,
-    POTI_OBJECT: true,
-    POTI_CAMERA: true,
-    JGPT: true,
-    AREA: true,
-    CAME: true,
-  });
+  const [internalRouteVisibility, setInternalRouteVisibility] = useState<Record<RouteVisibilityKey, boolean>>(createVisibilityState(true));
+  // A stable signature so the controlled object identity does not re-run the overlay effect.
+  const controlledVisibilitySignature = sectionVisibility
+    ? KMP_VISIBILITY_KEYS.map((key) => (sectionVisibility[key] === false ? '0' : '1')).join('')
+    : null;
+  const routeVisibility = useMemo<Record<RouteVisibilityKey, boolean>>(
+    () => {
+      if (controlledVisibilitySignature === null) return internalRouteVisibility;
+      const state = createVisibilityState(true);
+      for (const key of KMP_VISIBILITY_KEYS) if (sectionVisibility?.[key] === false) state[key] = false;
+      return state;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [controlledVisibilitySignature, internalRouteVisibility],
+  );
+  /** Single entry point for a layer toggle, so controlled and uncontrolled behave the same. */
+  function setLayerVisible(key: RouteVisibilityKey, visible: boolean) {
+    if (onChangeSectionVisibility) onChangeSectionVisibility(key, visible);
+    else setInternalRouteVisibility((current) => ({ ...current, [key]: visible }));
+  }
+  const [pathLinkDrag, setPathLinkDrag] = useState<PathLinkDragState | null>(null);
+  const pathLinkDragRef = useRef<PathLinkDragState | null>(null);
+  const [checkpointDraw, setCheckpointDraw] = useState<CheckpointDrawState | null>(null);
+  const checkpointDrawRef = useRef<CheckpointDrawState | null>(null);
   const [marqueeSelection, setMarqueeSelection] = useState<MarqueeSelectionState | null>(null);
   const marqueeSelectionRef = useRef<MarqueeSelectionState | null>(null);
   const lastPointerRef = useRef<{ x: number; y: number; snapToFeatures: boolean; altKey: boolean } | null>(null);
@@ -739,6 +853,8 @@ export function Noclip3DViewport({
   toolRef.current = tool;
   viewModeRef.current = viewMode;
   routeVisibilityRef.current = routeVisibility;
+  pathLinkDragRef.current = pathLinkDrag;
+  checkpointDrawRef.current = checkpointDraw;
   hoveredIdRef.current = hoveredId;
   hoveredHandleRef.current = hoveredHandle;
   onMoveEntityRef.current = onMoveEntity;
@@ -1170,6 +1286,45 @@ export function Noclip3DViewport({
     syncSceneOverlay(trackRef.current, selectedIdRef.current);
   }, [meshSelections]);
 
+  // KMP-mode keyboard: F frames the selection, H hides its layer, the numpad switches views.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (modeRef.current === 'model') return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (document.documentElement.dataset.viewportCameraLook === 'active') return;
+      if (event.key === 'f' || event.key === 'F') {
+        if (frameKmpEntity(null)) event.preventDefault();
+        return;
+      }
+      if (event.key === 'h' || event.key === 'H') {
+        const selectedSection = sectionForEntityId(selectedIdRef.current);
+        const layers = selectedSection?.visibility ?? [];
+        if (layers.length === 0) return;
+        event.preventDefault();
+        const nextVisible = layers.some((key) => routeVisibilityRef.current[key] === false);
+        for (const key of layers) setLayerVisible(key, nextVisible);
+        return;
+      }
+      const numpadView = NUMPAD_VIEW_MODES[event.code];
+      if (numpadView && onChangeViewMode) {
+        event.preventDefault();
+        onChangeViewMode(numpadView);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onChangeViewMode, onChangeSectionVisibility, routeVisibility]);
+
+  // The outliner asks for a specific entity to be framed; the token re-triggers the same one.
+  useEffect(() => {
+    if (!frameRequest) return;
+    frameKmpEntity(frameRequest.entityId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [frameRequest?.token, frameRequest?.entityId]);
+
   // Dev-only hook so the viewport's new features can be driven from DevTools while the
   // app UI is still being wired up.
   useEffect(() => {
@@ -1250,24 +1405,22 @@ export function Noclip3DViewport({
     };
   }, [viewerReady, sceneKey]);
 
+  // Uncontrolled mode only: forget toggles for layers the loaded track does not have.
   useEffect(() => {
-    setRouteVisibility((current) => {
-      const next: Record<string, boolean> = {};
-      const currentKeys = Object.keys(current);
-      let changed = currentKeys.length !== routeItems.length;
+    if (sectionVisibility) return;
+    setInternalRouteVisibility((current) => {
+      const next = createVisibilityState(true);
+      let changed = false;
       for (const item of routeItems) {
         next[item.key] = current[item.key] ?? true;
         if (next[item.key] !== current[item.key]) changed = true;
       }
-      for (const key of currentKeys) {
-        if (!routeItems.some((item) => item.key === key)) {
-          changed = true;
-          break;
-        }
+      for (const key of KMP_VISIBILITY_KEYS) {
+        if (current[key] === false && !routeItems.some((item) => item.key === key)) changed = true;
       }
       return changed ? next : current;
     });
-  }, [routeItems]);
+  }, [routeItems, sectionVisibility]);
 
   useEffect(() => {
     if (!smokeMode || smokeAddObjectId === null || smokePlacementDoneRef.current || !onAddObject) return;
@@ -1589,6 +1742,69 @@ export function Noclip3DViewport({
     }
   }
 
+  /** World position of a path group's first or last point, where its link handle is drawn. */
+  function getPathGroupHandlePosition(section: PathLinkSection, groupIndex: number, side: 'start' | 'end'): Vec3 | null {
+    const kmp = trackRef.current?.kmp;
+    if (!kmp) return null;
+    const graph = kmp.pathGraphs.find((candidate) => candidate.pointSection === section);
+    const group = graph?.groups.find((candidate) => candidate.index === groupIndex);
+    if (!group) return null;
+    const graphPoints = kmp.entities.filter((entity) => entity.section === section);
+    const entity = side === 'start' ? graphPoints[group.startIndex] : graphPoints[group.startIndex + group.pointCount - 1];
+    return entity ? entity.position : null;
+  }
+
+  /**
+   * Frames the free camera on a KMP entity (F). Mirrors `frameMeshSelection`, but sized from
+   * the entity's own extent instead of a mesh bounding box.
+   */
+  function frameKmpEntity(entityId: string | null): boolean {
+    const viewer = viewerRef.current;
+    const kmp = trackRef.current?.kmp;
+    if (!viewer || !kmp) return false;
+    const ids = entityId ? [entityId] : selectedIdsRef.current;
+    const entities = kmp.entities.filter((entity) => ids.includes(entity.id));
+    if (entities.length === 0) return false;
+    let minX = Infinity;
+    let minY = Infinity;
+    let minZ = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
+    const include = (position: Vec3) => {
+      minX = Math.min(minX, position.x);
+      minY = Math.min(minY, position.y);
+      minZ = Math.min(minZ, position.z);
+      maxX = Math.max(maxX, position.x);
+      maxY = Math.max(maxY, position.y);
+      maxZ = Math.max(maxZ, position.z);
+    };
+    for (const entity of entities) {
+      include(entity.position);
+      if (entity.checkpoint) {
+        include(entity.checkpoint.left);
+        include(entity.checkpoint.right);
+      }
+    }
+    if (!Number.isFinite(minX)) return false;
+    const center = vec3.fromValues(
+      ((minX + maxX) / 2) * MKW_RENDER_SCALE,
+      ((minY + maxY) / 2) * MKW_RENDER_SCALE,
+      ((minZ + maxZ) / 2) * MKW_RENDER_SCALE,
+    );
+    const extent = Math.max(maxX - minX, maxY - minY, maxZ - minZ) * MKW_RENDER_SCALE;
+    const radius = Math.max(120, extent);
+    const controller = viewer.cameraController instanceof FPSCameraController ? viewer.cameraController : new FPSCameraController();
+    if (!(viewer.cameraController instanceof FPSCameraController)) viewer.setCameraController(controller);
+    applyFPSCameraFrame(controller, {
+      eye: vec3.fromValues(center[0] + radius * 1.6, center[1] + radius * 1.2, center[2] + radius * 1.9),
+      target: center,
+    });
+    controller.update(viewer.inputManager, 0);
+    viewer.camera.worldMatrixUpdated();
+    return true;
+  }
+
   function handleCanvasPointerDown(event: PointerEvent<HTMLCanvasElement>) {
     if (event.button === 2) return;
     if (event.button !== 0 || draggingEntityRef.current) return;
@@ -1602,6 +1818,43 @@ export function Noclip3DViewport({
       pickEditorHandle?: (normalizedX: number, normalizedY: number) => SceneOverlayPick | null;
     } | null;
     const scenePick = pickSceneHandle(scene, event.clientX, event.clientY, event.currentTarget);
+
+    // Dragging one group's connection handle onto another group's wires the two together.
+    const linkHandle = scenePick?.kind === 'point' ? parsePathLinkHandleId(scenePick.id) : null;
+    if (linkHandle && pathLinkSection === linkHandle.section) {
+      const anchor = getPathGroupHandlePosition(linkHandle.section, linkHandle.groupIndex, linkHandle.side);
+      if (anchor) {
+        event.preventDefault();
+        event.stopPropagation();
+        const next: PathLinkDragState = {
+          section: linkHandle.section,
+          fromGroup: linkHandle.groupIndex,
+          fromSide: linkHandle.side,
+          anchor,
+          cursor: anchor,
+          hoverGroup: null,
+        };
+        pathLinkDragRef.current = next;
+        setPathLinkDrag(next);
+        event.currentTarget.setPointerCapture(event.pointerId);
+        return;
+      }
+    }
+
+    // "Draw a checkpoint": a plain left-drag across the track becomes one checkpoint line.
+    if (drawTool === 'checkpoint' && onDrawCheckpoint && !additiveSelection) {
+      const start = placeFromScreen(event.clientX, event.clientY, 0, isCollisionSnapModifier(event));
+      if (start) {
+        event.preventDefault();
+        event.stopPropagation();
+        const next: CheckpointDrawState = { start, current: start };
+        checkpointDrawRef.current = next;
+        setCheckpointDraw(next);
+        event.currentTarget.setPointerCapture(event.pointerId);
+        return;
+      }
+    }
+
     const pickedHandle = pickToGizmoHandle(scenePick);
     const transformTarget = pickTransformSelectionFromPick(scenePick);
     const entity = transformTarget?.entity ?? pickEntityFromPick(scenePick) ?? pickEntityFromScreenPosition(event.clientX, event.clientY);
@@ -1700,6 +1953,29 @@ export function Noclip3DViewport({
       setMarqueeSelection(nextMarquee);
       return;
     }
+    if (checkpointDrawRef.current) {
+      const current = placeFromScreen(event.clientX, event.clientY, checkpointDrawRef.current.start.y, isCollisionSnapModifier(event));
+      if (current) {
+        const next = { ...checkpointDrawRef.current, current };
+        checkpointDrawRef.current = next;
+        setCheckpointDraw(next);
+      }
+      return;
+    }
+    if (pathLinkDragRef.current) {
+      const drag = pathLinkDragRef.current;
+      const cursor = placeFromScreen(event.clientX, event.clientY, drag.anchor.y, false) ?? drag.cursor;
+      const scene = sceneRef.current as SceneGfx & {
+        pickEditorHandle?: (normalizedX: number, normalizedY: number) => SceneOverlayPick | null;
+      } | null;
+      const pick = pickSceneHandle(scene, event.clientX, event.clientY, event.currentTarget);
+      const handle = pick?.kind === 'point' ? parsePathLinkHandleId(pick.id) : null;
+      const hoverGroup = handle && handle.section === drag.section && handle.groupIndex !== drag.fromGroup ? handle.groupIndex : null;
+      const next = { ...drag, cursor, hoverGroup };
+      pathLinkDragRef.current = next;
+      setPathLinkDrag(next);
+      return;
+    }
     const pendingEntityDrag = pendingEntityDragRef.current;
     if (pendingEntityDrag && event.pointerId === pendingEntityDrag.pointerId) {
       const entity = trackRef.current?.kmp?.entities.find((candidate) => candidate.id === pendingEntityDrag.id);
@@ -1730,6 +2006,28 @@ export function Noclip3DViewport({
     }
     if (marqueeSelectionRef.current) {
       completeMarqueeSelection(event?.currentTarget ?? canvasRef.current);
+      return;
+    }
+    if (checkpointDrawRef.current) {
+      const draw = checkpointDrawRef.current;
+      checkpointDrawRef.current = null;
+      setCheckpointDraw(null);
+      suppressNextClickRef.current = true;
+      if (Math.hypot(draw.current.x - draw.start.x, draw.current.z - draw.start.z) >= MIN_CHECKPOINT_DRAW_WIDTH) {
+        onDrawCheckpoint?.(draw.start, draw.current);
+        onDrawToolFinished?.();
+      }
+      return;
+    }
+    if (pathLinkDragRef.current) {
+      const drag = pathLinkDragRef.current;
+      pathLinkDragRef.current = null;
+      setPathLinkDrag(null);
+      suppressNextClickRef.current = true;
+      if (drag.hoverGroup !== null && drag.hoverGroup !== drag.fromGroup) {
+        if (drag.fromSide === 'end') onLinkPathGroups?.(drag.section, drag.fromGroup, drag.hoverGroup);
+        else onLinkPathGroups?.(drag.section, drag.hoverGroup, drag.fromGroup);
+      }
       return;
     }
     const pendingEntityDrag = pendingEntityDragRef.current;
@@ -2421,6 +2719,13 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
         cameraOverlay.cameraGizmos,
         cameraOverlay.cameraChainLinks,
         getMeshTransformSelections(),
+        {
+          pathGroupColors,
+          showCheckpointQuads,
+          pathLinkSection,
+          pathLinkDrag: pathLinkDragRef.current,
+          checkpointDraw: checkpointDrawRef.current,
+        },
       ),
     );
   }
@@ -2575,12 +2880,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
                     <input
                       type="checkbox"
                       checked={routeVisibility[item.key] ?? true}
-                      onChange={() =>
-                        setRouteVisibility((current) => ({
-                          ...current,
-                          [item.key]: !(current[item.key] ?? true),
-                        }))
-                      }
+                      onChange={() => setLayerVisible(item.key, !(routeVisibility[item.key] ?? true))}
                     />
                     <span>{item.label}</span>
                   </label>
@@ -2714,6 +3014,7 @@ function buildSceneOverlayData(
   cameraGizmos: SceneOverlayCameraGizmo[] = [],
   cameraChainLinks: SceneOverlayCameraChainLink[] = [],
   meshTransformSelections: ViewportTransformSelection[] = [],
+  kmpOptions: KmpOverlayOptions = {},
 ): SceneOverlayData {
   const activeMeshSelection = meshTransformSelections.length > 0 ? meshTransformSelections[meshTransformSelections.length - 1] : null;
   if (activeMeshSelection) transformSelection = activeMeshSelection;
@@ -2742,11 +3043,31 @@ function buildSceneOverlayData(
     previewTransform && previewTransform.id === entity.id ? previewTransform.position : entity.position
   );
 
+  // Which path group (or POTI route) each point belongs to, so everything in one group shares
+  // a colour the way hlorenzi's editor colours paths.
+  const groupIndexByEntityId = new Map<string, number>();
+  for (const graph of showKmpData ? kmp?.pathGraphs ?? [] : []) {
+    for (const group of graph.groups) {
+      for (let index = group.startIndex; index < group.startIndex + group.pointCount; index++) {
+        groupIndexByEntityId.set(`${graph.pointSection}-${index}`, group.index);
+      }
+    }
+  }
+  const useGroupColors = !!kmpOptions.pathGroupColors && showKmpData;
+  const groupColorFor = (entityId: string, section: string, routeIndex?: number): [number, number, number] | undefined => {
+    if (!useGroupColors) return undefined;
+    if (section === 'POTI') return routeIndex === undefined ? undefined : pathGroupColorRgb(routeIndex);
+    if (section !== 'ENPT' && section !== 'ITPT' && section !== 'CKPT') return undefined;
+    const groupIndex = groupIndexByEntityId.get(entityId);
+    return groupIndex === undefined ? undefined : pathGroupColorRgb(groupIndex);
+  };
+
   const points: SceneOverlayPoint[] = visibleEntities
     .map((entity): SceneOverlayPoint => ({
       id: entity.id,
       section: String(entity.section),
       position: applyPreviewPosition(entity),
+      color: groupColorFor(entity.id, String(entity.section), entity.routePoint?.routeIndex),
       markerText:
         entity.section === 'POTI' &&
         entity.routePoint &&
@@ -2812,7 +3133,7 @@ function buildSceneOverlayData(
         const a = graphPoints[pointIndex];
         const b = graphPoints[pointIndex + 1];
         if (!a || !b) continue;
-        lines.push({ id: `${routeKey}-seq-${pointIndex}`, routeKey, section: graph.pointSection, a: applyPreviewPosition(a), b: applyPreviewPosition(b) });
+        lines.push({ id: `${routeKey}-seq-${pointIndex}`, routeKey, section: graph.pointSection, color: groupColorFor(a.id, graph.pointSection), a: applyPreviewPosition(a), b: applyPreviewPosition(b) });
         if (graph.pointSection === 'ENPT' || graph.pointSection === 'ITPT') {
           const segment = buildRouteDeviationSegment(`${routeKey}-deviation-seq-${pointIndex}`, graph.pointSection, a, b, applyPreviewPosition, selectedSet, hoveredId, selectedId);
           if (segment && selectedDeviationSections.has(graph.pointSection)) routeDeviationSegments.push(segment);
@@ -2823,7 +3144,15 @@ function buildSceneOverlayData(
         const nextGroup = graph.groups.find((candidate) => candidate.index === nextGroupIndex);
         const b = nextGroup ? graphPoints[nextGroup.startIndex] : null;
         if (!a || !b) continue;
-        lines.push({ id: `${routeKey}-next-${nextGroupIndex}`, routeKey, section: graph.pointSection, a: applyPreviewPosition(a), b: applyPreviewPosition(b) });
+        lines.push({
+          id: `${routeKey}-next-${group.index}-${nextGroupIndex}`,
+          routeKey,
+          section: graph.pointSection,
+          color: useGroupColors ? pathGroupColorRgb(group.index) : undefined,
+          alpha: 0.7,
+          a: applyPreviewPosition(a),
+          b: applyPreviewPosition(b),
+        });
         if (graph.pointSection === 'ENPT' || graph.pointSection === 'ITPT') {
           const segment = buildRouteDeviationSegment(`${routeKey}-deviation-next-${group.index}-${nextGroupIndex}`, graph.pointSection, a, b, applyPreviewPosition, selectedSet, hoveredId, selectedId);
           if (segment && selectedDeviationSections.has(graph.pointSection)) routeDeviationSegments.push(segment);
@@ -2836,9 +3165,10 @@ function buildSceneOverlayData(
     if (!isPotiRouteVisible(route.index, routeVisibility, routeUsage, forcedVisibleObjectRoutes)) continue;
     for (let i = 0; i < route.points.length - 1; i++) {
       lines.push({
-        id: `POTI-${route.index}-${i}`,
+        id: `POTI-line-${route.index}-${i}`,
         routeKey,
         section: 'POTI',
+        color: useGroupColors ? pathGroupColorRgb(route.index) : undefined,
         a: route.points[i].position,
         b: route.points[i + 1].position,
       });
@@ -2850,9 +3180,103 @@ function buildSceneOverlayData(
       id: `CKPT-span-${entity.id}`,
       routeKey: 'CKPT',
       section: 'CKPT',
+      color: groupColorFor(entity.id, 'CKPT'),
       a: entity.checkpoint!.left,
       b: entity.checkpoint!.right,
     });
+  }
+
+  // The quad between two consecutive checkpoints: the strip of track the game counts as
+  // "between these two checkpoints". Makes gaps and crossed checkpoints obvious.
+  if (kmpOptions.showCheckpointQuads && showKmpData && routeVisibility.CKPT !== false) {
+    const checkpointGraph = kmp?.pathGraphs.find((graph) => graph.pointSection === 'CKPT');
+    const checkpointEntities = (kmp?.entities ?? []).filter((entity) => entity.section === 'CKPT');
+    for (const group of checkpointGraph?.groups ?? []) {
+      const pairs: Array<[KmpEntity, KmpEntity, number]> = [];
+      for (let index = group.startIndex; index < group.startIndex + group.pointCount - 1; index++) {
+        const a = checkpointEntities[index];
+        const b = checkpointEntities[index + 1];
+        if (a?.checkpoint && b?.checkpoint) pairs.push([a, b, group.index]);
+      }
+      for (const nextGroupIndex of group.nextGroups) {
+        const a = checkpointEntities[group.startIndex + group.pointCount - 1];
+        const nextGroup = checkpointGraph?.groups.find((candidate) => candidate.index === nextGroupIndex);
+        const b = nextGroup ? checkpointEntities[nextGroup.startIndex] : null;
+        if (a?.checkpoint && b?.checkpoint) pairs.push([a, b, group.index]);
+      }
+      for (const [a, b, groupIndex] of pairs) {
+        routeDeviationSegments.push({
+          id: `CKPT-quad-${a.id}-${b.id}`,
+          section: 'CKPT',
+          color: useGroupColors ? pathGroupColorRgb(groupIndex) : undefined,
+          aLeft: a.checkpoint!.left,
+          aRight: a.checkpoint!.right,
+          bLeft: b.checkpoint!.left,
+          bRight: b.checkpoint!.right,
+          selected: selectedSet.has(a.id) || selectedSet.has(b.id),
+          hovered: hoveredId === a.id || hoveredId === b.id,
+        });
+      }
+    }
+  }
+
+  // Group connection handles: one sphere at each group's first and last point. Dragging from
+  // one onto another is how paths get wired together in the viewport.
+  const linkSection = kmpOptions.pathLinkSection ?? null;
+  if (linkSection && showKmpData && routeVisibility[linkSection] !== false) {
+    const graph = kmp?.pathGraphs.find((candidate) => candidate.pointSection === linkSection);
+    const graphPoints = (kmp?.entities ?? []).filter((entity) => entity.section === linkSection);
+    for (const group of graph?.groups ?? []) {
+      const first = graphPoints[group.startIndex];
+      const last = graphPoints[group.startIndex + group.pointCount - 1];
+      const color = pathGroupColorRgb(group.index);
+      if (first) {
+        points.push({
+          id: pathLinkHandleId(linkSection, group.index, 'start'),
+          section: 'PATH_LINK_HANDLE',
+          position: applyPreviewPosition(first),
+          color,
+          radius: 22,
+          selected: false,
+          hovered: kmpOptions.pathLinkDrag?.hoverGroup === group.index,
+          invalid: false,
+        });
+      }
+      if (last) {
+        points.push({
+          id: pathLinkHandleId(linkSection, group.index, 'end'),
+          section: 'PATH_LINK_HANDLE',
+          position: applyPreviewPosition(last),
+          color,
+          radius: 26,
+          selected: kmpOptions.pathLinkDrag?.fromGroup === group.index,
+          hovered: false,
+          invalid: false,
+        });
+      }
+    }
+  }
+  if (kmpOptions.pathLinkDrag) {
+    lines.push({
+      id: '__path-link-drag__',
+      section: 'PATH_LINK_DRAG',
+      color: [1, 1, 1],
+      a: kmpOptions.pathLinkDrag.anchor,
+      b: kmpOptions.pathLinkDrag.cursor,
+    });
+  }
+  if (kmpOptions.checkpointDraw) {
+    lines.push({
+      id: '__checkpoint-draw__',
+      section: 'CHECKPOINT_DRAW',
+      color: [1, 0.86, 0.2],
+      a: kmpOptions.checkpointDraw.start,
+      b: kmpOptions.checkpointDraw.current,
+    });
+    points.push(
+      { id: '__checkpoint-draw-start__', section: 'CHECKPOINT_DRAW', position: kmpOptions.checkpointDraw.start, color: [1, 0.86, 0.2], selected: false, hovered: false, invalid: false },
+      { id: '__checkpoint-draw-end__', section: 'CHECKPOINT_DRAW', position: kmpOptions.checkpointDraw.current, color: [1, 0.86, 0.2], selected: false, hovered: false, invalid: false },
+    );
   }
 
   let centerHandle: SceneOverlayCenterHandle | null = null;
@@ -3263,12 +3687,16 @@ function isEntityVisibleForRouteFilter(
   forcedVisibleObjectRoutes?: ReadonlySet<number>,
 ): boolean {
   if (entity.section === 'STGI') return false;
+  if (entity.section === 'KTPT') return routeVisibility.KTPT !== false;
   if (entity.section === 'ENPT') return routeVisibility.ENPT !== false;
   if (entity.section === 'ITPT') return routeVisibility.ITPT !== false;
   if (entity.section === 'CKPT') return routeVisibility.CKPT !== false;
+  if (entity.section === 'GOBJ') return routeVisibility.GOBJ !== false;
   if (entity.section === 'JGPT') return routeVisibility.JGPT !== false;
   if (entity.section === 'AREA') return routeVisibility.AREA !== false;
   if (entity.section === 'CAME') return routeVisibility.CAME !== false;
+  if (entity.section === 'CNPT') return routeVisibility.CNPT !== false;
+  if (entity.section === 'MSPT') return routeVisibility.MSPT !== false;
   if (entity.section === 'POTI' && entity.routePoint) {
     return isPotiRouteVisible(entity.routePoint.routeIndex, routeVisibility, routeUsage ?? getPotiRouteUsage(kmp), forcedVisibleObjectRoutes);
   }
@@ -3298,14 +3726,19 @@ function getRouteVisibilityItems(track: TrackDocument): RouteVisibilityItem[] {
   if (!track.kmp) return [];
   const items: RouteVisibilityItem[] = [];
   const routeUsage = getPotiRouteUsage(track.kmp);
+  const hasSection = (section: string) => track.kmp!.entities.some((entity) => entity.section === section);
+  if (hasSection('KTPT')) items.push({ key: 'KTPT', label: 'Start Points' });
   if (track.kmp.pathGraphs.some((graph) => graph.pointSection === 'ENPT')) items.push({ key: 'ENPT', label: 'Enemy Routes' });
   if (track.kmp.pathGraphs.some((graph) => graph.pointSection === 'ITPT')) items.push({ key: 'ITPT', label: 'Item Routes' });
   if (track.kmp.pathGraphs.some((graph) => graph.pointSection === 'CKPT')) items.push({ key: 'CKPT', label: 'Checkpoint Routes' });
+  if (hasSection('GOBJ')) items.push({ key: 'GOBJ', label: 'Objects' });
   if (track.kmp.routes.length > 0 && (routeUsage.objectRoutes.size > 0 || routeUsage.unusedRoutes.size > 0)) items.push({ key: 'POTI_OBJECT', label: 'Object Routes' });
   if (track.kmp.routes.length > 0 && routeUsage.cameraRoutes.size > 0) items.push({ key: 'POTI_CAMERA', label: 'Camera Routes' });
-  if (track.kmp.entities.some((entity) => entity.section === 'JGPT')) items.push({ key: 'JGPT', label: 'Respawn Points' });
-  if (track.kmp.entities.some((entity) => entity.section === 'AREA')) items.push({ key: 'AREA', label: 'Area Triggers' });
-  if (track.kmp.entities.some((entity) => entity.section === 'CAME')) items.push({ key: 'CAME', label: 'Cameras' });
+  if (hasSection('JGPT')) items.push({ key: 'JGPT', label: 'Respawn Points' });
+  if (hasSection('AREA')) items.push({ key: 'AREA', label: 'Area Triggers' });
+  if (hasSection('CAME')) items.push({ key: 'CAME', label: 'Cameras' });
+  if (hasSection('CNPT')) items.push({ key: 'CNPT', label: 'Cannon Points' });
+  if (hasSection('MSPT')) items.push({ key: 'MSPT', label: 'Battle Finish Points' });
   return items;
 }
 
