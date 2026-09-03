@@ -27,6 +27,7 @@ import type { PlaytestViewportSession } from './playtest/usePlaytestSession';
 import type { VisualRendererScene } from './visual/visualScene';
 import type { AppendableKmpSection, KmpDocument, KmpEntity, KmpRouteInsertTarget, Vec3 } from '../lib/kmp';
 import { raycastDown, raycastMesh, snapPointToTriangleFeature } from '../lib/kcl';
+import { LIBRARY_ASSET_DRAG_TYPE } from '../lib/assetLibrary';
 import type { TrackDocument } from '../lib/track';
 import { describeEntity } from '../lib/track';
 import {
@@ -153,6 +154,8 @@ interface Noclip3DViewportProps {
   onScaleTransformSelection?: (selection: ViewportTransformSelection, scale: Vec3) => void;
   onMoveCheckpointEndpoint?: (entity: KmpEntity, side: 'left' | 'right', position: Vec3) => void;
   onAddObject?: (objectId: number, position: Vec3) => void;
+  /** A custom model from My Assets dropped on the track; the id is the library asset id. */
+  onPlaceLibraryAsset?: (assetId: string, position: Vec3) => void;
   onAddKmpPoint?: (section: AppendableKmpSection, position: Vec3) => void;
   onInsertRoutePoint?: (target: KmpRouteInsertTarget, position: Vec3) => void;
   onInteractionStart?: () => void;
@@ -777,6 +780,7 @@ export function Noclip3DViewport({
   onScaleTransformSelection,
   onMoveCheckpointEndpoint,
   onAddObject,
+  onPlaceLibraryAsset,
   onAddKmpPoint,
   onInsertRoutePoint,
   onInteractionStart,
@@ -2474,11 +2478,16 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     if (playtestSessionRef.current) return;
     const rawObjectId = event.dataTransfer.getData('application/mkw-object-id');
     const rawKmpSection = event.dataTransfer.getData('application/mkw-point-section') as AppendableKmpSection | '';
-    if (!rawObjectId && !rawKmpSection) return;
+    const rawLibraryAsset = event.dataTransfer.getData(LIBRARY_ASSET_DRAG_TYPE);
+    if (!rawObjectId && !rawKmpSection && !rawLibraryAsset) return;
     const position = placeFromScreen(event.clientX, event.clientY, 0, isCollisionSnapModifier(event));
     if (!position) return;
     if (rawKmpSection) {
       onAddKmpPoint?.(rawKmpSection, position);
+      return;
+    }
+    if (rawLibraryAsset) {
+      onPlaceLibraryAsset?.(rawLibraryAsset, position);
       return;
     }
     const objectId = Number(rawObjectId);

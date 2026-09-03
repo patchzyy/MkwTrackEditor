@@ -82,12 +82,14 @@ export function AdvancedSection({ doc, onChange }: { doc: GxMaterialDoc; onChang
                 />
               ))}
             </span>
+            {/* The hardware stores a 6-bit field less a bias of 27, so the usable range is
+                -27..36 and `m` already has the exponent multiplied in. */}
             <Field label="Scale exponent" hint="power of two">
               <NumberInput
                 label={`Indirect matrix ${index + 1} scale exponent`}
                 value={matrix.scaleExp}
-                min={-17}
-                max={46}
+                min={-27}
+                max={36}
                 integer
                 step={1}
                 onChange={(value) => onChange(patchIndMatrix(doc, index, { scaleExp: value }), { transient: true })}

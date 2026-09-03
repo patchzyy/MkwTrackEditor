@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { createDefaultMaterialDoc, type GxMaterialDoc, type GxMaterialRef } from '../../lib/gxMaterial';
+import { createDefaultMaterialDoc, type GxMaterialDoc, type GxMaterialRef, type MaterialIssue } from '../../lib/gxMaterial';
 import { MaterialInspector } from './MaterialInspector';
 import { MaterialOutliner } from './MaterialOutliner';
 import { ShaderGraphDock } from './ShaderGraphDock';
@@ -14,7 +14,7 @@ const ref: GxMaterialRef = { archivePath: 'course_model.brres', modelName: 'cour
 
 function docWithLayer(): GxMaterialDoc {
   return {
-    ...addLayer(createDefaultMaterialDoc('road'), 'asphalt'),
+    ...addLayer(createDefaultMaterialDoc('road', 0), 'asphalt'),
     channels: [
       {
         materialColor: { r: 1, g: 1, b: 1, a: 1 },
@@ -44,11 +44,17 @@ function sampleStage() {
   } as GxMaterialDoc['tevStages'][number];
 }
 
-function renderInspector(doc: GxMaterialDoc | null, materialRef: GxMaterialRef | null = ref, hasTrack = true): string {
+function renderInspector(
+  doc: GxMaterialDoc | null,
+  materialRef: GxMaterialRef | null = ref,
+  hasTrack = true,
+  issues: MaterialIssue[] = [],
+): string {
   return renderToStaticMarkup(
     <MaterialInspector
       materialRef={materialRef}
       doc={doc}
+      issues={issues}
       summary={null}
       textures={[]}
       archivePath="course_model.brres"
@@ -104,11 +110,26 @@ describe('MaterialInspector', () => {
     expect(markup).toContain('45');
   });
 
-  it('says so when a material has no layers or channels', () => {
-    const markup = renderInspector(createDefaultMaterialDoc('flat'));
+  it('says so when a material has no layers and no indirect stages', () => {
+    const markup = renderInspector({ ...createDefaultMaterialDoc('flat', 0), channels: [] });
     expect(markup).toContain('No layers');
     expect(markup).toContain('No lighting channels');
     expect(markup).toContain('No indirect stages');
+  });
+
+  it('shows the defects the library reports, without blocking the edit', () => {
+    const markup = renderInspector(docWithLayer(), ref, true, [
+      { code: 'stage.texmap', message: 'Stage 0 samples texture slot 3, which has no layer.' },
+    ]);
+    expect(markup).toContain('Stage 0 samples texture slot 3, which has no layer.');
+    expect(markup).toContain('materialIssues');
+    // A clean material shows no strip at all.
+    expect(renderInspector(docWithLayer())).not.toContain('materialIssues');
+  });
+
+  it('hides the palette slot unless the layer samples a paletted texture', () => {
+    // No textures are handed in, so no layer can be paletted.
+    expect(renderInspector(docWithLayer())).not.toContain('Palette slot');
   });
 
   it('never shows a raw GX enum identifier', () => {

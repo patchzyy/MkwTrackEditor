@@ -332,6 +332,18 @@ folder into `BrowserEntry[]` — the one record the tile, the keyboard navigatio
 pane all read, so a tile and its details can never disagree. Tile size is a slider persisted
 under `mkw.editor.browserTileSize.v1`.
 
+**My Assets** is the last group in that tree: the user's own `.brres` files. Dropping `.brres`
+files anywhere on the content browser (or the Import button in its header) parses them, renders
+a thumbnail and stores them in IndexedDB (`src/lib/assetLibrary.ts`, `src/ui/state/useAssetLibrary.ts`),
+so they are back the next time the editor opens in that browser. A library tile drags into the
+viewport like an object tile does, but it is merged into the course model as scenery (Model
+mode's "place as scenery" path, `placeModelAsset`) because a custom model has no KMP object id;
+the editor switches to Model mode so the gizmo is on it. The details pane renames, exports and
+removes library assets, and for the track's own archives offers "Export archive" plus, per model,
+"Export as .brres" and "Save to My Assets", which use `src/lib/brres/extractModel.ts` to pull one
+MDL0 and the textures it references into a standalone file. Exports are the archive as loaded:
+Model-mode edits are baked on track export, not here.
+
 ---
 
 ## 4. House rules

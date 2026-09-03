@@ -1,6 +1,10 @@
 // Pure `GxMaterialDoc` edits. Every inspector control routes through one of these, so the mapping
 // from a field to the document is testable without rendering anything, and every edit is a fresh
 // document (the editor history stores whole snapshots).
+// The defaults come from the library rather than being restated here: `defaults.ts` is a leaf
+// module of the contract (it imports only `gx_enum` and `types`), so taking them does not pull the
+// BRRES writer into the main bundle, and a new layer is exactly what "New material" would make.
+import { createDefaultSampler, createDefaultTexGen, createDefaultTexSrt } from '../../lib/gxMaterial/defaults';
 import type {
   GxChannelDoc,
   GxColor,
@@ -9,7 +13,7 @@ import type {
   GxSamplerDoc,
   GxTexGenDoc,
   GxTexSrtDoc,
-} from '../../lib/gxMaterial';
+} from '../../lib/gxMaterial/types';
 
 export const MAX_SAMPLERS = 8;
 export const MAX_TEV_STAGES = 16;
@@ -79,47 +83,15 @@ export function patchTexGen(doc: GxMaterialDoc, index: number, patch: Partial<Gx
   return { ...doc, texGens: doc.texGens.map((texGen, i) => (i === index ? { ...texGen, ...patch } : texGen)) };
 }
 
-export function defaultSampler(texture: string): GxSamplerDoc {
-  return {
-    texture,
-    palette: '',
-    wrapS: 1 as GxSamplerDoc['wrapS'],
-    wrapT: 1 as GxSamplerDoc['wrapT'],
-    minFilter: 5 as GxSamplerDoc['minFilter'],
-    magFilter: 1 as GxSamplerDoc['magFilter'],
-    lodBias: 0,
-    maxAnisotropy: 0 as GxSamplerDoc['maxAnisotropy'],
-    biasClamp: false,
-    edgeLod: false,
-    mapMode: 'texcoord',
-  };
-}
-
-export function defaultTexSrt(): GxTexSrtDoc {
-  return { scaleS: 1, scaleT: 1, rotation: 0, translateS: 0, translateT: 0, refCamera: -1, refLight: -1 };
-}
-
-export function defaultTexGen(index: number): GxTexGenDoc {
-  return {
-    // 2x4 matrix from the matching UV set through the matching layer matrix — what a plain
-    // textured surface uses, and what an added layer should start as.
-    type: 1 as GxTexGenDoc['type'],
-    source: (4 + Math.min(index, 7)) as GxTexGenDoc['source'],
-    matrix: (30 + Math.min(index, 9) * 3) as GxTexGenDoc['matrix'],
-    normalize: false,
-    postMatrix: 125 as GxTexGenDoc['postMatrix'],
-  };
-}
-
 /** Adds a layer (sampler + SRT + texgen) at the end. Capped at the hardware's 8. */
 export function addLayer(doc: GxMaterialDoc, texture: string): GxMaterialDoc {
   if (doc.samplers.length >= MAX_SAMPLERS) return doc;
   const index = doc.samplers.length;
   return {
     ...doc,
-    samplers: [...doc.samplers, defaultSampler(texture)],
-    texSrts: [...doc.texSrts, defaultTexSrt()],
-    texGens: doc.texGens.length > index ? doc.texGens : [...doc.texGens, defaultTexGen(index)],
+    samplers: [...doc.samplers, createDefaultSampler(texture)],
+    texSrts: [...doc.texSrts, createDefaultTexSrt()],
+    texGens: doc.texGens.length > index ? doc.texGens : [...doc.texGens, createDefaultTexGen(index)],
   };
 }
 
@@ -219,4 +191,13 @@ export function describeShader(stageCount: number, samplerCount: number): string
 /** True when two documents are the same as far as the encoder is concerned. */
 export function materialDocEquals(a: GxMaterialDoc, b: GxMaterialDoc): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * Turns lighting on for channel 0's colour half, which is what the lit shader presets need and
+ * what the graph cannot say: lighting is material state, not a TEV stage.
+ */
+export function withChannelLighting(doc: GxMaterialDoc): GxMaterialDoc {
+  if (!doc.channels[0] || doc.channels[0].color.lightingEnabled) return doc;
+  return patchChannelControl(doc, 0, 'color', { lightingEnabled: true });
 }

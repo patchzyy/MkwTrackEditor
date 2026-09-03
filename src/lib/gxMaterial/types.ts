@@ -58,6 +58,11 @@ export interface GxSamplerDoc {
   edgeLod: boolean;
   /** Layer "type" byte the game stores next to the sampler; keep whatever was there. */
   mapMode: GxMapMode;
+  /**
+   * Palette (TLUT) slot the layer binds. Almost always 0; a few retail layers use 1. The decoder
+   * always fills it in, and the encoder keeps whatever was stored when it is left undefined.
+   */
+  tlutId?: number;
 }
 
 /** How a layer's texture matrix is driven. Matches `MapMode` in the vendored `brres.ts`. */
@@ -159,7 +164,13 @@ export interface GxIndTexStageDoc {
   scaleT: GX.IndTexScale;
 }
 
-/** 2x3 indirect matrix (row-major, `[a b c; d e f]`) plus its power-of-two scale exponent. */
+/**
+ * 2x3 indirect matrix (row-major, `[a b c; d e f]`) plus its power-of-two scale exponent.
+ *
+ * `m` holds the *effective* coefficients, i.e. the 11-bit signed hardware values already
+ * multiplied by `2 ** scaleExp`. The hardware stores a 6-bit exponent field biased by 27, so
+ * `scaleExp` runs -27..36 and the encoder recovers the integer coefficients exactly.
+ */
 export interface GxIndMatrixDoc {
   m: [number, number, number, number, number, number];
   scaleExp: number;
@@ -371,6 +382,7 @@ export type GraphNodeType =
   | 'scale' // x * (0.5 | 1 | 2 | 4), optional +/- 0.5 bias, optional clamp
   | 'compare' // TEV compare op: (a op b) ? c : 0, plus d; advanced
   | 'indirectWarp' // advanced: routes an indirect stage into the texture sampled by its consumer
+  | 'rawStage' // escape hatch: one verbatim TEV stage the graph cannot express; read-only
   | 'comment';
 
 export interface GraphNodeBase {
@@ -381,6 +393,14 @@ export interface GraphNodeBase {
   y: number;
   /** Free text under the title. */
   label?: string;
+  /**
+   * Optional. A TEV stage stores fields the graph has no opinion about: the konst selections and
+   * raster channel it names even when it reads neither, the swap tables, the indirect setup. When
+   * this node is the root of the cluster that becomes a stage, those fields are taken from here.
+   * The decompiler fills it in so recompiling an untouched graph reproduces the material exactly;
+   * the editor never has to show it, and a node built by hand may leave it out.
+   */
+  stageTemplate?: GxTevStageDoc;
 }
 
 export interface GraphOutputNode extends GraphNodeBase {
@@ -405,6 +425,13 @@ export interface GraphConstantNode extends GraphNodeBase {
   type: 'constant';
   /** 0..3, into `GxMaterialDoc.konstColors`. */
   slot: number;
+  /**
+   * Optional. The exact konst selection to use, for the cases `slot` cannot name: the eight
+   * hardware fractions (1, 7/8 ... 1/8) and the single-channel reads (`K1[GGG]`). Defaults to
+   * `KCSEL_K{slot}` / `KASEL_K{slot}_A`.
+   */
+  colorSel?: GX.KonstColorSel;
+  alphaSel?: GX.KonstAlphaSel;
 }
 
 export interface GraphRegisterNode extends GraphNodeBase {
@@ -453,6 +480,21 @@ export interface GraphCommentNode extends GraphNodeBase {
   text: string;
 }
 
+/**
+ * A TEV stage the node vocabulary cannot express — a color input the graph has no node for
+ * (`CC.RASA`), a non-default swap table, a compare op the `compare` node does not cover. The
+ * decompiler emits one of these instead of guessing, and the compiler copies `stage` out
+ * verbatim (its binding checks still apply). The editor renders it as a read-only card.
+ *
+ * The `prev` input carries no value; it only says which stage runs before this one, so a chain of
+ * raw stages keeps its order. Both outputs are the stage's result, read back from whichever
+ * register it writes.
+ */
+export interface GraphRawStageNode extends GraphNodeBase {
+  type: 'rawStage';
+  stage: GxTevStageDoc;
+}
+
 export type GraphNode =
   | GraphOutputNode
   | GraphTextureNode
@@ -464,6 +506,7 @@ export type GraphNode =
   | GraphScaleNode
   | GraphCompareNode
   | GraphIndirectWarpNode
+  | GraphRawStageNode
   | GraphCommentNode;
 
 /** A wire. Socket names are fixed per node type; see `GRAPH_NODE_SOCKETS`. */
@@ -511,6 +554,7 @@ export const GRAPH_NODE_SOCKETS: Readonly<Record<GraphNodeType, GraphNodeSpec>> 
   scale: { title: 'Scale', inputs: [{ name: 'x', type: 'rgb', default: 0 }], outputs: [{ name: 'out', type: 'rgb' }] },
   compare: { title: 'Compare', inputs: [{ name: 'a', type: 'rgb', default: 0 }, { name: 'b', type: 'rgb', default: 0 }, { name: 'c', type: 'rgb', default: 1 }, { name: 'd', type: 'rgb', default: 0 }], outputs: [{ name: 'out', type: 'rgb' }] },
   indirectWarp: { title: 'Indirect warp', inputs: [{ name: 'bump', type: 'rgb' }], outputs: [{ name: 'uv', type: 'rgb' }] },
+  rawStage: { title: 'Raw stage', inputs: [{ name: 'prev', type: 'rgb' }], outputs: [{ name: 'out', type: 'rgb' }, { name: 'alpha', type: 'alpha' }] },
   comment: { title: 'Comment', inputs: [], outputs: [] },
 });
 

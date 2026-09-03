@@ -9,12 +9,18 @@ import {
   IND_TEX_FORMAT_OPTIONS,
   IND_TEX_MATRIX_OPTIONS,
   IND_TEX_WRAP_OPTIONS,
+  KONST_ALPHA_SEL_OPTIONS,
+  KONST_COLOR_SEL_OPTIONS,
   TEV_OP_OPTIONS,
   caLabel,
   ccLabel,
   channelLabel,
+  defaultKonstAlphaSel,
+  defaultKonstColorSel,
   konstColorLabel,
+  registerLabel,
   slotLabel,
+  tevOpLabel,
 } from './gxOptions';
 import {
   NODE_CATEGORY,
@@ -204,20 +210,45 @@ export function GraphNodeCard({
         )}
 
         {node.type === 'constant' && doc && (
-          <div className="graphNodeColorRow">
-            <ColorField
-              label={`Constant colour K${node.slot}`}
-              value={colorToRgb255(doc.konstColors[node.slot])}
-              onChange={(rgb) => onChangeDoc(setKonstColor(doc, node.slot, rgb255ToColor(rgb, doc.konstColors[node.slot].a)), { status: `Constant colour K${node.slot} changed.` })}
-            />
-            <Select
-              label="Constant slot"
-              size="sm"
-              value={String(node.slot)}
-              options={[0, 1, 2, 3].map((slot) => ({ value: String(slot), label: konstColorLabel(0x0c + slot) }))}
-              onChange={(value) => onPatch({ slot: Number(value) } as Partial<EditorGraphNode>)}
-            />
-          </div>
+          <>
+            <div className="graphNodeColorRow">
+              <ColorField
+                label={`Constant colour K${node.slot}`}
+                value={colorToRgb255(doc.konstColors[node.slot])}
+                onChange={(rgb) => onChangeDoc(setKonstColor(doc, node.slot, rgb255ToColor(rgb, doc.konstColors[node.slot].a)), { status: `Constant colour K${node.slot} changed.` })}
+              />
+              <Select
+                label="Constant slot"
+                size="sm"
+                value={String(node.slot)}
+                options={[0, 1, 2, 3].map((slot) => ({ value: String(slot), label: konstColorLabel(0x0c + slot) }))}
+                onChange={(value) => {
+                  // Changing the slot resets any explicit selection, so the two cannot disagree.
+                  const slot = Number(value);
+                  onPatch({ slot, colorSel: undefined, alphaSel: undefined } as Partial<EditorGraphNode>);
+                }}
+              />
+            </div>
+            {/* Most materials just read the whole K register, so the exact selection is folded
+                away; a stage that wants a hardware fraction or a single channel needs it. */}
+            <details className="graphNodeAdvanced">
+              <summary>Advanced</summary>
+              <Select
+                label="Colour selection"
+                size="sm"
+                value={String(node.colorSel ?? defaultKonstColorSel(node.slot))}
+                options={KONST_COLOR_SEL_OPTIONS}
+                onChange={(value) => onPatch({ colorSel: Number(value) } as Partial<EditorGraphNode>)}
+              />
+              <Select
+                label="Alpha selection"
+                size="sm"
+                value={String(node.alphaSel ?? defaultKonstAlphaSel(node.slot))}
+                options={KONST_ALPHA_SEL_OPTIONS}
+                onChange={(value) => onPatch({ alphaSel: Number(value) } as Partial<EditorGraphNode>)}
+              />
+            </details>
+          </>
         )}
 
         {node.type === 'register' && doc && (
@@ -350,19 +381,29 @@ export function GraphNodeCard({
           </>
         )}
 
+        {/* Read-only on purpose: this is a stage the graph cannot express, kept exactly as the
+            file had it. Its `prev` socket carries no value, only the order it runs in. */}
         {node.type === 'rawStage' && (
           <dl className="graphRawStage">
             <div>
               <dt>Texture</dt>
-              <dd>{slotLabel(node.stage.texMap)}</dd>
+              <dd>{`${slotLabel(node.stage.texMap)} · ${channelLabel(node.stage.channelId)}`}</dd>
             </div>
             <div>
               <dt>Colour</dt>
-              <dd>{`${ccLabel(node.stage.colorInA)}, ${ccLabel(node.stage.colorInB)}, ${ccLabel(node.stage.colorInC)}, ${ccLabel(node.stage.colorInD)}`}</dd>
+              <dd title={`${ccLabel(node.stage.colorInA)}, ${ccLabel(node.stage.colorInB)}, ${ccLabel(node.stage.colorInC)}, ${ccLabel(node.stage.colorInD)}`}>
+                {`${ccLabel(node.stage.colorInA)}, ${ccLabel(node.stage.colorInB)}, ${ccLabel(node.stage.colorInC)}, ${ccLabel(node.stage.colorInD)}`}
+              </dd>
             </div>
             <div>
               <dt>Alpha</dt>
-              <dd>{`${caLabel(node.stage.alphaInA)}, ${caLabel(node.stage.alphaInB)}, ${caLabel(node.stage.alphaInC)}, ${caLabel(node.stage.alphaInD)}`}</dd>
+              <dd title={`${caLabel(node.stage.alphaInA)}, ${caLabel(node.stage.alphaInB)}, ${caLabel(node.stage.alphaInC)}, ${caLabel(node.stage.alphaInD)}`}>
+                {`${caLabel(node.stage.alphaInA)}, ${caLabel(node.stage.alphaInB)}, ${caLabel(node.stage.alphaInC)}, ${caLabel(node.stage.alphaInD)}`}
+              </dd>
+            </div>
+            <div>
+              <dt>Op</dt>
+              <dd>{`${tevOpLabel(node.stage.colorOp)} → ${registerLabel(node.stage.colorRegId)}`}</dd>
             </div>
           </dl>
         )}

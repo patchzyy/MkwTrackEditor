@@ -6,6 +6,7 @@
  * `browserEntries.test.ts`; the thumbnails stay in the React components.
  */
 
+import { LIBRARY_ASSET_DRAG_TYPE, describeLibraryAsset, formatLibrarySize, type LibraryAsset } from '../../lib/assetLibrary';
 import type { PlaceableCourseAssetRecord } from '../../lib/courseAssets';
 import type { AppendableKmpSection } from '../../lib/kmp';
 import type { NoclipBrresSummary } from '../../lib/noclipBrres';
@@ -23,7 +24,8 @@ export type BrowserEntry =
   | { id: string; kind: 'point'; label: string; caption: string; section: AppendableKmpSection; category: string }
   | { id: string; kind: 'object'; label: string; caption: string; objectId: number; object: BrowserObject }
   | { id: string; kind: 'courseAsset'; label: string; caption: string; objectId: number | null; asset: PlaceableCourseAssetRecord }
-  | { id: string; kind: 'trackAsset'; label: string; caption: string; path: string };
+  | { id: string; kind: 'trackAsset'; label: string; caption: string; path: string }
+  | { id: string; kind: 'libraryAsset'; label: string; caption: string; asset: LibraryAsset };
 
 export interface BrowserFact {
   label: string;
@@ -35,11 +37,14 @@ export function browserEntryDrag(entry: BrowserEntry): { type: string; value: st
   if (entry.kind === 'point') return { type: POINT_DRAG_TYPE, value: entry.section };
   if (entry.kind === 'object') return { type: OBJECT_DRAG_TYPE, value: String(entry.objectId) };
   if (entry.kind === 'courseAsset' && entry.objectId !== null) return { type: OBJECT_DRAG_TYPE, value: String(entry.objectId) };
+  if (entry.kind === 'libraryAsset' && entry.asset.models.length > 0) return { type: LIBRARY_ASSET_DRAG_TYPE, value: entry.asset.id };
   return null;
 }
 
 /** Hover/aria text: what the entry is and whether it can be dragged into the scene. */
 export function browserEntryHint(entry: BrowserEntry): string {
+  if (entry.kind === 'libraryAsset' && entry.asset.models.length === 0) return `${entry.label} - this archive has no model to place`;
+  if (entry.kind === 'libraryAsset') return `${entry.label} - drag into the viewport to place it as scenery`;
   if (browserEntryDrag(entry)) return `${entry.label} - drag into the viewport to place`;
   if (entry.kind === 'courseAsset') return `${entry.label} - this model has no placeable object id`;
   return `${entry.label} - ${entry.caption}`;
@@ -63,6 +68,15 @@ export function browserFolderEntries(
       caption: item.category,
       section: item.section,
       category: item.category,
+    }));
+  }
+  if (folder.kind === 'library') {
+    return folder.items.map((asset) => ({
+      id: `library:${asset.id}`,
+      kind: 'libraryAsset' as const,
+      label: asset.name,
+      caption: describeLibraryAsset(asset),
+      asset,
     }));
   }
   if (folder.kind === 'brres') {
@@ -170,6 +184,17 @@ export function browserEntryFacts(
         { label: 'In this track', value: friendlyTrackAssetName(entry.path) },
         { label: 'File', value: entry.path.replace(/^\.?\/*/, '') },
         ...summaryFacts(summary),
+      ];
+    }
+    case 'libraryAsset': {
+      const { asset } = entry;
+      return [
+        { label: 'File', value: asset.fileName },
+        { label: 'Size', value: formatLibrarySize(asset.size) },
+        { label: 'Models', value: asset.models.length > 0 ? asset.models.join(', ') : 'None' },
+        { label: 'Textures', value: String(asset.textureCount) },
+        { label: 'Added', value: new Date(asset.addedAt).toLocaleString() },
+        { label: 'How to place', value: 'Drag it onto the track; it is merged into the course model as scenery' },
       ];
     }
   }

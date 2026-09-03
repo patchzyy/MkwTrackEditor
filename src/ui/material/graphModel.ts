@@ -12,48 +12,24 @@ import {
   type GraphNodeType,
   type GraphSocketSpec,
   type GraphSocketType,
-  type GxTevStageDoc,
   type ShaderGraph,
 } from '../../lib/gxMaterial/types';
 
 // ---------------------------------------------------------------------------- node types
 
-/**
- * A stage the graph cannot express, kept verbatim so opening a material never loses it. The
- * library half owns this node type; it is declared here as well so the editor keeps compiling
- * (and rendering the read-only card) whichever half lands first.
- */
-export interface RawStageNode {
-  id: string;
-  type: 'rawStage';
-  x: number;
-  y: number;
-  label?: string;
-  stage: GxTevStageDoc;
-}
+// The editor works in the contract's own types. The aliases exist because the editor once had to
+// carry a node type the contract did not yet declare, and every call site reads better for saying
+// which union it means.
+export type EditorGraphNode = GraphNode;
+export type EditorGraphNodeType = GraphNodeType;
+export type EditorShaderGraph = ShaderGraph;
 
-export type EditorGraphNode = GraphNode | RawStageNode;
-export type EditorGraphNodeType = GraphNodeType | 'rawStage';
+/** Fallback for a node type from a graph written by a newer build than this one. */
+const UNKNOWN_SPEC: GraphNodeSpec = { title: 'Unknown node', inputs: [], outputs: [] };
 
-export interface EditorShaderGraph {
-  version: 1;
-  nodes: EditorGraphNode[];
-  edges: GraphEdge[];
-}
-
-const RAW_STAGE_SPEC: GraphNodeSpec = {
-  title: 'Raw stage',
-  inputs: [],
-  outputs: [
-    { name: 'out', type: 'rgb' },
-    { name: 'alpha', type: 'alpha' },
-  ],
-};
-
-/** Socket layout for a node type, including the ones the contract does not know about yet. */
+/** Socket layout for a node type. Never throws on a type this build does not know. */
 export function nodeSpec(type: EditorGraphNodeType): GraphNodeSpec {
-  if (type === 'rawStage') return RAW_STAGE_SPEC;
-  return GRAPH_NODE_SOCKETS[type] ?? RAW_STAGE_SPEC;
+  return GRAPH_NODE_SOCKETS[type] ?? UNKNOWN_SPEC;
 }
 
 export function isCommentNode(node: EditorGraphNode): node is Extract<GraphNode, { type: 'comment' }> {
@@ -126,13 +102,14 @@ export interface Rect {
 export function nodeBodyHeight(node: EditorGraphNode): number {
   switch (node.type) {
     case 'texture': return 96;
-    case 'constant': case 'register': return 30;
+    case 'constant': return 56;
+    case 'register': return 30;
     case 'value': return 30;
     case 'scale': return 62;
     case 'compare': return 30;
     case 'indirectWarp': return 94;
     case 'vertexColor': return 30;
-    case 'rawStage': return 78;
+    case 'rawStage': return 84;
     default: return 0;
   }
 }
@@ -439,7 +416,9 @@ export function createNode(type: EditorGraphNodeType, x: number, y: number): Edi
     case 'compare': return { ...base, type, op: 8 as never };
     case 'indirectWarp': return { ...base, type, indStage: 0, matrix: 1 as never, format: 0 as never, bias: 0 as never, wrapS: 0 as never, wrapT: 0 as never, addPrevious: false };
     case 'comment': return { ...base, type, width: 240, height: 120, text: 'Note' };
-    case 'rawStage': return { ...base, type, stage: {} as GxTevStageDoc };
+    // `rawStage` is never in the palette: it only ever comes from the decompiler, which has a
+    // stage to put in it. Made here it would be an empty one, so it is refused instead.
+    case 'rawStage': throw new Error('A raw stage cannot be added by hand.');
     default: return { ...base, type } as EditorGraphNode;
   }
 }
@@ -647,16 +626,6 @@ export function inputSource(graph: EditorShaderGraph, nodeId: string, socket: st
 export function socketSpecs(node: EditorGraphNode, side: 'input' | 'output'): GraphSocketSpec[] {
   const spec = nodeSpec(node.type);
   return side === 'input' ? spec.inputs : spec.outputs;
-}
-
-/** Narrows a contract `ShaderGraph` to the editor's node union. Same data, wider type. */
-export function toEditorGraph(graph: ShaderGraph): EditorShaderGraph {
-  return { version: 1, nodes: graph.nodes as EditorGraphNode[], edges: graph.edges };
-}
-
-/** Widens back for the compiler. The compiler ignores node types it does not know. */
-export function toContractGraph(graph: EditorShaderGraph): ShaderGraph {
-  return { version: 1, nodes: graph.nodes as GraphNode[], edges: graph.edges };
 }
 
 /** An empty graph with just the Material node, for a material with no stages. */

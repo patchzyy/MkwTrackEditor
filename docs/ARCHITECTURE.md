@@ -121,6 +121,7 @@ given. Nothing outside the smoke path reads any of the `smoke*` parameters.
 | `browserFolders.ts` | Folder model (`buildBrowserFolders`), folder classification, search text and `filterBrowserFolder`. |
 | `browserAssetDedupe.ts` | Collapses duplicated course assets to one representative. |
 | `browserEntries.ts` | The flat entry model the browser grid renders. |
+| `libraryBrowser.test.ts` | The "My Assets" folder: custom `.brres` files dropped onto the browser, kept in IndexedDB (`src/lib/assetLibrary.ts`, `src/ui/state/useAssetLibrary.ts`). |
 | `ObjectThumbnail.tsx`, `EntryThumbnail.tsx` | Asset tile previews, rendered by `src/lib/thumbnail`. |
 
 ## Object and label metadata
@@ -156,12 +157,14 @@ given. Nothing outside the smoke path reads any of the `smoke*` parameters.
 | `kcl.ts`, `kclRaycast.ts` | The collision mesh and the BVH the viewport raycasts against for ground snapping. |
 | `posteffects.ts` | `posteffect.bfg` / `.bblm` / `.bdof` / `.blight` read and write. |
 | `objflow.ts`, `commonAssets.ts`, `courseAssets.ts`, `persistedCommon.ts`, `assetPaths.ts` | The shared game-asset side: `ObjFlow.bin`, assembling the effective `Common.szs`, the extracted course-asset database, IndexedDB persistence, and `BASE_URL`-aware public asset URLs (which is what makes the build work under a GitHub Pages subpath). |
+| `editorDb.ts`, `assetLibrary.ts` | The one IndexedDB database (`mkw-track-editor`, one store per kind of blob) and the user's custom model library kept in it: records hold the `.brres` bytes plus the name, model list and rendered thumbnail the content browser tiles need. |
 
 ### Models and textures
 
 | File | Responsibility |
 | --- | --- |
 | `brres/brresRaw.ts` | BRRES container read/write, resource groups, sub-file name resolution. |
+| `brres/extractModel.ts` | Pulls one MDL0 and the TEX0 / PLT0 it references out of an archive into a standalone `.brres` with a fresh string pool ("Export model", "Save to My Assets"). |
 | `brres/mdl0Raw.ts` | `Mdl0Editor`: in-place MDL0 editing — vertex arrays, shapes, materials, nodes, draw lists, and appending into a grown file. |
 | `brres/resDic.ts` | NW4R resource dictionaries, including `buildResDicIndexTree`, which reproduces the exact radix tree Nintendo's tools emit, and `lookupResDicIndex`, the console-side walk used to prove a rebuilt tree resolves every name. |
 | `brres/stringPool.ts`, `brres/gxVertex.ts` | The string pool and the GX vertex/primitive encoding. |

@@ -31,6 +31,9 @@ import {
 /** Biggest texture the editor will encode. Bigger than this and a course blows its texture budget. */
 const MAX_IMPORT_SIZE = 1024;
 
+/** `GX.TexFormat` C4 / C8 / C14X2 — the formats that read a palette. */
+const PALETTED_FORMATS = new Set([0x8, 0x9, 0xa]);
+
 export interface LayersSectionProps {
   doc: GxMaterialDoc;
   textures: VisualTextureInfo[];
@@ -107,6 +110,8 @@ function LayerCard({
   const srt = doc.texSrts[index];
   const texGen = doc.texGens[index];
   const texture = textures.find((entry) => entry.name === sampler.texture) ?? null;
+  // C4 / C8 / C14X2 — the only formats that read a palette.
+  const isPaletted = texture !== null && PALETTED_FORMATS.has(texture.format);
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -220,6 +225,22 @@ function LayerCard({
             onBlur={(event) => onChange(patchSampler(doc, index, { palette: event.currentTarget.value }), { status: `Layer ${index + 1} palette set.` })}
           />
         </Field>
+        {/* The palette slot only means anything for a paletted texture, so it stays out of the way
+            for the other 99% of layers. */}
+        {isPaletted && (
+          <Field label="Palette slot" hint="TLUT" help="Which of the hardware's palette slots this layer's palette is loaded into.">
+            <NumberInput
+              label={`Layer ${index + 1} palette slot`}
+              value={sampler.tlutId ?? 0}
+              min={0}
+              max={15}
+              integer
+              step={1}
+              onChange={(value) => onChange(patchSampler(doc, index, { tlutId: value }), { transient: true })}
+              onCommit={(value) => onChange(patchSampler(doc, index, { tlutId: value }), { status: `Layer ${index + 1} palette slot ${value}.` })}
+            />
+          </Field>
+        )}
         <Field label="Wrap across">
           <Select
             label={`Layer ${index + 1} wrap S`}

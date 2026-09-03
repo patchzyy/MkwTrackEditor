@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { LibraryAsset } from '../../lib/assetLibrary';
 import type { CourseAssetDatabase } from '../../lib/courseAssets';
 import type { CommonResourceArchive } from '../../lib/objflow';
 import type { TrackDocument } from '../../lib/track';
@@ -10,18 +11,20 @@ export function useBrowserFolders({
   objFlow,
   commonArchive,
   courseAssetDb,
+  libraryAssets,
 }: {
   track: TrackDocument | null;
   objFlow: CommonResourceArchive['objFlow'] | null;
   commonArchive: CommonResourceArchive | null;
   courseAssetDb: CourseAssetDatabase | null;
+  libraryAssets: LibraryAsset[];
 }) {
   const [browserFolder, setBrowserFolder] = useState<BrowserFolderId>('featured');
   const [browserQuery, setBrowserQuery] = useState('');
 
   const browserFolders = useMemo(
-    () => buildBrowserFolders({ track, objFlow, commonArchive, courseAssetDb }),
-    [commonArchive, courseAssetDb, objFlow, track],
+    () => buildBrowserFolders({ track, objFlow, commonArchive, courseAssetDb, libraryAssets }),
+    [commonArchive, courseAssetDb, libraryAssets, objFlow, track],
   );
   const activeBrowserFolder = browserFolders.find((folder) => folder.id === browserFolder) ?? browserFolders[0] ?? null;
   const filteredBrowserFolder = useMemo(() => filterBrowserFolder(activeBrowserFolder, browserQuery), [activeBrowserFolder, browserQuery]);

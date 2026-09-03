@@ -10,12 +10,10 @@ import { ShaderGraphDock } from './ShaderGraphDock';
 import {
   autoLayout,
   emptyGraph,
-  toContractGraph,
-  toEditorGraph,
   type EditorShaderGraph,
 } from './graphModel';
 import { loadStoredGraph, saveStoredGraph, sessionGraphKey } from './graphStore';
-import { ensureLayerCount, materialDocEquals } from './materialDoc';
+import { ensureLayerCount, materialDocEquals, withChannelLighting } from './materialDoc';
 import { loadMaterialLibrary, type GxMaterialLibrary } from './materialLibrary';
 import {
   buildMaterialTree,
@@ -210,7 +208,7 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
     // A freshly decompiled graph is laid out by the editor rather than trusted as it comes: the
     // decompiler orders nodes by stage but does not know how tall this editor draws them, so
     // without this the source nodes of one stage sit on top of the next stage's cluster.
-    const fallback = autoLayout(toEditorGraph(library.decompileShader(doc)));
+    const fallback = autoLayout(library.decompileShader(doc));
     void loadStoredGraph(selectedRef, doc.tevStages).then((stored) => {
       if (cancelled) return;
       setGraphs((current) => (current[key] ? current : { ...current, [key]: stored ?? fallback }));
@@ -223,7 +221,7 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
   useEffect(() => {
     if (!active || !library || !graph || !doc) return;
     const timer = window.setTimeout(() => {
-      setCompiled(library.compileShaderGraph(toContractGraph(graph), doc));
+      setCompiled(library.compileShaderGraph(graph, doc));
     }, COMPILE_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [active, doc, graph, library]);
@@ -375,7 +373,7 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
     if (!library || !doc) return;
     // A re-decompile is a view of the stages the material already has, not a new shader, so it
     // does not count as an edit and must not write the compiler's round trip back over them.
-    setGraph(autoLayout(toEditorGraph(library.decompileShader(doc))), { edited: false });
+    setGraph(autoLayout(library.decompileShader(doc)), { edited: false });
     setStatus(`Rebuilt the graph from ${doc.name}'s ${doc.tevStages.length} stages.`);
   }, [doc, library, setGraph, setStatus]);
 
@@ -384,13 +382,18 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
       if (!library || !doc) return;
       const preset = library.SHADER_GRAPH_PRESETS.find((entry) => entry.id === presetId);
       if (!preset) return;
-      setGraph(toEditorGraph(preset.graph));
-      if (doc.samplers.length < preset.samplerCount) {
-        const fallbackTexture = doc.samplers[0]?.texture ?? selectedArchive?.textures[0]?.name ?? '';
-        updateDoc(ensureLayerCount(doc, preset.samplerCount, fallbackTexture), { status: `Applied the "${preset.title}" shader.` });
-      } else {
+      setGraph(preset.graph);
+
+      // A preset can need more than a graph: extra layers to sample, and — for the lit ones —
+      // lighting on channel 0, which is material state the graph has no way to express.
+      const fallbackTexture = doc.samplers[0]?.texture ?? selectedArchive?.textures[0]?.name ?? '';
+      let next = ensureLayerCount(doc, preset.samplerCount, fallbackTexture);
+      if (library.PRESET_WANTS_LIGHTING.has(preset.id)) next = withChannelLighting(next);
+      if (materialDocEquals(next, doc)) {
         setStatus(`Applied the "${preset.title}" shader.`);
+        return;
       }
+      updateDoc(next, { status: `Applied the "${preset.title}" shader.` });
     },
     [doc, library, selectedArchive, setGraph, setStatus, updateDoc],
   );
@@ -493,6 +496,7 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
   if (!active) return {};
 
   const archiveTextures = selectedArchive?.textures ?? [];
+  const materialIssues = library && doc ? library.collectMaterialIssues(doc) : [];
   const archiveBytes = selectedRef ? (pinnedBytesRef.current.get(selectedRef.archivePath) ?? findArchiveBytes(track, selectedRef.archivePath)) : null;
 
   return {
@@ -520,6 +524,7 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
       <MaterialInspector
         materialRef={selectedRef}
         doc={doc}
+        issues={materialIssues}
         textures={archiveTextures}
         archivePath={selectedRef?.archivePath ?? ''}
         archiveBytes={archiveBytes}

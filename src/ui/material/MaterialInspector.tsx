@@ -1,5 +1,5 @@
-import { Palette } from 'lucide-react';
-import type { GxMaterialDoc, GxMaterialRef, GxMaterialSummary, GxTextureSummary } from '../../lib/gxMaterial';
+import { AlertTriangle, Palette } from 'lucide-react';
+import type { GxMaterialDoc, GxMaterialRef, GxMaterialSummary, GxTextureSummary, MaterialIssue } from '../../lib/gxMaterial';
 import { EmptyState, PanelSection } from '../components';
 import { AdvancedSection } from './sections/AdvancedSection';
 import { BlendSection } from './sections/BlendSection';
@@ -24,6 +24,12 @@ export interface ImportedTexture {
 export interface MaterialInspectorProps {
   materialRef: GxMaterialRef | null;
   doc: GxMaterialDoc | null;
+  /**
+   * What is wrong with `doc` right now (`collectMaterialIssues`). Retail materials really do ship
+   * with defects — a stage sampling a texture slot the material has no layer for — so these are
+   * shown, not blocked; `applyMaterial` only refuses the ones the edit introduced.
+   */
+  issues: readonly MaterialIssue[];
   summary: GxMaterialSummary | null;
   textures: readonly GxTextureSummary[];
   archivePath: string;
@@ -45,6 +51,7 @@ export interface MaterialInspectorProps {
 export function MaterialInspector({
   materialRef,
   doc,
+  issues,
   summary,
   textures,
   archivePath,
@@ -89,6 +96,17 @@ export function MaterialInspector({
           {meshCount > 0 ? ` · ${meshCount} mesh${meshCount === 1 ? '' : 'es'}` : ''}
         </span>
       </div>
+
+      {issues.length > 0 && (
+        <div className="materialIssues" role="status">
+          <AlertTriangle size={13} aria-hidden="true" />
+          <ul>
+            {issues.map((issue) => (
+              <li key={issue.code}>{issue.message}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <PanelSection title="Material" defaultOpen>
         <MaterialSection doc={doc} summary={summary} onChange={onChange} />

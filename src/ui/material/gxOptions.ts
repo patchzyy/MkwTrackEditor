@@ -295,6 +295,55 @@ export function konstAlphaLabel(value: number): string {
   return fractions[value] ?? `#${value}`;
 }
 
+/**
+ * What a stage can select as its konst colour. The four whole registers come first because they
+ * are what a `Color` node normally means; the fractions and single-channel reads are the cases
+ * `GraphConstantNode.slot` cannot name on its own.
+ */
+export const KONST_COLOR_SEL_OPTIONS: NumberOption[] = [
+  ...[0, 1, 2, 3].map((slot) => ({
+    value: String(GX.KonstColorSel.KCSEL_K0 + slot),
+    label: `K${slot} (whole colour)`,
+    numeric: GX.KonstColorSel.KCSEL_K0 + slot,
+  })),
+  ...['1', '7/8', '6/8', '5/8', '4/8', '3/8', '2/8', '1/8'].map((fraction, index) => ({
+    value: String(index),
+    label: `Constant ${fraction}`,
+    numeric: index,
+  })),
+  ...['R', 'G', 'B', 'A'].flatMap((channel, channelIndex) =>
+    [0, 1, 2, 3].map((slot) => ({
+      value: String(GX.KonstColorSel.KCSEL_K0_R + channelIndex * 4 + slot),
+      label: `K${slot} ${channel} in every channel`,
+      numeric: GX.KonstColorSel.KCSEL_K0_R + channelIndex * 4 + slot,
+    })),
+  ),
+];
+
+export const KONST_ALPHA_SEL_OPTIONS: NumberOption[] = [
+  ...[0, 1, 2, 3].map((slot) => ({
+    value: String(GX.KonstAlphaSel.KASEL_K0_A + slot),
+    label: `K${slot} alpha`,
+    numeric: GX.KonstAlphaSel.KASEL_K0_A + slot,
+  })),
+  ...['1', '7/8', '6/8', '5/8', '4/8', '3/8', '2/8', '1/8'].map((fraction, index) => ({
+    value: String(index),
+    label: `Constant ${fraction}`,
+    numeric: index,
+  })),
+  ...['R', 'G', 'B'].flatMap((channel, channelIndex) =>
+    [0, 1, 2, 3].map((slot) => ({
+      value: String(GX.KonstAlphaSel.KASEL_K0_R + channelIndex * 4 + slot),
+      label: `K${slot} ${channel}`,
+      numeric: GX.KonstAlphaSel.KASEL_K0_R + channelIndex * 4 + slot,
+    })),
+  ),
+];
+
+/** The selection a `Color` node uses when it has no explicit one: the whole K register. */
+export const defaultKonstColorSel = (slot: number): number => GX.KonstColorSel.KCSEL_K0 + slot;
+export const defaultKonstAlphaSel = (slot: number): number => GX.KonstAlphaSel.KASEL_K0_A + slot;
+
 /** GX texture formats, for the import dialog. */
 export const TEXTURE_FORMAT_OPTIONS = options([
   [GX.TexFormat.CMPR, 'CMPR — compressed, smallest'],

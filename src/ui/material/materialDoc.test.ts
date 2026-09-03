@@ -24,10 +24,12 @@ import {
   setIndMatrixCell,
   setKonstColor,
   toggleLitMaskBit,
+  withChannelLighting,
 } from './materialDoc';
 
+/** Two layers and nothing else the tests below do not set up explicitly. */
 function doc(): GxMaterialDoc {
-  return addLayer(addLayer(createDefaultMaterialDoc('road'), 'asphalt'), 'kerb');
+  return addLayer(addLayer(createDefaultMaterialDoc('road', 0), 'asphalt'), 'kerb');
 }
 
 describe('colour conversion', () => {
@@ -52,7 +54,7 @@ describe('colour conversion', () => {
 
 describe('layers', () => {
   it('adds a sampler, an SRT and a texgen together', () => {
-    const next = addLayer(createDefaultMaterialDoc(), 'grass');
+    const next = addLayer(createDefaultMaterialDoc('grassy', 0), 'grass');
     expect(next.samplers).toHaveLength(1);
     expect(next.texSrts).toHaveLength(1);
     expect(next.texGens).toHaveLength(1);
@@ -61,13 +63,13 @@ describe('layers', () => {
   });
 
   it('stops at the hardware limit of eight layers', () => {
-    let next = createDefaultMaterialDoc();
+    let next = createDefaultMaterialDoc('many', 0);
     for (let index = 0; index < 12; index++) next = addLayer(next, `tex${index}`);
     expect(next.samplers).toHaveLength(MAX_SAMPLERS);
   });
 
   it('tops a material up to a preset\'s layer count', () => {
-    expect(ensureLayerCount(createDefaultMaterialDoc(), 3, 'grass').samplers).toHaveLength(3);
+    expect(ensureLayerCount(createDefaultMaterialDoc('preset', 0), 3, 'grass').samplers).toHaveLength(3);
     // Never removes layers the material already has.
     expect(ensureLayerCount(doc(), 1, 'grass').samplers).toHaveLength(2);
   });
@@ -94,10 +96,10 @@ describe('layers', () => {
   });
 
   it('patches one layer and leaves the others alone', () => {
-    const next = patchSampler(doc(), 1, { lodBias: -1.5 });
-    expect(next.samplers[1].lodBias).toBe(-1.5);
-    expect(next.samplers[0].lodBias).toBe(0);
-    expect(patchSampler(doc(), 5, { lodBias: 1 }).samplers[1].lodBias).toBe(0);
+    const next = patchSampler(doc(), 1, { lodBias: -2.5 });
+    expect(next.samplers[1].lodBias).toBe(-2.5);
+    expect(next.samplers[0].lodBias).toBe(doc().samplers[0].lodBias);
+    expect(patchSampler(doc(), 5, { lodBias: 1 })).toEqual(doc());
   });
 
   it('patches a texgen', () => {
@@ -108,7 +110,7 @@ describe('layers', () => {
 describe('lighting channels', () => {
   it('patches one half of one channel', () => {
     const base: GxMaterialDoc = {
-      ...createDefaultMaterialDoc(),
+      ...createDefaultMaterialDoc('lit', 0),
       channels: [
         {
           materialColor: { r: 1, g: 1, b: 1, a: 1 },
@@ -159,12 +161,26 @@ describe('state blocks', () => {
   it('edits one cell of an indirect matrix', () => {
     const next = setIndMatrixCell(doc(), 1, 4, 0.5);
     expect(next.indMatrices[1].m[4]).toBe(0.5);
-    expect(next.indMatrices[0].m[4]).toBe(1);
-    expect(setIndMatrixCell(doc(), 1, 9, 1).indMatrices[1].m).toEqual([1, 0, 0, 0, 1, 0]);
+    expect(next.indMatrices[0].m[4]).toBe(doc().indMatrices[0].m[4]);
+    // A cell the 2x3 matrix does not have leaves it alone.
+    expect(setIndMatrixCell(doc(), 1, 9, 1).indMatrices[1].m).toEqual(doc().indMatrices[1].m);
   });
 
   it('edits an indirect matrix\'s scale exponent', () => {
     expect(patchIndMatrix(doc(), 2, { scaleExp: 3 }).indMatrices[2].scaleExp).toBe(3);
+  });
+});
+
+describe('preset lighting', () => {
+  it('turns lighting on for channel 0 without touching the alpha half', () => {
+    const base = createDefaultMaterialDoc('lit');
+    expect(base.channels[0].color.lightingEnabled).toBe(false);
+    const next = withChannelLighting(base);
+    expect(next.channels[0].color.lightingEnabled).toBe(true);
+    expect(next.channels[0].alpha.lightingEnabled).toBe(base.channels[0].alpha.lightingEnabled);
+    // Already on, or no channel at all: nothing to do.
+    expect(withChannelLighting(next)).toBe(next);
+    expect(withChannelLighting(createDefaultMaterialDoc('none', 0))).toBeTruthy();
   });
 });
 

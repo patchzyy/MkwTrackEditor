@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ADDABLE_NODE_TYPES,
   addNode,
   autoLayout,
   canConnect,
@@ -354,10 +355,32 @@ describe('auto layout', () => {
 });
 
 describe('raw stages', () => {
-  it('gives an unknown node type a read-only spec instead of throwing', () => {
+  it('has an ordering-only input and both outputs', () => {
     const spec = nodeSpec('rawStage');
     expect(spec.title).toBe('Raw stage');
-    expect(spec.inputs).toHaveLength(0);
+    expect(spec.inputs.map((socket) => socket.name)).toEqual(['prev']);
     expect(spec.outputs.map((socket) => socket.name)).toEqual(['out', 'alpha']);
+  });
+
+  it('cannot be added by hand — it only ever comes from the decompiler', () => {
+    expect(ADDABLE_NODE_TYPES).not.toContain('rawStage');
+    expect(() => createNode('rawStage', 0, 0)).toThrow();
+  });
+
+  it('falls back rather than throwing on a node type this build does not know', () => {
+    const spec = nodeSpec('somethingNewer' as never);
+    expect(spec.inputs).toHaveLength(0);
+    expect(spec.outputs).toHaveLength(0);
+  });
+});
+
+describe('stage templates', () => {
+  it('carries a node stage template through duplicate and paste', () => {
+    const stageTemplate = { texMap: 3 } as never;
+    const graph = graphOf([{ ...texture('t'), stageTemplate }, output('o')]);
+    const duplicated = duplicateNodes(graph, ['t']);
+    expect(duplicated.graph.nodes.find((node) => node.id === duplicated.newIds[0])).toHaveProperty('stageTemplate', stageTemplate);
+    const pasted = pasteNodes(graph, copyNodes(graph, ['t']), 0, 0);
+    expect(pasted.graph.nodes.find((node) => node.id === pasted.newIds[0])).toHaveProperty('stageTemplate', stageTemplate);
   });
 });
