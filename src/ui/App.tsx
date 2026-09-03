@@ -32,6 +32,10 @@ import { useSelection } from './state/useSelection';
 import { useSmokeHarness } from './state/useSmokeHarness';
 import { useTrackDocument } from './state/useTrackDocument';
 import { useTrackExport } from './state/useTrackExport';
+import { PlaytestHud } from './playtest/PlaytestHud';
+import { PlaytestMenu } from './playtest/PlaytestMenu';
+import { PLAYTEST_STATUS_MESSAGE, usePlaytestSession } from './playtest/usePlaytestSession';
+import './playtest/playtest.css';
 import { TopBar } from './topbar/TopBar';
 import { clearRecentTracks, readRecentTracks, rememberRecentTrack, type RecentTrack } from './topbar/recentFiles';
 import { PanelRail } from './components/Panel';
@@ -172,6 +176,13 @@ export function App() {
   const postEffectActions = usePostEffectActions({ track, postEffectResources, selection, history, setStatus });
   const clipboard = useClipboard({ track, selected, selectedEntities, selection, history, setStatus, entityLabel });
   const { downloadExport } = useTrackExport({ track, commonArchive, setStatus });
+  const playtest = usePlaytestSession({
+    track,
+    commonArchive,
+    commonArchiveUrl,
+    layout,
+    showToast: toasts.showToast,
+  });
 
   const selectedInspectorSection: InspectorSection = selected?.section === 'STGI' ? 'track' : 'object';
   const selectedInspector = selected ? (
@@ -301,6 +312,7 @@ export function App() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== '?' || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (document.documentElement.dataset.playtest === 'active') return;
       const target = event.target as HTMLElement | null;
       if (target?.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target?.tagName ?? '')) return;
       event.preventDefault();
@@ -393,6 +405,15 @@ export function App() {
         onShowShortcuts={() => setShortcutsOpen(true)}
         onExport={downloadExport}
         onChangeEditorMode={setEditorMode}
+        playtestControl={
+          <PlaytestMenu
+            options={playtest.options}
+            onChangeOptions={playtest.setOptions}
+            disabledReason={playtest.disabledReason}
+            loading={playtest.loading}
+            onStart={playtest.start}
+          />
+        }
       />
 
       <div ref={layout.shellBodyRef} className={layout.inspectorOpen ? 'shellBody' : 'shellBody inspectorCollapsed'} style={layout.workspaceStyle}>
@@ -454,6 +475,12 @@ export function App() {
             onInsertRoutePoint={editActions.insertRoutePoint}
             onInteractionStart={history.beginEditSession}
             onInteractionEnd={history.endEditSession}
+            playtestSession={playtest.viewportSession}
+            overlay={
+              playtest.active ? (
+                <PlaytestHud loading={playtest.loading} hudRef={playtest.hudRef} onRestart={playtest.restart} onExit={playtest.stop} />
+              ) : null
+            }
             topRightOverlay={
               modeUi.topRightOverlay ?? (fillBetweenPanelOpen && fillBetweenSelection ? (
                 <FillBetweenPanel
@@ -534,7 +561,7 @@ export function App() {
         />
       </div>
 
-      <StatusBar message={status} stats={statusStats} />
+      <StatusBar message={playtest.active ? PLAYTEST_STATUS_MESSAGE : status} stats={statusStats} />
       <ToastViewport toasts={toasts.toasts} onDismiss={toasts.dismissToast} />
       <ShortcutOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
     </main>

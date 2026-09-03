@@ -10,7 +10,7 @@ import * as Yaz0 from '../Common/Compression/Yaz0.js';
 
 import { assert, readString, hexzero, assertExists } from '../util.js';
 import ArrayBufferSlice from '../ArrayBufferSlice.js';
-import { mat4, vec3, vec4, type ReadonlyVec3 } from 'gl-matrix';
+import { mat4, quat, vec3, vec4, type ReadonlyVec3 } from 'gl-matrix';
 import { RRESTextureHolder, MDL0Model, MDL0ModelInstance, RRESFogSettings } from '../rres/render.js';
 import AnimationController from '../AnimationController.js';
 import { fillSceneParamsDataOnTemplate, GXRenderHelperGfx } from '../gx/gx_render.js';
@@ -157,6 +157,15 @@ interface EditorOverlayStartSlot {
     rotation: { x: number; y: number; z: number; };
     selected: boolean;
     hovered: boolean;
+}
+
+/**
+ * The player kart during a playtest session. Position is in game units (the scene applies its
+ * own 0.1 scale); rotation is the unit quaternion the physics runtime reports.
+ */
+export interface EditorPlaytestKart {
+    position: { x: number; y: number; z: number; };
+    rotation: { x: number; y: number; z: number; w: number; };
 }
 
 interface EditorOverlayFillBetweenPreview {
@@ -509,6 +518,9 @@ class MarioKartWiiRenderer {
     public materialHacks?: GXMaterialHacks;
     private editorOverlayData: EditorOverlayData = emptyEditorOverlayData;
     private editorStartPreviewObjects: EditorStartPreviewRenderer[] = [];
+    /** The player kart while a playtest session is running; hidden the rest of the time. */
+    private editorPlaytestKartObject: EditorStartPreviewRenderer | null = null;
+    private editorPlaytestActive = false;
     private editorViewMode: EditorViewMode = 'normal';
     private editorOverlayScratchA = vec3.create();
     private editorOverlayScratchB = vec3.create();
@@ -601,42 +613,18 @@ class MarioKartWiiRenderer {
     }
 
     private syncEditorStartPreviewObjects(device: GfxDevice): void {
-        if (this.editorOverlayData.startSlots.length === 0) {
+        // While a playtest is running there is exactly one kart on the track: the player's.
+        if (this.editorPlaytestActive || this.editorOverlayData.startSlots.length === 0) {
             for (const object of this.editorStartPreviewObjects)
                 object.visible = false;
             return;
         }
 
         if (this.editorStartPreviewObjects.length === 0) {
-            const driverBuffer = this.commonCache.findFileData(previewDummyDriverAssetPath);
-            const kartBuffer = this.commonCache.findFileData(previewDummyKartAssetPath);
-            if (driverBuffer === null || kartBuffer === null)
-                return;
-
-            const driverRRES = this.modelCache.ensureRRES(device, this, previewDummyDriverAssetPath, driverBuffer);
-            const kartRRES = this.modelCache.ensureRRES(device, this, previewDummyKartAssetPath, kartBuffer);
-            const driverModelName = driverRRES.mdl0[0]?.name;
-            const kartModelNames = kartRRES.mdl0.map((mdl0) => mdl0.name).filter((name) => name !== undefined);
-            if (driverModelName === undefined || kartModelNames.length === 0)
-                return;
-
             for (let i = 0; i < 12; i++) {
-                const driverInstance = new MDL0ModelInstance(this.textureHolder, assertExists(this.modelCache.modelCache.get(driverModelName)), driverModelName);
-                driverInstance.setSortKeyLayer(GfxRendererLayer.OPAQUE + 1);
-                const kartInstances = kartModelNames.map((kartModelName) => {
-                    const kartInstance = new MDL0ModelInstance(this.textureHolder, assertExists(this.modelCache.modelCache.get(kartModelName)), kartModelName);
-                    kartInstance.setSortKeyLayer(GfxRendererLayer.OPAQUE + 1);
-                    return kartInstance;
-                });
-                const driverChr0 = driverRRES.chr0.find((chr0) => chr0.name === 'wait') ?? driverRRES.chr0[0];
-                if (driverChr0 !== undefined)
-                    driverInstance.bindCHR0(this.animationController, driverChr0);
-                const kartChr0 = kartRRES.chr0.find((chr0) => chr0.name === 'body') ?? kartRRES.chr0[0];
-                if (kartChr0 !== undefined) {
-                    for (let j = 0; j < kartInstances.length; j++)
-                        kartInstances[j].bindCHR0(this.animationController, kartChr0);
-                }
-                const preview = new EditorStartPreviewRenderer(driverInstance, kartInstances, i);
+                const preview = this.createDummyKartRenderer(device, i);
+                if (preview === null)
+                    return;
                 this.editorStartPreviewObjects.push(preview);
                 this.baseObjects.push(preview);
             }
@@ -652,6 +640,76 @@ class MarioKartWiiRenderer {
             preview.visible = true;
             preview.setTransform(slot.position, slot.rotation);
         }
+    }
+
+    /**
+     * Builds one dummy kart + driver from the bundled preview assets. Shared by the start-grid
+     * preview and by the playtest kart, so both render exactly the same model.
+     */
+    private createDummyKartRenderer(device: GfxDevice, slotIndex: number): EditorStartPreviewRenderer | null {
+        const driverBuffer = this.commonCache.findFileData(previewDummyDriverAssetPath);
+        const kartBuffer = this.commonCache.findFileData(previewDummyKartAssetPath);
+        if (driverBuffer === null || kartBuffer === null)
+            return null;
+
+        const driverRRES = this.modelCache.ensureRRES(device, this, previewDummyDriverAssetPath, driverBuffer);
+        const kartRRES = this.modelCache.ensureRRES(device, this, previewDummyKartAssetPath, kartBuffer);
+        const driverModelName = driverRRES.mdl0[0]?.name;
+        const kartModelNames = kartRRES.mdl0.map((mdl0) => mdl0.name).filter((name) => name !== undefined);
+        if (driverModelName === undefined || kartModelNames.length === 0)
+            return null;
+
+        const driverInstance = new MDL0ModelInstance(this.textureHolder, assertExists(this.modelCache.modelCache.get(driverModelName)), driverModelName);
+        driverInstance.setSortKeyLayer(GfxRendererLayer.OPAQUE + 1);
+        const kartInstances = kartModelNames.map((kartModelName) => {
+            const kartInstance = new MDL0ModelInstance(this.textureHolder, assertExists(this.modelCache.modelCache.get(kartModelName)), kartModelName);
+            kartInstance.setSortKeyLayer(GfxRendererLayer.OPAQUE + 1);
+            return kartInstance;
+        });
+        const driverChr0 = driverRRES.chr0.find((chr0) => chr0.name === 'wait') ?? driverRRES.chr0[0];
+        if (driverChr0 !== undefined)
+            driverInstance.bindCHR0(this.animationController, driverChr0);
+        const kartChr0 = kartRRES.chr0.find((chr0) => chr0.name === 'body') ?? kartRRES.chr0[0];
+        if (kartChr0 !== undefined) {
+            for (let j = 0; j < kartInstances.length; j++)
+                kartInstances[j].bindCHR0(this.animationController, kartChr0);
+        }
+        return new EditorStartPreviewRenderer(driverInstance, kartInstances, slotIndex);
+    }
+
+    /**
+     * Drives the playtest kart. Pass the pose the physics runtime reported to show it, or `null`
+     * to leave playtest mode: the start-grid dummies and the KMP editor overlays come back.
+     *
+     * The wheels keep the model's own attachment-node placement rather than being pushed to the
+     * runtime's `wheelPositions`; the dummy kart's suspension nodes already sit where the body
+     * expects them, and moving them independently of the body reads worse, not better.
+     */
+    public setPlaytestKart(kart: EditorPlaytestKart | null): void {
+        const wasActive = this.editorPlaytestActive;
+        this.editorPlaytestActive = kart !== null;
+
+        if (kart === null) {
+            if (this.editorPlaytestKartObject !== null)
+                this.editorPlaytestKartObject.visible = false;
+            if (wasActive)
+                this.syncEditorStartPreviewObjects(this.renderHelper.device);
+            return;
+        }
+
+        if (!wasActive)
+            this.syncEditorStartPreviewObjects(this.renderHelper.device);
+
+        if (this.editorPlaytestKartObject === null) {
+            const preview = this.createDummyKartRenderer(this.renderHelper.device, 0);
+            if (preview === null)
+                return;
+            this.editorPlaytestKartObject = preview;
+            this.baseObjects.push(preview);
+        }
+
+        this.editorPlaytestKartObject.visible = true;
+        this.editorPlaytestKartObject.setTransformFromQuat(kart.position, kart.rotation);
     }
 
     public setEditorViewMode(mode: EditorViewMode): void {
@@ -1581,6 +1639,9 @@ class MarioKartWiiRenderer {
     }
 
     private drawEditorOverlay(): void {
+        // A playtest is a race, not an editing session: no gizmos, no path lines, no handles.
+        if (this.editorPlaytestActive)
+            return;
         const debugDraw = this.renderHelper.debugDraw;
         const solidCollision = this.editorViewMode === 'dev';
         for (let i = 0; i < this.editorOverlayData.collisionTriangles.length; i++) {
@@ -3739,6 +3800,18 @@ class EditorStartPreviewRenderer implements BaseObject {
         mat4.mul(this.modelMatrix, posMtx, this.modelMatrix);
     }
 
+    /**
+     * Same as {@link setTransform} but from a quaternion, which is what the playtest physics
+     * runtime reports. Position is still in game units; `posMtx` applies the 0.1 scene scale.
+     */
+    public setTransformFromQuat(position: { x: number; y: number; z: number; }, rotation: { x: number; y: number; z: number; w: number; }): void {
+        quat.set(startPreviewScratchQuat, rotation.x, rotation.y, rotation.z, rotation.w);
+        quat.normalize(startPreviewScratchQuat, startPreviewScratchQuat);
+        vec3.set(startPreviewScratchPos, position.x, position.y, position.z);
+        mat4.fromRotationTranslation(this.modelMatrix, startPreviewScratchQuat, startPreviewScratchPos);
+        mat4.mul(this.modelMatrix, posMtx, this.modelMatrix);
+    }
+
     public setVertexColorsEnabled(v: boolean): void {
         this.driverInstance.setVertexColorsEnabled(v);
         for (let i = 0; i < this.kartInstances.length; i++)
@@ -3796,6 +3869,9 @@ class EditorStartPreviewRenderer implements BaseObject {
         return null;
     }
 }
+
+const startPreviewScratchQuat = quat.create();
+const startPreviewScratchPos = vec3.create();
 
 const kartModelAttachmentNames = new Map<string, string[]>([
     ['handle', ['handle', 'handle_all', 'handle_drive']],

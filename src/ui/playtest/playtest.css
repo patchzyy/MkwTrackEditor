@@ -1,0 +1,222 @@
+/*
+ * Playtest mode: the top-bar start popover and the in-viewport race HUD.
+ * Everything uses the shell's design tokens from `src/styles.css`, so it matches the rest of
+ * the editor without introducing a second look.
+ */
+
+/* ------------------------------------------------------------------ start popover */
+
+.playtestMenu .uiPopover {
+  width: 268px;
+}
+
+.playtestMenuBody {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.playtestMenuHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.playtestMenuHeader strong {
+  color: var(--text);
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.playtestMenuBadge {
+  padding: 1px 6px;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-pill);
+  color: var(--warning-text);
+  background: var(--warning-soft);
+  font-size: var(--font-size-xs);
+}
+
+.playtestControls {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-overlay);
+}
+
+.playtestControlsRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.playtestControlsRow dt {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.playtestControlsRow dd {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.playtestMenuHint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+}
+
+.playtestStartButton {
+  justify-content: center;
+  width: 100%;
+}
+
+/* ------------------------------------------------------------------ race HUD */
+
+.playtestHud {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.playtestHudCorner {
+  position: absolute;
+  display: flex;
+  gap: var(--space-2);
+}
+
+.playtestHudTopLeft {
+  top: var(--space-4);
+  left: var(--space-4);
+  flex-direction: column;
+}
+
+.playtestHudTopRight {
+  top: var(--space-4);
+  right: var(--space-4);
+  align-items: center;
+}
+
+.playtestHudBottomLeft {
+  left: var(--space-4);
+  bottom: var(--space-4);
+}
+
+.playtestHudLap {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 75%);
+  text-transform: uppercase;
+}
+
+.playtestHudTime {
+  font-size: 28px;
+  font-weight: 650;
+  line-height: 1;
+  text-shadow: 0 2px 6px rgb(0 0 0 / 80%);
+}
+
+.playtestHudSpeed {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1;
+  text-shadow: 0 2px 6px rgb(0 0 0 / 80%);
+}
+
+.playtestHudButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--control-height-sm);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-overlay);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-2);
+  backdrop-filter: blur(10px);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.playtestHudButton:hover {
+  border-color: var(--border-hover);
+  color: var(--text);
+}
+
+.playtestHudButton kbd {
+  padding: 0 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  background: var(--surface-input);
+  font-family: inherit;
+  font-size: 10px;
+}
+
+.playtestHudCenter {
+  position: absolute;
+  top: 42%;
+  left: 50%;
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  font-size: 56px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-shadow: 0 3px 14px rgb(0 0 0 / 85%);
+  transform: translate(-50%, -50%);
+}
+
+.playtestHudCenter[data-stage='intro'] {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.playtestHudCenter[data-stage='finished'] {
+  font-size: 34px;
+}
+
+.playtestHudFinalTime {
+  color: var(--accent-text);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.playtestHudLoading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  padding: 6px var(--space-4);
+  border: 1px solid var(--border-overlay);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-2);
+  backdrop-filter: blur(10px);
+  font-size: var(--font-size-sm);
+  transform: translate(-50%, -50%);
+}
+
+/* While a session is running the canvas is not a picking surface any more. */
+.viewport.isPlaytesting canvas {
+  cursor: default;
+}
