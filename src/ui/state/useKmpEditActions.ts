@@ -465,6 +465,11 @@ export function useKmpEditActions(context: KmpEditActionsContext) {
   }
 
   function offsetSelectedEntities() {
+    offsetSelectedEntitiesBy(batchOffset);
+  }
+
+  /** Moves every selected record by `offset`. Callers that own their own offset field use this. */
+  function offsetSelectedEntitiesBy(batchOffset: Vec3) {
     if (!track?.kmp || selectedEntities.length < 2) return;
     if (batchOffset.x === 0 && batchOffset.y === 0 && batchOffset.z === 0) return;
     try {
@@ -656,6 +661,7 @@ export function useKmpEditActions(context: KmpEditActionsContext) {
     changePathGroupLinks,
     changeCameraHeaderField,
     offsetSelectedEntities,
+    offsetSelectedEntitiesBy,
     replaceSelectedObjectTypes,
     applyFillBetween,
     addCameraFromPose,

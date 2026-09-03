@@ -175,7 +175,7 @@ function validateCheckpoints(file: KmpFile): TrackIssue[] {
   }
 
   const validity = computeLapPathValidity(getCheckpointGraph(file));
-  issues.push(...validity.issues.map((issue) => fromPathIssue(issue, 'CKPH')));
+  issues.push(...validity.issues.map((issue) => fromPathIssue(issue, file, 'CKPT')));
 
   for (let index = 0; index < file.checkpoints.length; index++) {
     const checkpoint = file.checkpoints[index];
@@ -207,7 +207,7 @@ function validatePaths(file: KmpFile, options: ValidateKmpOptions): TrackIssue[]
   } else if (file.enemyGroups.length === 0) {
     issues.push({ level: 'error', code: 'enemy-route.no-groups', message: 'Enemy route points exist but are not grouped into a path.' });
   } else {
-    issues.push(...validatePathGraph(getEnemyPathGraph(file)).map((issue) => fromPathIssue(issue, 'ENPH')));
+    issues.push(...validatePathGraph(getEnemyPathGraph(file)).map((issue) => fromPathIssue(issue, file, 'ENPT')));
   }
 
   if (!options.battle) {
@@ -216,7 +216,7 @@ function validatePaths(file: KmpFile, options: ValidateKmpOptions): TrackIssue[]
     } else if (file.itemGroups.length === 0) {
       issues.push({ level: 'error', code: 'item-route.no-groups', message: 'Item route points exist but are not grouped into a path.' });
     } else {
-      issues.push(...validatePathGraph(getItemPathGraph(file)).map((issue) => fromPathIssue(issue, 'ITPH')));
+      issues.push(...validatePathGraph(getItemPathGraph(file)).map((issue) => fromPathIssue(issue, file, 'ITPT')));
     }
   }
   return issues;
@@ -512,18 +512,18 @@ function validateCounts(file: KmpFile): TrackIssue[] {
   return issues;
 }
 
-const PATH_SECTION_LABEL: Record<string, string> = {
-  ENPH: 'ENPH',
-  ITPH: 'ITPH',
-  CKPH: 'CKPH',
-};
-
-function fromPathIssue(issue: PathGraphIssue, section: keyof typeof PATH_SECTION_LABEL): TrackIssue {
+/**
+ * Path-graph issues are reported per group, but only points have entity ids. Point the issue at
+ * the group's first point so clicking it in the validation list selects something real.
+ */
+function fromPathIssue(issue: PathGraphIssue, file: KmpFile, section: 'ENPT' | 'ITPT' | 'CKPT'): TrackIssue {
+  const groups = section === 'ENPT' ? file.enemyGroups : section === 'ITPT' ? file.itemGroups : file.checkpointGroups;
+  const group = issue.groupIndex === undefined ? undefined : groups[issue.groupIndex];
   return {
     level: issue.level,
     code: issue.code,
     message: issue.message,
-    entityId: issue.groupIndex === undefined ? undefined : `${section}-${issue.groupIndex}`,
+    entityId: group === undefined ? undefined : `${section}-${group.start}`,
   };
 }
 

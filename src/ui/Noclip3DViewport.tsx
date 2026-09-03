@@ -1949,6 +1949,12 @@ export function Noclip3DViewport({
     return entity ? entity.position : null;
   }
 
+  /** True when `from`'s next-list already contains `to`. */
+  function isPathGroupLinked(section: PathLinkSection, from: number, to: number): boolean {
+    const graph = trackRef.current?.kmp?.pathGraphs.find((candidate) => candidate.pointSection === section);
+    return graph?.groups.find((group) => group.index === from)?.nextGroups.includes(to) ?? false;
+  }
+
   /**
    * Frames the free camera on a KMP entity (F). Mirrors `frameMeshSelection`, but sized from
    * the entity's own extent instead of a mesh bounding box.
@@ -2220,8 +2226,11 @@ export function Noclip3DViewport({
       setPathLinkDrag(null);
       suppressNextClickRef.current = true;
       if (drag.hoverGroup !== null && drag.hoverGroup !== drag.fromGroup) {
-        if (drag.fromSide === 'end') onLinkPathGroups?.(drag.section, drag.fromGroup, drag.hoverGroup);
-        else onLinkPathGroups?.(drag.section, drag.hoverGroup, drag.fromGroup);
+        const [from, to] = drag.fromSide === 'end' ? [drag.fromGroup, drag.hoverGroup] : [drag.hoverGroup, drag.fromGroup];
+        // Dragging onto a group that is already connected takes the connection away again, so
+        // the same gesture both wires and unwires.
+        if (isPathGroupLinked(drag.section, from, to)) onUnlinkPathGroups?.(drag.section, from, to);
+        else onLinkPathGroups?.(drag.section, from, to);
       }
       return;
     }
