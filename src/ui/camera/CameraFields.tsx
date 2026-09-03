@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react';
 import type { KmpEntity, Vec3 } from '../../lib/kmp';
 import { formatFrames, framesToSeconds, getCameraTypeInfo, secondsToFrames } from '../../lib/cameraPreview';
-import { VectorInputs } from '../inspector/fields/VectorInputs';
 import { NO_CAMERA_LINK, readCameraValues, type CameraValues } from './cameraDocument';
 import {
   CAMERA_FIELD_HINTS,
@@ -12,16 +11,56 @@ import {
   getViewStartLabel,
 } from './cameraFieldMeta';
 
-/** A label + control + one-line plain-language hint, in the inspector's property grid. */
-export function Field({ label, hint, children }: { label: string; hint: string; children: ReactNode }) {
+/**
+ * A label + control + one-line plain-language hint, in the inspector's property grid.
+ * `wide` stacks the control under the label, which the three-axis vector rows need.
+ */
+export function Field({ label, hint, wide, children }: { label: string; hint: string; wide?: boolean; children: ReactNode }) {
   return (
-    <label className="cameraField">
+    <label className={wide ? 'cameraField isWide' : 'cameraField'}>
       <span className="cameraFieldLabel">
         {label}
         <span className="cameraFieldHint">{hint}</span>
       </span>
       {children}
     </label>
+  );
+}
+
+const AXES = [
+  { key: 'x', label: 'X', hint: 'left / right' },
+  { key: 'y', label: 'Y', hint: 'up / down' },
+  { key: 'z', label: 'Z', hint: 'forward / back' },
+] as const;
+
+/**
+ * A three-axis row with the axis letter printed in front of each box. `VectorInputs` (shared with
+ * the KMP inspector) leaves the boxes unlabelled, which is fine in a narrow two-column row but
+ * unreadable in the camera inspector's full-width placement rows.
+ */
+function CameraVectorInputs({ value, onChange, step = 1 }: { value: Vec3; onChange: (value: Vec3) => void; step?: number }) {
+  return (
+    <div className="cameraVectorInputs">
+      {AXES.map((axis) => (
+        <span key={axis.key} className="cameraAxisInput" title={`${axis.label} — ${axis.hint}`}>
+          <span className="cameraAxisLetter" aria-hidden="true">
+            {axis.label}
+          </span>
+          <input
+            aria-label={axis.label}
+            type="number"
+            step={step}
+            /* Two decimals: track coordinates run to five digits, and the boxes are narrow.
+               Only the axis the user actually types into is written back, so nothing is rounded away. */
+            value={Number.isFinite(value[axis.key]) ? Number(value[axis.key].toFixed(2)) : 0}
+            onChange={(event) => {
+              const next = Number(event.currentTarget.value);
+              if (Number.isFinite(next)) onChange({ ...value, [axis.key]: next });
+            }}
+          />
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -192,7 +231,7 @@ export function CameraFields({ entity, cameraCount, routeCount, routePointCounts
           <NumberField
             label="Duration (seconds)"
             hint="The same length in seconds, if that is easier to think in."
-            value={Number(framesToSeconds(values.time).toFixed(3))}
+            value={Number(framesToSeconds(values.time).toFixed(2))}
             step={0.1}
             min={0}
             suffix="s"
@@ -205,24 +244,24 @@ export function CameraFields({ entity, cameraCount, routeCount, routePointCounts
         <>
           <div className="detailsSectionHeader">Placement</div>
           {relevance.position && (
-            <Field label="Position" hint={CAMERA_FIELD_HINTS.position}>
-              <VectorInputs value={values.position} onChange={setVec('position')} />
+            <Field label="Position" hint={CAMERA_FIELD_HINTS.position} wide>
+              <CameraVectorInputs value={values.position} onChange={setVec('position')} />
             </Field>
           )}
-          <Field label="Rotation" hint={CAMERA_FIELD_HINTS.rotation}>
-            <VectorInputs value={values.rotation} onChange={setVec('rotation')} />
+          <Field label="Rotation" hint={CAMERA_FIELD_HINTS.rotation} wide>
+            <CameraVectorInputs value={values.rotation} onChange={setVec('rotation')} />
           </Field>
         </>
       )}
 
       <div className="detailsSectionHeader">Framing</div>
-      <Field label={getViewStartLabel(values.type)} hint={getViewStartHint(values.type)}>
-        <VectorInputs value={values.viewStart} onChange={setVec('viewStart')} />
+      <Field label={getViewStartLabel(values.type)} hint={getViewStartHint(values.type)} wide>
+        <CameraVectorInputs value={values.viewStart} onChange={setVec('viewStart')} />
       </Field>
       {relevance.viewEnd && (
         <>
-          <Field label="Looks at (end)" hint={CAMERA_FIELD_HINTS.viewEnd}>
-            <VectorInputs value={values.viewEnd} onChange={setVec('viewEnd')} />
+          <Field label="Looks at (end)" hint={CAMERA_FIELD_HINTS.viewEnd} wide>
+            <CameraVectorInputs value={values.viewEnd} onChange={setVec('viewEnd')} />
           </Field>
           <NumberField
             label="Pan speed"

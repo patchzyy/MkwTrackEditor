@@ -77,12 +77,12 @@ describe('camera overlay', () => {
     ]);
   });
 
-  it('builds gizmos with type labels and selection state', () => {
+  it('labels gizmos in plain language and tracks selection state', () => {
     const document = makeDocument([makeCamera(0), makeCamera(1, { type: 0 })]);
     const overlay = buildCameraOverlay(document, { selectedIds: new Set(['CAME-1']), hoveredId: 'CAME-0' });
     expect(overlay.cameraGizmos).toHaveLength(2);
-    expect(overlay.cameraGizmos[0]).toMatchObject({ id: 'CAME-0', label: 'Cam 0 - OP_FixMoveAt', hovered: true, selected: false });
-    expect(overlay.cameraGizmos[1]).toMatchObject({ id: 'CAME-1', label: 'Cam 1 - Goal', selected: true, hovered: false });
+    expect(overlay.cameraGizmos[0]).toMatchObject({ id: 'CAME-0', label: 'Camera 0 · Opening pan (fixed)', hovered: true, selected: false });
+    expect(overlay.cameraGizmos[1]).toMatchObject({ id: 'CAME-1', label: 'Camera 1 · Goal', selected: true, hovered: false });
   });
 
   it('numbers the opening chain and links it', () => {

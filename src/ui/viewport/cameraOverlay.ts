@@ -7,7 +7,7 @@ import { getKmpCameraHeader, type KmpDocument, type KmpEntity, type Vec3 } from 
 import {
   NO_CAMERA_LINK,
   buildOpeningCameraChain,
-  getCameraTypeLabel,
+  getCameraTypeInfo,
   type CameraPreviewDef,
   type CameraRoutePoint,
   type OpeningCameraStep,
@@ -120,7 +120,7 @@ export function buildCameraOverlay(
       routeIndex: def.routeIndex,
       selected: options.selectedIds?.has(entity.id) ?? false,
       hovered: options.hoveredId === entity.id,
-      label: `Cam ${entity.index} - ${getCameraTypeLabel(def.type)}`,
+      label: `Camera ${entity.index} · ${getCameraTypeInfo(def.type).label}`,
       openingOrder: openingOrderByIndex.get(entity.index) ?? 0,
     };
   });

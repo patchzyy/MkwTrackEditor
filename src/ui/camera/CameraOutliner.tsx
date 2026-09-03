@@ -88,17 +88,17 @@ export function CameraOutliner({
                 </span>
                 <span className="cameraRowText">
                   <span className="cameraRowTitle">
-                    Camera {row.index}
+                    <span className="cameraRowName">Camera {row.index}</span>
                     <span className="cameraRowType">{row.typeInfo.label}</span>
                   </span>
                   <span className="cameraRowBadges">
                     {row.openingOrder > 0 && <span className="cameraBadge isOpening">Opening {row.openingOrder}</span>}
                     {row.selectionOrder > 0 && <span className="cameraBadge isSelection">Menu {row.selectionOrder}</span>}
-                    {row.usedByAreas.map((areaIndex) => (
-                      <span key={areaIndex} className="cameraBadge isArea">
-                        Used by area {areaIndex}
+                    {describeAreaUse(row.usedByAreas) && (
+                      <span className="cameraBadge isArea" title={`Triggered by ${row.usedByAreas.map((index) => `area ${index}`).join(', ')}`}>
+                        {describeAreaUse(row.usedByAreas)}
                       </span>
-                    ))}
+                    )}
                     {row.routeIndex !== NO_CAMERA_LINK && <span className="cameraBadge isRoute">Path {row.routeIndex}</span>}
                   </span>
                 </span>
@@ -161,6 +161,14 @@ export function CameraOutliner({
       </div>
     </aside>
   );
+}
+
+/** One badge for the areas that trigger a camera; a long list collapses to a count. */
+function describeAreaUse(areas: readonly number[]): string | null {
+  if (areas.length === 0) return null;
+  if (areas.length === 1) return `Used by area ${areas[0]}`;
+  if (areas.length === 2) return `Used by areas ${areas[0]} and ${areas[1]}`;
+  return `Used by ${areas.length} areas`;
 }
 
 function toCssColor(color: [number, number, number]): string {

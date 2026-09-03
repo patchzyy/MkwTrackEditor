@@ -56,11 +56,6 @@ export function getCameraTypeInfo(type: number): CameraTypeInfo {
   return CAMERA_TYPES[type] ?? UNKNOWN_CAMERA_TYPE;
 }
 
-export function getCameraTypeLabel(type: number): string {
-  const info = getCameraTypeInfo(type);
-  return info.id < 0 ? `Type ${type}` : `${info.name}`;
-}
-
 export function isOpeningCameraType(type: number): boolean {
   return type === 4 || type === 5 || type === 6;
 }

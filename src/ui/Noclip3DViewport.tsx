@@ -1178,6 +1178,17 @@ export function Noclip3DViewport({
     syncSceneOverlay(trackRef.current, selectedIdRef.current);
   }, [mode, viewerReady, sceneKey]);
 
+  // Camera mode is about cameras, so it starts with the racing-line overlays (enemy/item routes,
+  // checkpoints, respawns, object routes) switched off; camera markers, the routes they fly and
+  // the areas that trigger them stay on. The eye menu still overrides this, and leaving the mode
+  // puts the user's own choices back.
+  useEffect(() => {
+    if (mode !== 'camera') return;
+    const saved = routeVisibilityRef.current;
+    setRouteVisibility({ ...saved, ENPT: false, ITPT: false, CKPT: false, JGPT: false, POTI_OBJECT: false, POTI_CAMERA: true, AREA: true, CAME: true });
+    return () => setRouteVisibility(saved);
+  }, [mode]);
+
   // Re-apply persisted mesh edits after the scene (re)loads.
   useEffect(() => {
     const scene = getMeshScene();
@@ -1273,8 +1284,15 @@ export function Noclip3DViewport({
         if (started) devCameraPreviewRef.current = cameraPreviewRef.current;
         return started;
       },
-      getCameraOverlay: () => buildCameraOverlay(trackRef.current?.kmp ?? null),
+      getCameraOverlay: () =>
+        buildCameraOverlay(trackRef.current?.kmp ?? null, {
+          selectedIds: new Set([...(selectedIdsRef.current ?? []), ...(selectedIdRef.current ? [selectedIdRef.current] : [])]),
+          hoveredId: hoveredIdRef.current,
+        }),
       getCameras: () => cameraPreviewDefsRef.current,
+      /** The overlay handle under a screen point — how probes locate a camera view-point handle. */
+      pickHandleAt: (clientX: number, clientY: number) =>
+        canvasRef.current ? pickSceneHandle(sceneRef.current, clientX, clientY, canvasRef.current) : null,
       /** Grabs the WebGL frame as a PNG data URL (the drawing buffer is not preserved). */
       captureFrame: async (): Promise<string | null> => {
         devCaptureRef.current = { request: true, dataUrl: null };

@@ -5,6 +5,9 @@
  */
 
 .cameraPanel .placeAssetsHeader {
+  /* The panel is a column flexbox; without this the header shrinks to its 48px min-height and
+     the camera count spills over the list below it. */
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
 }
@@ -30,6 +33,8 @@
   width: 100%;
 }
 
+/* No inner scroller here: `.cameraPanelBody` is a height-constrained grid, so a scrolling child
+   has an automatic minimum size of zero and its auto track collapses. The whole panel scrolls. */
 .cameraList {
   display: grid;
   gap: 3px;
@@ -90,6 +95,10 @@
   min-width: 0;
   font-size: 12px;
   font-weight: 600;
+}
+
+.cameraRowName {
+  white-space: nowrap;
 }
 
 .cameraRowType {
@@ -359,6 +368,13 @@
   font-size: 12px;
 }
 
+/* Three-axis rows need the whole panel width, so the control drops under the label instead of
+   fighting it for the 42% column. */
+.cameraField.isWide {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 7px;
+}
+
 .cameraFieldLabel {
   display: grid;
   gap: 3px;
@@ -396,10 +412,38 @@
   background: #171b21;
 }
 
-.cameraField .vectorInputs {
+.cameraVectorInputs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
+}
+
+.cameraAxisInput {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: center;
+}
+
+/* Track coordinates run to five digits plus a sign, so these boxes give the number every pixel. */
+.cameraAxisInput input {
+  padding: 0 3px;
+}
+
+.cameraAxisLetter {
+  height: 28px;
+  border: 1px solid #343d4a;
+  border-right: 0;
+  color: #8a95a5;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 28px;
+  text-align: center;
+  background: #171b21;
+}
+
+.cameraAxisInput:focus-within .cameraAxisLetter {
+  border-color: #5fd6ff;
+  color: #b6e9ff;
 }
 
 .cameraNumberWithSuffix {
