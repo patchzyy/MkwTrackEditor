@@ -19,7 +19,6 @@
 import {
   BRRES_MODELS_GROUP,
   BRRES_TEXTURES_GROUP,
-  findSubFile,
   makeSubFileNameReader,
   readBrresRaw,
   writeBrres,
@@ -508,8 +507,14 @@ function declareStringRefs(raw: BrresRaw, limit: number): void {
         'cannot be re-derived, so a texture cannot be added or removed here.',
       );
     }
-    const editor = new Mdl0Editor(subFile.data, makeSubFileNameReader(raw, subFile));
-    subFile.stringRefs = editor.collectStringRefs();
+    try {
+      subFile.stringRefs = new Mdl0Editor(subFile.data, makeSubFileNameReader(raw, subFile)).collectStringRefs();
+    } catch (cause) {
+      throw new GxMaterialError(
+        `The names of model "${subFile.name}" cannot be re-derived, so a texture cannot be added or removed here.`,
+        { cause },
+      );
+    }
   }
 }
 
@@ -622,5 +627,3 @@ export function renameTexture(brres: Uint8Array, oldName: string, newName: strin
   }
   return writeBrres(raw);
 }
-
-export { findSubFile };

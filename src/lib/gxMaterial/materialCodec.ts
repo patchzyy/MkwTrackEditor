@@ -30,7 +30,6 @@ import {
   bpValue,
   rawBpWriteAt,
   createRegisterFile,
-  isCompareOp,
   packBits,
   readDisplayList,
   signExtend,
@@ -60,7 +59,6 @@ import {
   type GxTexSrtDoc,
 } from './types';
 
-export const MAT_HEADER_SIZE = 0x40;
 export const MAT_STRUCT_SIZE = 0x418;
 export const MAT_LAYER_SIZE = 0x34;
 export const TEV_BLOCK_SIZE = 0x200;

@@ -75,8 +75,6 @@ interface HalfOp {
   template?: GxTevStageDoc;
   /** Set by the decompiler so the two halves of one original stage find each other again. */
   group?: number;
-  /** The whole stage, when this half came from a `rawStage` node. */
-  verbatim?: GxTevStageDoc;
 }
 
 interface Slot {
@@ -119,23 +117,8 @@ const KONST_ALPHA_FOR_SLOT = [GX.KonstAlphaSel.KASEL_K0_A, GX.KonstAlphaSel.KASE
 
 const MATH_TYPES = new Set(['multiply', 'add', 'subtract', 'lerp', 'scale', 'compare', 'rawStage']);
 
-export interface CompileProvenance {
-  /** For each emitted stage, the node ids whose lowering produced it. */
-  stageNodes: string[][];
-}
-
-export interface InternalCompileResult extends CompiledShader {
-  provenance: CompileProvenance;
-}
-
 export function compileShaderGraph(graph: ShaderGraph, material: GxMaterialDoc): CompiledShader {
-  const { provenance: _provenance, ...result } = compileShaderGraphInternal(graph, material);
-  return result;
-}
-
-export function compileShaderGraphInternal(graph: ShaderGraph, material: GxMaterialDoc): InternalCompileResult {
-  const compiler = new Compiler(graph, material);
-  return compiler.run();
+  return new Compiler(graph, material).run();
 }
 
 function emptyUsage(): CompiledShader['usage'] {
@@ -147,7 +130,6 @@ class Compiler {
   private readonly diagnostics: GraphDiagnostic[] = [];
   private readonly usage = emptyUsage();
   private readonly slots: Slot[] = [];
-  private readonly stageNodes: string[][] = [];
   /** Nodes already lowered in the current pipeline, and where their value ended up. */
   private memo = new Map<string, Operand>();
   private consumers = new Map<string, number>();
@@ -169,7 +151,7 @@ class Compiler {
     for (const node of graph.nodes) this.nodes.set(node.id, node);
   }
 
-  public run(): InternalCompileResult {
+  public run(): CompiledShader {
     const output = this.graph.nodes.find((node) => node.type === 'output');
     if (!output) {
       this.error('This shader has no material output node.', undefined);
@@ -193,13 +175,13 @@ class Compiler {
     return this.result();
   }
 
-  private result(): InternalCompileResult {
+  private result(): CompiledShader {
     const ok = !this.failed && !this.diagnostics.some((diagnostic) => diagnostic.severity === 'error');
     const tevStages = ok ? this.slots.map((slot) => assembleStage(slot)) : [];
     for (const key of Object.keys(this.usage) as Array<keyof CompiledShader['usage']>) {
       this.usage[key] = [...new Set(this.usage[key])].sort((a, b) => a - b);
     }
-    return { tevStages, diagnostics: this.diagnostics, ok, usage: this.usage, provenance: { stageNodes: this.stageNodes } };
+    return { tevStages, diagnostics: this.diagnostics, ok, usage: this.usage };
   }
 
   // ------------------------------------------------------------------------------ graph helpers
@@ -281,7 +263,7 @@ class Compiler {
         clamp: true,
         regId: GX.Register.PREV,
         bindings: result.bindings,
-      }, [root.from.node]);
+      });
     }
   }
 
@@ -543,7 +525,6 @@ class Compiler {
       bindings: {},
       template: stage,
       group: groupOf(node),
-      verbatim: stage,
     });
     if (stage.texMap !== GX.TexMapID.TEXMAP_NULL) {
       if (stage.texMap >= this.material.samplers.length) {
@@ -558,7 +539,6 @@ class Compiler {
     }
     const slot: Slot = { color: half('rgb'), alpha: half('alpha'), group: groupOf(node) };
     this.slots.push(slot);
-    this.stageNodes.push([nodeId]);
     this.rawSlots.set(nodeId, slot);
     this.prevOperands = this.prevOperands.filter((operand) => operand.register !== GX.Register.PREV);
     return this.rawStageResult(stage);
@@ -608,7 +588,7 @@ class Compiler {
       const [a, b, c] = fused.kind === 'lerp' ? rest : [zero, rest[0], rest[1]];
       inputs = [a.input, b.input, c.input, d.input];
       op = node.type === 'subtract' ? GX.TevOp.SUB : GX.TevOp.ADD;
-      return this.emitMath(node, inputs, op, [a, b, c, d], fused.node.id);
+      return this.emitMath(node, inputs, op, [a, b, c, d]);
     }
 
     switch (node.type) {
@@ -697,7 +677,7 @@ class Compiler {
     return undefined;
   }
 
-  private emitMath(node: GraphNode, inputs: [number, number, number, number], op: GX.TevOp, operands: Operand[], extraNodeId?: string): Operand {
+  private emitMath(node: GraphNode, inputs: [number, number, number, number], op: GX.TevOp, operands: Operand[]): Operand {
     const bindings = this.mergeOperandBindings(operands, node.id);
     const template = node.stageTemplate;
     const half: HalfOp = {
@@ -715,7 +695,7 @@ class Compiler {
       half.bias = GX.TevBias.$HWB_COMPARE;
       half.scale = ((op - GX.TevOp.COMP_R8_GT) >>> 1) as GX.TevScale;
     }
-    this.place(half, extraNodeId ? [node.id, extraNodeId] : [node.id]);
+    this.place(half);
 
     this.prevOperands = this.prevOperands.filter((operand) => operand.register !== GX.Register.PREV);
     const result: Operand = {
@@ -732,14 +712,13 @@ class Compiler {
    * Puts a half-op on a stage: onto the slot with the same group when the decompiler paired them,
    * onto the first slot whose other half is free and compatible, or onto a new stage.
    */
-  private place(half: HalfOp, nodeIds: string[]): void {
+  private place(half: HalfOp): void {
     const key = this.domain === 'rgb' ? 'color' : 'alpha';
     const other = this.domain === 'rgb' ? 'alpha' : 'color';
     if (half.group !== undefined) {
       const index = this.slots.findIndex((candidate) => candidate.group === half.group && candidate[key] === undefined);
       if (index >= 0 && bindingsCompatible(half.bindings, this.slots[index][other]?.bindings)) {
         this.slots[index][key] = half;
-        this.stageNodes[index].push(...nodeIds);
         this.cursor = index + 1;
         return;
       }
@@ -752,12 +731,10 @@ class Compiler {
       if (slot.group !== undefined && half.group !== undefined) continue;
       if (!bindingsCompatible(half.bindings, slot[other]?.bindings)) continue;
       slot[key] = half;
-      this.stageNodes[index].push(...nodeIds);
       this.cursor = index + 1;
       return;
     }
     this.slots.push({ [key]: half, group: half.group } as Slot);
-    this.stageNodes.push(nodeIds);
     this.cursor = this.slots.length;
   }
 
@@ -803,7 +780,7 @@ class Compiler {
       regId: register,
       bindings: {},
     };
-    this.place(half, ownerId ? [ownerId] : []);
+    this.place(half);
     const moved: Operand = {
       input: this.domain === 'rgb' ? COLOR_REGISTER_INPUT[register] : ALPHA_REGISTER_INPUT[register],
       bindings: {},
@@ -873,13 +850,9 @@ class Compiler {
     const groups = this.slots.map((slot) => slot.group);
     if (groups.some((group) => group === undefined)) return;
     if (new Set(groups).size !== groups.length) return;
-    const order = this.slots.map((slot, index) => index).sort((a, b) => this.slots[a].group! - this.slots[b].group!);
-    const slots = order.map((index) => this.slots[index]);
-    const nodes = order.map((index) => this.stageNodes[index]);
+    const sorted = [...this.slots].sort((a, b) => a.group! - b.group!);
     this.slots.length = 0;
-    this.slots.push(...slots);
-    this.stageNodes.length = 0;
-    this.stageNodes.push(...nodes);
+    this.slots.push(...sorted);
   }
 }
 
