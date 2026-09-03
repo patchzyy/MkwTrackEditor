@@ -355,7 +355,41 @@ export function validateTrack(track: TrackDocument, options: ValidateTrackOption
     ...validateObjectPresenceFlags(track, options.common),
     ...validateItemBoxSettings(track, options.common),
     ...validateKnownObjectPitfalls(track),
+    ...validateMeshEdits(track),
   ];
+}
+
+/**
+ * Model-mode checks that can be made without re-reading the course model, so they are cheap
+ * enough to run on every edit. The expensive ones happen in `bakeCourseModel` at export time.
+ */
+function validateMeshEdits(track: TrackDocument): TrackIssue[] {
+  const imports = track.importedMeshes ?? [];
+  if (imports.length === 0) return [];
+  const issues: TrackIssue[] = [];
+
+  for (const mesh of imports) {
+    // A duplicate of the track's own geometry carries no file of its own.
+    if (mesh.sourceShape || !mesh.visible) continue;
+    if (track.meshImportSources?.[mesh.sourcePath]) continue;
+    issues.push({
+      level: 'error',
+      code: 'model.import-missing',
+      message: `The model for the placed object "${mesh.label ?? mesh.sourcePath}" is not loaded, so it would be left out of the exported track.`,
+    });
+  }
+
+  const courseModel = track.archiveEntries.some(
+    (entry) => entry.type === 'file' && entry.path.toLowerCase().endsWith('course_model.brres') && entry.data,
+  );
+  if (!courseModel) {
+    issues.push({
+      level: 'error',
+      code: 'model.no-course-model',
+      message: 'This track has no course model, so the geometry edits cannot be exported.',
+    });
+  }
+  return issues;
 }
 
 function tryReadCourseKmp(track: TrackDocument): KmpFile | undefined {

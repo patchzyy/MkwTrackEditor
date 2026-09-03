@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { createIdentityMeshTransform, type EditorMeshTarget, type ImportedMesh, type MeshEdit } from './brresEditor';
-import { COURSE_MODEL_PATH, exportTrack, loadTrackBytes, validateExportBytes, type TrackDocument } from './track';
+import { COURSE_MODEL_PATH, exportTrack, loadTrackBytes, validateExportBytes, validateTrack, type TrackDocument } from './track';
 import { CUSTOM_TRACK_DIR, NINTENDO_TRACK_DIR, listTracks, readTrackBytes } from './realTrackFixtures.testdata';
 import { collectDrawOps } from './brres/meshBake';
 import { findObjectBrres, openCourseModel, parseWithNoclip } from './brres/brresFixtures.testdata';
@@ -165,5 +165,50 @@ describe.skipIf(trackPaths.length === 0)('Model mode export', () => {
     };
     // The export still succeeds; the warning is what the UI shows the user.
     expect(() => exportTrack(edited, RAW)).not.toThrow();
+  });
+});
+
+describe.skipIf(trackPaths.length === 0)('Model mode validation', () => {
+  it('flags a placed object whose model is not loaded', async () => {
+    const path = trackPaths[0];
+    const name = path.split(/[\/]/).pop()!;
+    const track = await loadTrackBytes(readTrackBytes(path), name, { brresSummaryLimit: 0 });
+    const issues = validateTrack({
+      ...track,
+      importedMeshes: [{
+        id: 'gone',
+        sourcePath: 'not-loaded.brres',
+        modelName: '',
+        label: 'Missing object',
+        transform: createIdentityMeshTransform(),
+        visible: true,
+      }],
+    });
+    expect(issues.some((issue) => issue.code === 'model.import-missing' && issue.level === 'error')).toBe(true);
+  });
+
+  it('says nothing about a placed object whose model is loaded', async () => {
+    const path = trackPaths[0];
+    const name = path.split(/[\/]/).pop()!;
+    const track = await loadTrackBytes(readTrackBytes(path), name, { brresSummaryLimit: 0 });
+    const issues = validateTrack({
+      ...track,
+      importedMeshes: [{
+        id: 'here',
+        sourcePath: 'thing.brres',
+        modelName: '',
+        transform: createIdentityMeshTransform(),
+        visible: true,
+      }],
+      meshImportSources: { 'thing.brres': new Uint8Array(16) },
+    });
+    expect(issues.some((issue) => issue.code === 'model.import-missing')).toBe(false);
+  });
+
+  it('does not look at mesh edits when there are none', async () => {
+    const path = trackPaths[0];
+    const name = path.split(/[\/]/).pop()!;
+    const track = await loadTrackBytes(readTrackBytes(path), name, { brresSummaryLimit: 0 });
+    expect(validateTrack(track).some((issue) => issue.code.startsWith('model.'))).toBe(false);
   });
 });
