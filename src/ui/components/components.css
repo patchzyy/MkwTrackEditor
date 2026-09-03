@@ -681,7 +681,22 @@
 .uiVectorInput {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
+  gap: var(--space-2);
+}
+
+/*
+ * Three-column X/Y/Z rows need the whole panel width. Beside a label column, each axis gets
+ * roughly a third of half the inspector, which is not enough for a five-digit track
+ * coordinate, so a field row holding a vector drops its label onto its own line.
+ */
+.uiField:has(.uiVectorInput) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.uiField:has(.uiVectorInput) > .uiFieldLabel,
+.uiField:has(.uiVectorInput) > .uiFieldControl,
+.uiField:has(.uiVectorInput) > .uiFieldHelp {
+  grid-column: 1;
 }
 
 /* ---------------------------------------------------------------- select */

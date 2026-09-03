@@ -952,9 +952,15 @@ h4 {
   color: var(--text);
   background: var(--surface-3);
   font-size: var(--font-size-sm);
+  /* Matches `.uiButton` exactly, so a legacy button and a design-system one are the same. */
+  font-weight: 500;
   line-height: 1;
   white-space: nowrap;
   cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .button:hover:not(:disabled) {
@@ -1075,6 +1081,25 @@ h4 {
 .propertyGrid label:last-child,
 .advancedDetailsBody label:last-child {
   border-bottom: 0;
+}
+
+/*
+ * Multi-column value rows (X/Y/Z vectors, the four object settings, the post-effect triples)
+ * take the whole row and put their label above, for the same reason as `.uiField` in
+ * components.css: beside a label column each column is far too narrow for a track coordinate.
+ */
+.propertyGrid label:has(.vectorInputs),
+.propertyGrid label:has(.settingInputs),
+.advancedDetailsBody label:has(.vectorInputs),
+.advancedDetailsBody label:has(.settingInputs) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.propertyGrid label:has(.vectorInputs) > *,
+.propertyGrid label:has(.settingInputs) > *,
+.advancedDetailsBody label:has(.vectorInputs) > *,
+.advancedDetailsBody label:has(.settingInputs) > * {
+  grid-column: 1;
 }
 
 .propertyGrid label > div,

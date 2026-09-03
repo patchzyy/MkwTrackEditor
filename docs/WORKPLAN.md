@@ -290,21 +290,34 @@ Section 7 is done: the editor is one dark 3D-editor shell instead of a pile of a
   The loaded track's own archives now show their previews too instead of a generic icon.
   Measured in the browser: of 24 sampled tiles on `Z0.szs`, 24 decode to a drawn, multi-colour
   image (73–1884 distinct colours); 201 of 221 shared-object tiles have a real render.
-- **Modes restyled onto the tokens**: `camera.css`, `model.css` and `visual.css` went from 132
-  raw colour literals and zero `var(--…)` to 3 literals and 316 token references, with an
-  empty selector-set diff so every probe hook survived. The left dock's default width went
-  232px → 272px because the camera/model/visual outliners were being clipped at 232.
+- **All four modes restyled onto the tokens**: `camera.css`, `model.css`, `visual.css` and
+  `kmp.css` went from 170 raw colour literals and zero `var(--…)` to 3 literals and 400 token
+  references, each with an empty selector-set diff so every probe hook survived. The left
+  dock's default width went 232px → 272px because the camera/model/visual/KMP outliners were
+  being clipped at 232.
+- **Vector rows fixed** (agent J's complaint): at the old 320px inspector, an X/Y/Z row beside
+  a label column left about 40px per axis, which clips a five-digit track coordinate. Any
+  field row holding a vector (or the four-column object settings) now takes the whole row with
+  its label above, and the inspector's default width is 380px. Measured in the browser at
+  1280x800: the narrowest axis field is 77px and nothing is clipped, with values like
+  `-21164.8887`.
+- **KMP mode** keeps its own outliner rather than moving to `TreeView`: a KMP row can stand for
+  many entities, section rows carry viewport visibility layers, rows carry a path-group accent
+  and a validation badge, and shift-click does range selection — `TreeView` would end up shaped
+  entirely by that one caller. `docs/UI.md` §5 records that decision and the six DOM contracts
+  `scripts/probe-kmp-mode-ui.js` depends on, so a later unification knows what it must keep.
 - **Removed**: the "Model Nodes" content-browser folder (model mode's outliner supersedes it,
   per agent G), the dead archive-node inspector block, `CourseAssetThumbnail`, and the dead
   `.status`, `.dockRail*`, `.quickObjects*` and `.previewId` CSS.
 
-Verified with `npx tsc --noEmit -p tsconfig.json` (clean), `npx vitest run` (573 passed / 1
-skipped, up from 502), `npx vite build` (ok), and real-browser probes on `Z0.szs`, `Z10.szs`
+Verified with `npx tsc --noEmit -p tsconfig.json` (clean), `npx vitest run` (651 passed / 1
+skipped, up from the 580 baseline after J's KMP merge), `npx vite build` (ok), and real-browser
+probes on `Z0.szs`, `Z10.szs`
 and a Nintendo track at 1600x1000 and 1280x800 (`scripts/ui-shell-probe.mjs` with
 `scripts/probe-ui-shell.js`, `probe-thumbnails.js`, `probe-browser-drag.js`). Every other
 agent's probe was re-run green against the restyled build: `probe-camera-ui.js`,
 `probe-camera-handle-drag.js`, `probe-model-mode-ui.js`, `probe-visual-ui.js`,
-`probe-kmp-regression.js`.
+`probe-kmp-mode-ui.js` and `probe-kmp-regression.js`.
 
 Two probe selectors were updated because the redesign deliberately renamed the hook: `.status`
 → `.uiStatusMessage` and `.button.primary` → `.topBarRight .uiButton--primary` in
@@ -312,9 +325,9 @@ Two probe selectors were updated because the redesign deliberately renamed the h
 (the shared `NumberInput` is a text input with `role="spinbutton"` so it can support
 drag-to-scrub and a comma decimal separator).
 
-**Not done:** `src/ui/kmp/**` still uses the pre-redesign markup — agent J was rewriting it in
-parallel, so it was left alone by agreement. It already *looks* right (its shell classes are
-tokenised); `docs/UI.md` §5 lists exactly what a later pass has to do to move it onto the
-primitives. `npm run smoke:browser` still cannot pass on this host: it runs headless Edge,
+**Not done:** two cosmetic loose ends listed in `docs/UI.md` §6 — KMP mode uses raw `title=`
+attributes where the rest of the app uses the styled `Tooltip`, and the four mode panels lay
+their button rows out by hand instead of using `FieldRow`/`Toolbar`.
+`npm run smoke:browser` still cannot pass on this host: it runs headless Edge,
 which only gets SwiftShader, and noclip refuses to start there — its non-WebGL checks
 (`hasInspectorToggle`, `hasContentBrowserToggle`, `hasObjectThumbnailImage`) do pass.

@@ -351,32 +351,46 @@ under `mkw.editor.browserTileSize.v1`.
 
 ---
 
-## 5. Migrating KMP mode onto this system
+## 5. KMP mode
 
-`src/ui/kmp/**` is the one area still on the pre-redesign markup — it was being rewritten in
-parallel and was deliberately left alone. The shell classes it uses (`.placeAssetsPanel`,
-`.panelHeader`, `.propertyGrid`, `.detailsSectionHeader`, `.vectorInputs`, `.inlineAction`,
-`.button`, `.muted`) are all still defined in `src/styles.css` and tokenised, so KMP mode
-already *looks* right. What is left is to replace the hand-rolled markup with primitives:
+KMP mode (`src/ui/kmp/**`) is on this system: `kmp.css` uses the tokens, its rows and buttons
+use the same selection recipe and control metrics as everything else, and it sits in the same
+dock/rail/status-bar/toast shell. Its inspector renders the shared property sheet, so its
+fields are `Field` + `NumberInput` / `VectorInput` / `Select` already.
 
-1. **Left panel** → `Panel` + `PanelHeader` + `PanelBody`, keeping the outer
-   `aside.placeAssetsPanel` class so the shell's dock grid, rail and resize handle keep
-   working. Do not add a collapse button or a resize handle inside the panel; the shell owns
-   both.
-2. **Section lists** (start points, enemy routes, checkpoints, objects, areas…) → one `TreeView`
-   with `column="eye"`. Group nodes are the sections, leaves are the entities; put the index and
-   any route link in `detail`. Use `ancestorIds` to reveal an entity selected from the viewport,
-   and `onContextMenu` + `ContextMenu` for the per-entity actions.
-3. **Inspector property rows** → `Field` + `NumberInput` / `VectorInput` / `Select` / `Toggle`
-   inside `PanelSection`s. `Field` renders the same `.uiField` shape the property grid already
-   styles, so rows can be converted a few at a time. Use `asGroup` on vector rows.
-4. **Section headers** → `PanelSection`, with the open/closed state persisted if you want it to
-   survive a reload.
-5. **Free-text `setStatus` calls** stay as they are — the status bar classifies them and toasts
-   the ones that matter. Do not add bespoke banners.
-6. **Labels**: audit for section codes on the way through; the target is that nothing in KMP
-   mode shows a four-letter section name to the user.
+**It keeps its own outliner** (`KmpOutliner.tsx`) rather than using `TreeView`, on purpose:
 
-The primitives already cover everything KMP mode needs; nothing new has to be built for it. The
-one thing to watch is `scripts/probe-kmp-regression.js`, which clicks the button whose exact
-text is `KMP` — keep that label.
+- one KMP row can stand for *many* entities (clicking "Group 3" selects all of its points), so
+  selection is `string[]`, not one id;
+- section rows carry viewport **visibility layers** (`kmpSections.ts`), which is a different
+  model from `TreeView`'s per-node `checked`;
+- rows carry a path-group accent colour and a validation badge;
+- shift-click does range selection over the flattened rows.
+
+`TreeView` could grow all four, but the generic component would end up shaped entirely by this
+one caller. If you do unify them later, these are the contracts `scripts/probe-kmp-mode-ui.js`
+depends on and that any rewrite has to preserve (or update in the probe):
+
+1. `.kmpTreeChevron` is a `<button>` when the row is expandable and a
+   `<span class="kmpTreeChevron kmpTreeChevronSpacer">` when it is not — the probe asserts
+   `tagName === 'BUTTON'`.
+2. `aria-expanded` lives on `.kmpTreeRow`, not on the chevron.
+3. `.kmpTreeLabel` is the click target and handles a bubbling `MouseEvent` with `shiftKey`;
+   `.kmpTreeName` contains only the label text.
+4. Rows carry exactly one of `isSection` / `isGroup` / `isEntity`, plus optional `isSelected`,
+   `isPrimary`, `isHidden`, and live inside `.kmpTree` inside `.kmpPanel`.
+5. Tool-section headings are `<h3>` inside `.kmpToolGroup`.
+6. `.kmpInspector label` rows keep the field name as `childNodes[0]` — `Field` satisfies this
+   with its `<span class="uiFieldLabel">`, but `Field asGroup` renders a `<div role="group">`
+   and is invisible to that check.
+
+## 6. What is left
+
+Nothing in the shell. Two smaller things a later pass could pick up:
+
+- KMP mode uses raw `title=` attributes where the rest of the app uses `Tooltip`. It reads
+  fine, it is just not the styled tooltip.
+- `Toolbar`/`ToolbarGroup` are used by the viewport chrome but not by the mode panels, which
+  lay their button rows out by hand (`.kmpButtonRow`, `.cameraInspectorActions`,
+  `.modelInspectorActions`, `.visualButtonRow`). Converging those on `FieldRow`/`Toolbar` would
+  remove four near-identical rules.
