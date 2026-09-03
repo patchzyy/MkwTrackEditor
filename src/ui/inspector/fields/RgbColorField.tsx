@@ -1,6 +1,7 @@
 import type { RgbColor } from '../../../lib/posteffects';
-import { hexToRgb, rgbToHex } from '../postEffectResources';
+import { ColorField } from '../../components/ColorField';
 
+/** Opaque colour picker with a hex readout. */
 export function RgbColorField({ value, onChange }: { value: RgbColor; onChange: (value: RgbColor) => void }) {
-  return <input type="color" value={rgbToHex(value)} onChange={(event) => onChange(hexToRgb(event.currentTarget.value))} />;
+  return <ColorField value={value} onChange={(next) => onChange(next)} />;
 }

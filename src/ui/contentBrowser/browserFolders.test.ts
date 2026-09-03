@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { BrresEditorNode, EditorProjectState } from '../../lib/brresEditor';
 import type { CommonResourceArchive, ObjFlowTable } from '../../lib/objflow';
 import type { TrackDocument } from '../../lib/track';
 import {
+  browserGroups,
   browserItemSearchText,
   buildBrowserFolders,
   classifyObjectFolder,
@@ -33,14 +33,6 @@ const track = {
   warnings: [],
 } as unknown as TrackDocument;
 
-const archiveNode: BrresEditorNode = {
-  id: 'node-0',
-  name: 'tree_a',
-  modelName: 'course',
-  archivePath: './course_model.brres',
-} as unknown as BrresEditorNode;
-const projectState = { sceneNodes: [archiveNode], archiveNodes: [archiveNode] } as unknown as EditorProjectState;
-
 function folderById(folders: BrowserFolder[], id: string): BrowserFolder {
   const found = folders.find((folder) => folder.id === id);
   if (!found) throw new Error(`missing folder ${id}`);
@@ -49,14 +41,14 @@ function folderById(folders: BrowserFolder[], id: string): BrowserFolder {
 
 describe('buildBrowserFolders', () => {
   it('always offers the track-mesh folder, even with nothing loaded', () => {
-    const folders = buildBrowserFolders({ track: null, projectState: null, objFlow: null, commonArchive: null, courseAssetDb: null });
+    const folders = buildBrowserFolders({ track: null, objFlow: null, commonArchive: null, courseAssetDb: null });
     const trackFolder = folderById(folders, 'track');
     expect(trackFolder.detail).toBe('Load a track to list track assets');
     expect(trackFolder.items).toEqual([]);
   });
 
   it('lists the KMP record catalog with friendly labels', () => {
-    const folders = buildBrowserFolders({ track: null, projectState: null, objFlow: null, commonArchive: null, courseAssetDb: null });
+    const folders = buildBrowserFolders({ track: null, objFlow: null, commonArchive: null, courseAssetDb: null });
     const kmp = folderById(folders, 'kmp');
     expect(kmp.kind).toBe('kmp');
     expect(kmp.items).toHaveLength(kmpPointCatalog.length);
@@ -64,11 +56,19 @@ describe('buildBrowserFolders', () => {
   });
 
   it('splits real ObjFlow objects into the themed folders and lists track assets', () => {
-    const folders = buildBrowserFolders({ track, projectState, objFlow, commonArchive, courseAssetDb: null });
+    const folders = buildBrowserFolders({ track, objFlow, commonArchive, courseAssetDb: null });
     expect(folderById(folders, 'track').items).toEqual(track.brresFiles);
-    expect(folderById(folders, 'archiveNodes').items).toEqual([archiveNode]);
     expect(folderById(folders, 'common').items.length).toBeGreaterThan(0);
     expect(folderById(folders, 'featured').items.length).toBeGreaterThan(0);
+  });
+
+  it('files every folder under a group that the folder tree knows about', () => {
+    const folders = buildBrowserFolders({ track, objFlow, commonArchive, courseAssetDb: null });
+    const groupIds = new Set(browserGroups.map((group) => group.id));
+    expect(folders.length).toBeGreaterThan(0);
+    for (const folder of folders) expect(groupIds.has(folder.group)).toBe(true);
+    expect(folderById(folders, 'kmp').group).toBe('trackData');
+    expect(folderById(folders, 'track').group).toBe('thisTrack');
   });
 
   it('classifies objects into enemies, nature, gameplay and props', () => {
@@ -82,7 +82,8 @@ describe('buildBrowserFolders', () => {
 describe('filterBrowserFolder', () => {
   const objectFolder: BrowserFolder = {
     id: 'common',
-    label: 'All Objects',
+    group: 'objects',
+    label: 'All objects',
     detail: '2 placeable game objects',
     kind: 'object',
     items: [
@@ -103,22 +104,16 @@ describe('filterBrowserFolder', () => {
   });
 
   it('filters KMP records by label, section and category', () => {
-    const folder: BrowserFolder = { id: 'kmp', label: 'Track Data', detail: '', kind: 'kmp', items: kmpPointCatalog };
+    const folder: BrowserFolder = { id: 'kmp', group: 'trackData', label: 'Points and routes', detail: '', kind: 'kmp', items: kmpPointCatalog };
     expect(filterBrowserFolder(folder, 'checkpoint')?.items).toHaveLength(1);
     expect(filterBrowserFolder(folder, 'jgpt')?.items).toHaveLength(1);
   });
 
   it('filters track asset paths', () => {
-    const folder: BrowserFolder = { id: 'track', label: 'Track Meshes', detail: '', kind: 'brres', items: ['./course_model.brres', './vrcorn_model.brres'] };
+    const folder: BrowserFolder = { id: 'track', group: 'thisTrack', label: 'Track meshes', detail: '', kind: 'brres', items: ['./course_model.brres', './vrcorn_model.brres'] };
     expect(filterBrowserFolder(folder, 'vrcorn')?.items).toEqual(['./vrcorn_model.brres']);
   });
 
-  it('filters model nodes by name, model and archive instead of crashing on them', () => {
-    const folder: BrowserFolder = { id: 'archiveNodes', label: 'Model Nodes', detail: '', kind: 'archiveNode', items: [archiveNode] };
-    expect(filterBrowserFolder(folder, 'tree')?.items).toEqual([archiveNode]);
-    expect(filterBrowserFolder(folder, 'course model')?.items).toEqual([archiveNode]);
-    expect(filterBrowserFolder(folder, 'nothing')?.items).toEqual([]);
-  });
 });
 
 describe('browser item helpers', () => {

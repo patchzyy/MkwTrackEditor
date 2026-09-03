@@ -4,6 +4,10 @@
 // the inspector's number fields and action buttons, the object picker — and then checks the
 // renderer agrees. The dev hook is used only to read state back and to grab frames.
 
+// UI redesign note: the shared `NumberInput` primitive renders
+// `<input type="text" inputMode="decimal" role="spinbutton">` rather than a native number
+// input, so it can support drag-to-scrub and a comma decimal separator. The inspector-field
+// selectors below therefore accept either shape.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rect = () => canvasRect();
 const px = (fx, fy) => { const r = rect(); return [r.left + r.width * fx, r.top + r.height * fy]; };
@@ -92,7 +96,7 @@ await shot('model-ui-01-picked');
 
 // --- 3. Move it with the inspector's number fields --------------------------
 const boundsBefore = mkw.getMeshBounds(pickedSelection[0].target);
-const vectorInputs = [...document.querySelectorAll('.modelInspector .propertyGrid input[type="number"]')];
+const vectorInputs = [...document.querySelectorAll('.modelInspector .propertyGrid input[type="number"], .modelInspector .propertyGrid input[role="spinbutton"]')];
 note(`inspector exposes ${vectorInputs.length} number fields`);
 if (vectorInputs.length < 3) return { error: 'inspector has no transform fields', log };
 // Enough to see, not so much that the mesh leaves the frame.
@@ -119,7 +123,7 @@ const restoredDelta = Math.abs(boundsRestored.center.y - boundsBefore.center.y);
 note(`restore returned the mesh to within ${restoredDelta.toFixed(2)} units of where it started`);
 
 // --- 5. Move it again and keep it moved for the screenshot ------------------
-const fields = [...document.querySelectorAll('.modelInspector .propertyGrid input[type="number"]')];
+const fields = [...document.querySelectorAll('.modelInspector .propertyGrid input[type="number"], .modelInspector .propertyGrid input[role="spinbutton"]')];
 setReactInput(fields[1], lift);
 await sleep(900);
 await shot('model-ui-04-moved-again');
@@ -133,7 +137,7 @@ await sleep(1200);
 const placedRows = [...document.querySelectorAll('.modelOutliner .modelOutlinerRow')].filter((r) => r.textContent.includes('copy'));
 note(`duplicate produced ${placedRows.length} "copy" row(s) in the outliner`);
 // Lift the copy well clear of the original so the screenshot shows two of them.
-const copyFields = [...document.querySelectorAll('.modelInspector .propertyGrid input[type="number"]')];
+const copyFields = [...document.querySelectorAll('.modelInspector .propertyGrid input[type="number"], .modelInspector .propertyGrid input[role="spinbutton"]')];
 if (copyFields.length >= 3) { setReactInput(copyFields[1], Math.round(lift * 1.5)); await sleep(900); }
 // Point the camera at the original, so the copy sits just above it in frame.
 mkw.selectMeshAt(...px(best.fx, best.fy), false);

@@ -1,47 +1,38 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import { PanelLeftClose, Shapes } from 'lucide-react';
 import type { NoclipBrresSummary } from '../../lib/noclipBrres';
 import type { CommonResourceArchive } from '../../lib/objflow';
+import { IconButton } from '../components/Button';
+import { EmptyState } from '../components/EmptyState';
 import { objectCatalog, type ObjectOption } from '../objects/objectCatalog';
 import { ObjectThumbnail } from './ObjectThumbnail';
 
-/** Left rail with the handful of objects that are dragged into the scene most often. */
+/**
+ * Left dock for KMP mode: the handful of objects that get dragged into the scene most often.
+ * The dock's resize handle and collapsed rail belong to the shell, not to this panel, so
+ * every mode's left panel gets them for free.
+ */
 export function PlaceAssetsRail({
-  open,
   onToggle,
-  onBeginResize,
   quickObjectOptions,
   objFlow,
   commonArchive,
   commonBrresSummaries,
 }: {
-  open: boolean;
   onToggle: () => void;
-  onBeginResize: (event: ReactPointerEvent<HTMLElement>) => void;
   quickObjectOptions: ObjectOption[];
   objFlow: CommonResourceArchive['objFlow'] | null;
   commonArchive: CommonResourceArchive | null;
   commonBrresSummaries: Record<string, NoclipBrresSummary>;
 }) {
   return (
-  <aside className="placeAssetsPanel">
-    {open && <div className="sidebarResizeHandle sidebarResizeHandleRight" onPointerDown={(event) => onBeginResize(event)} />}
-    <div className="panelHeader placeAssetsHeader">
-      <div>
-        <h2>Place Assets</h2>
-        {open && <p className="panelSubtle">Common draggable game objects</p>}
+    <aside className="placeAssetsPanel">
+      <div className="panelHeader placeAssetsHeader">
+        <div>
+          <h2>Place Assets</h2>
+          <p className="panelSubtle">Drag into the viewport</p>
+        </div>
+        <IconButton size="sm" variant="ghost" icon={<PanelLeftClose size={15} />} tooltip="Hide left panel" tooltipSide="right" onClick={onToggle} />
       </div>
-      <button
-        className="iconButton"
-        type="button"
-        onClick={onToggle}
-        title={open ? 'Hide place assets' : 'Show place assets'}
-        aria-label={open ? 'Hide place assets' : 'Show place assets'}
-      >
-        {open ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
-      </button>
-    </div>
-    {open && (
       <div className="placeAssetsBody">
         {quickObjectOptions.length > 0 ? (
           <div className="placeAssetsGrid">
@@ -52,6 +43,8 @@ export function PlaceAssetsRail({
                   key={option.id}
                   className="placeAssetTile"
                   draggable
+                  tabIndex={0}
+                  title={`${option.label} — drag into the viewport to place`}
                   onDragStart={(event) => event.dataTransfer.setData('application/mkw-object-id', String(option.id))}
                 >
                   {quickObject && <ObjectThumbnail object={quickObject} common={commonArchive} summaries={commonBrresSummaries} />}
@@ -61,10 +54,14 @@ export function PlaceAssetsRail({
             })}
           </div>
         ) : (
-          <p className="muted">Load shared object data to place common objects from this rail. Use Import Common.szs once if the bundled archive is unavailable.</p>
+          <EmptyState
+            size="sm"
+            icon={<Shapes size={18} />}
+            title="No shared objects yet"
+            description="Import Common.szs from the File menu to place the game's built-in objects."
+          />
         )}
       </div>
-    )}
-  </aside>
+    </aside>
   );
 }

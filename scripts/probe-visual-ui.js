@@ -127,7 +127,7 @@ await sleep(800);
 out.postEffectHeadings = qa('.inspector h2').map((n) => n.textContent.trim());
 
 const fogColor = q('.postEffectEditor input[type="color"]');
-const fogNumbers = qa('.postEffectEditor input[type="number"]');
+const fogNumbers = qa('.postEffectEditor input[type="number"], .postEffectEditor input[role="spinbutton"]');
 if (fogColor) {
   const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
   setter.call(fogColor, '#ff2f6a');
@@ -147,14 +147,14 @@ if (fogColor) {
   }
   await sleep(1600);
   out.fogColorAfter = q('.postEffectEditor input[type="color"]')?.value ?? null;
-  out.status = q('.status')?.textContent.trim() ?? null;
+  out.status = q('.uiStatusMessage')?.textContent.trim() ?? null;
   await shot('visual-mode-09-fog-edited');
   await sleep(200);
 }
 
 // Bloom is one of the post-effects the renderer can re-apply without reloading the scene, so an
 // edit to posteffect.bblm must show in the viewport straight away.
-const bloomNumbers = qa('.postEffectEditor input[type="number"]');
+const bloomNumbers = qa('.postEffectEditor input[type="number"], .postEffectEditor input[role="spinbutton"]');
 const bloomColor = qa('.postEffectEditor input[type="color"]')[1];
 const setInput = (node, value) => {
   const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
@@ -163,11 +163,11 @@ const setInput = (node, value) => {
   node.dispatchEvent(new Event('change', { bubbles: true }));
 };
 out.postEffectControls = qa('.inspector .propertyGrid label').map((n) => n.firstChild?.textContent?.trim()).filter(Boolean);
-const thresholdInput = qa('.inspector .propertyGrid label').find((n) => /bloom/i.test(n.textContent))?.querySelector('input[type="number"]');
+const thresholdInput = qa('.inspector .propertyGrid label').find((n) => /bloom/i.test(n.textContent))?.querySelector('input[type="number"], input[role="spinbutton"]');
 if (thresholdInput) {
   setInput(thresholdInput, 0);
   await sleep(1800);
-  out.bloomStatus = q('.status')?.textContent.trim() ?? null;
+  out.bloomStatus = q('.uiStatusMessage')?.textContent.trim() ?? null;
   await shot('visual-mode-10-bloom-edited');
   await sleep(200);
 }
@@ -205,11 +205,11 @@ if (target) {
   input.files = transfer.files;
   input.dispatchEvent(new Event('change', { bubbles: true }));
   await sleep(3000);
-  out.replaceStatus = q('.status')?.textContent.trim() ?? null;
+  out.replaceStatus = q('.uiStatusMessage')?.textContent.trim() ?? null;
   out.replaceNotes = qa('.inspector .visualNote').map((n) => n.textContent.trim());
   await shot('visual-mode-11-texture-replaced');
   await sleep(200);
-  out.canExportAfterReplace = !q('.button.primary')?.disabled;
+  out.canExportAfterReplace = !q('.topBarRight .uiButton--primary')?.disabled;
 }
 
 out.stillInVisualMode = q('.visualPanel') !== null;

@@ -1,28 +1,92 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 
-export const CONTENT_BROWSER_COLLAPSED_HEIGHT = 46;
-const CONTENT_BROWSER_DEFAULT_HEIGHT = 248;
-const CONTENT_BROWSER_MIN_HEIGHT = 140;
-const WORKSPACE_MIN_HEIGHT = 160;
-const PLACE_ASSETS_COLLAPSED_WIDTH = 52;
-// Wide enough for the KMP outliner's deepest rows (section > group > point) to stay readable.
-const PLACE_ASSETS_DEFAULT_WIDTH = 268;
-const PLACE_ASSETS_MIN_WIDTH = 160;
-const INSPECTOR_DEFAULT_WIDTH = 320;
-const INSPECTOR_MIN_WIDTH = 220;
+/** Height of the content browser when it is collapsed to just its header strip. */
+export const CONTENT_BROWSER_COLLAPSED_HEIGHT = 30;
+/** Width the left/right docks keep when collapsed to an icon rail. */
+export const DOCK_RAIL_WIDTH = 40;
+
+const CONTENT_BROWSER_DEFAULT_HEIGHT = 260;
+const CONTENT_BROWSER_MIN_HEIGHT = 150;
+const WORKSPACE_MIN_HEIGHT = 180;
+// The left dock hosts KMP's outliner (section > group > point, three levels deep) and the
+// camera / model / visual outliners, which carry a filter box plus a row of actions. 272px is
+// the narrowest that fits all four without a horizontal scrollbar.
+const PLACE_ASSETS_DEFAULT_WIDTH = 272;
+const PLACE_ASSETS_MIN_WIDTH = 232;
+// Wide enough that a three-column X/Y/Z row shows five-digit track coordinates without
+// clipping; below `INSPECTOR_STACK_VECTORS_WIDTH` the vector rows stack instead.
+const INSPECTOR_DEFAULT_WIDTH = 380;
+const INSPECTOR_MIN_WIDTH = 260;
 const WORKSPACE_MIN_VIEWPORT_WIDTH = 320;
+
+const STORAGE_KEY = 'mkw.editor.layout.v2';
 
 export type SidebarSide = 'placeAssets' | 'inspector';
 
-/** Dock sizes, collapse state and the drag-to-resize handles for the editor shell. */
+interface PersistedLayout {
+  browserOpen: boolean;
+  browserHeight: number;
+  placeAssetsOpen: boolean;
+  placeAssetsWidth: number;
+  inspectorOpen: boolean;
+  inspectorWidth: number;
+}
+
+const DEFAULT_LAYOUT: PersistedLayout = {
+  browserOpen: true,
+  browserHeight: CONTENT_BROWSER_DEFAULT_HEIGHT,
+  placeAssetsOpen: true,
+  placeAssetsWidth: PLACE_ASSETS_DEFAULT_WIDTH,
+  inspectorOpen: true,
+  inspectorWidth: INSPECTOR_DEFAULT_WIDTH,
+};
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+/** Reads the persisted dock layout, ignoring anything malformed or out of range. */
+function readStoredLayout(): PersistedLayout {
+  if (typeof window === 'undefined') return DEFAULT_LAYOUT;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return DEFAULT_LAYOUT;
+    const parsed = JSON.parse(raw) as Partial<PersistedLayout>;
+    return {
+      browserOpen: typeof parsed.browserOpen === 'boolean' ? parsed.browserOpen : DEFAULT_LAYOUT.browserOpen,
+      browserHeight: Number.isFinite(parsed.browserHeight)
+        ? clamp(Number(parsed.browserHeight), CONTENT_BROWSER_MIN_HEIGHT, 900)
+        : DEFAULT_LAYOUT.browserHeight,
+      placeAssetsOpen: typeof parsed.placeAssetsOpen === 'boolean' ? parsed.placeAssetsOpen : DEFAULT_LAYOUT.placeAssetsOpen,
+      placeAssetsWidth: Number.isFinite(parsed.placeAssetsWidth)
+        ? clamp(Number(parsed.placeAssetsWidth), PLACE_ASSETS_MIN_WIDTH, 720)
+        : DEFAULT_LAYOUT.placeAssetsWidth,
+      inspectorOpen: typeof parsed.inspectorOpen === 'boolean' ? parsed.inspectorOpen : DEFAULT_LAYOUT.inspectorOpen,
+      inspectorWidth: Number.isFinite(parsed.inspectorWidth)
+        ? clamp(Number(parsed.inspectorWidth), INSPECTOR_MIN_WIDTH, 720)
+        : DEFAULT_LAYOUT.inspectorWidth,
+    };
+  } catch {
+    return DEFAULT_LAYOUT;
+  }
+}
+
+/**
+ * Dock sizes, collapse state and drag-to-resize handles for the editor shell.
+ *
+ * Sizes and collapse flags are persisted to `localStorage` so the workspace comes back the
+ * way the user left it. Collapsed docks keep a slim rail instead of disappearing, so
+ * collapsing never reflows the viewport contents.
+ */
 export function usePanelLayout() {
-  const [browserOpen, setBrowserOpen] = useState(true);
-  const [browserHeight, setBrowserHeight] = useState(CONTENT_BROWSER_DEFAULT_HEIGHT);
+  const initial = useMemo(readStoredLayout, []);
+  const [browserOpen, setBrowserOpen] = useState(initial.browserOpen);
+  const [browserHeight, setBrowserHeight] = useState(initial.browserHeight);
   const [browserResizing, setBrowserResizing] = useState(false);
-  const [placeAssetsOpen, setPlaceAssetsOpen] = useState(true);
-  const [placeAssetsWidth, setPlaceAssetsWidth] = useState(PLACE_ASSETS_DEFAULT_WIDTH);
-  const [inspectorOpen, setInspectorOpen] = useState(true);
-  const [inspectorWidth, setInspectorWidth] = useState(INSPECTOR_DEFAULT_WIDTH);
+  const [placeAssetsOpen, setPlaceAssetsOpen] = useState(initial.placeAssetsOpen);
+  const [placeAssetsWidth, setPlaceAssetsWidth] = useState(initial.placeAssetsWidth);
+  const [inspectorOpen, setInspectorOpen] = useState(initial.inspectorOpen);
+  const [inspectorWidth, setInspectorWidth] = useState(initial.inspectorWidth);
   const [sidebarResizing, setSidebarResizing] = useState<SidebarSide | null>(null);
 
   const appShellRef = useRef<HTMLElement | null>(null);
@@ -32,20 +96,28 @@ export function usePanelLayout() {
   const browserResizeRef = useRef<{ startY: number; startHeight: number } | null>(null);
   const sidebarResizeRef = useRef<{ side: SidebarSide; startX: number; startWidth: number } | null>(null);
 
+  // Persist on every settled change. Cheap enough that debouncing is not worth the code.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const layout: PersistedLayout = { browserOpen, browserHeight, placeAssetsOpen, placeAssetsWidth, inspectorOpen, inspectorWidth };
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
+    } catch {
+      // Private-mode / quota failures must never break the editor.
+    }
+  }, [browserHeight, browserOpen, inspectorOpen, inspectorWidth, placeAssetsOpen, placeAssetsWidth]);
+
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
       const resize = browserResizeRef.current;
       const shell = appShellRef.current;
       if (!resize || !shell) return;
-      const topBarHeight = topBarRef.current?.getBoundingClientRect().height ?? 48;
+      const topBarHeight = topBarRef.current?.getBoundingClientRect().height ?? 44;
       const maxHeight = Math.max(
         CONTENT_BROWSER_MIN_HEIGHT,
         Math.floor(shell.getBoundingClientRect().height - topBarHeight - WORKSPACE_MIN_HEIGHT),
       );
-      const nextHeight = Math.max(
-        CONTENT_BROWSER_MIN_HEIGHT,
-        Math.min(maxHeight, Math.round(resize.startHeight + (resize.startY - event.clientY))),
-      );
+      const nextHeight = clamp(Math.round(resize.startHeight + (resize.startY - event.clientY)), CONTENT_BROWSER_MIN_HEIGHT, maxHeight);
       setBrowserOpen(true);
       setBrowserHeight(nextHeight);
     };
@@ -80,12 +152,12 @@ export function usePanelLayout() {
         ? Math.max(minWidth, Math.floor(availableWidth - WORKSPACE_MIN_VIEWPORT_WIDTH))
         : Math.max(
             minWidth,
-            Math.floor(availableWidth - (placeAssetsOpen ? placeAssetsWidth : PLACE_ASSETS_COLLAPSED_WIDTH) - WORKSPACE_MIN_VIEWPORT_WIDTH),
+            Math.floor(availableWidth - (placeAssetsOpen ? placeAssetsWidth : DOCK_RAIL_WIDTH) - WORKSPACE_MIN_VIEWPORT_WIDTH),
           );
       const rawWidth = resize.side === 'placeAssets'
         ? resize.startWidth + (event.clientX - resize.startX)
         : resize.startWidth + (resize.startX - event.clientX);
-      const nextWidth = Math.max(minWidth, Math.min(maxWidth, Math.round(rawWidth)));
+      const nextWidth = clamp(Math.round(rawWidth), minWidth, maxWidth);
       if (resize.side === 'placeAssets') {
         setPlaceAssetsOpen(true);
         setPlaceAssetsWidth(nextWidth);
@@ -143,9 +215,25 @@ export function usePanelLayout() {
     setSidebarResizing(side);
   }
 
+  /** Double-clicking a drag handle puts the dock back to its default size. */
+  const resetBrowserSize = useCallback(() => {
+    setBrowserOpen(true);
+    setBrowserHeight(CONTENT_BROWSER_DEFAULT_HEIGHT);
+  }, []);
+
+  const resetSidebarSize = useCallback((side: SidebarSide) => {
+    if (side === 'placeAssets') {
+      setPlaceAssetsOpen(true);
+      setPlaceAssetsWidth(PLACE_ASSETS_DEFAULT_WIDTH);
+    } else {
+      setInspectorOpen(true);
+      setInspectorWidth(INSPECTOR_DEFAULT_WIDTH);
+    }
+  }, []);
+
   const workspaceStyle = {
-    '--place-assets-width': `${placeAssetsOpen ? placeAssetsWidth : PLACE_ASSETS_COLLAPSED_WIDTH}px`,
-    '--inspector-width': `${inspectorOpen ? inspectorWidth : 0}px`,
+    '--place-assets-width': `${placeAssetsOpen ? placeAssetsWidth : DOCK_RAIL_WIDTH}px`,
+    '--inspector-width': `${inspectorOpen ? inspectorWidth : DOCK_RAIL_WIDTH}px`,
   } as CSSProperties;
 
   return {
@@ -159,10 +247,15 @@ export function usePanelLayout() {
     browserResizing,
     placeAssetsOpen,
     setPlaceAssetsOpen,
+    placeAssetsWidth,
     inspectorOpen,
     setInspectorOpen,
+    inspectorWidth,
+    sidebarResizing,
     beginBrowserResize,
     beginSidebarResize,
+    resetBrowserSize,
+    resetSidebarSize,
     workspaceStyle,
   };
 }

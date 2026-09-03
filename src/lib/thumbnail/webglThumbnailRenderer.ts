@@ -81,7 +81,12 @@ const thumbnailMaterialHacks: GXMaterialHacks = {
   lightingFudge: (p) => `(0.5 * (${p.ambSource} + 0.2) * ${p.matSource})`,
 };
 
-const DEFAULT_BACKGROUND = { r: 0.086, g: 0.114, b: 0.153, a: 1 };
+/**
+ * Clear colour behind the model. Kept byte-identical to the `--surface-input` token the
+ * content browser paints its thumbnail slots with (#0d1117), so the render and the tile it
+ * sits in are the same colour and a letterboxed thumbnail has no visible frame.
+ */
+const DEFAULT_BACKGROUND = { r: 13 / 255, g: 17 / 255, b: 23 / 255, a: 1 };
 const DEFAULT_SIZE = 128;
 const DEFAULT_SUPERSAMPLE = 2;
 

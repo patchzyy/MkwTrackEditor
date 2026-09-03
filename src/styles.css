@@ -1,11 +1,143 @@
+/*
+ * MKW Track Editor — global stylesheet.
+ *
+ * Layout:
+ *   1. Design tokens          — the only place raw colours/sizes are written down.
+ *   2. Reset and base         — element defaults, scrollbars, focus, reduced motion.
+ *   3. Shell                  — top bar, docks, viewport, status bar.
+ *   4. Viewport chrome        — floating toolbars, HUDs, drop zone.
+ *   5. Inspector              — property grids and the classes the mode panels rely on.
+ *   6. Content browser        — folder column, tile grid.
+ *   7. Responsive.
+ *
+ * Primitive styles live in `src/ui/components/components.css` (imported below) and are all
+ * prefixed `ui*`. Everything else here is a shell/panel class. Class names that existed
+ * before the redesign are kept working on purpose: the mode panels in
+ * `src/ui/{kmp,camera,model,visual}` and the inspector sections use them.
+ */
+
+@import './ui/components/components.css';
+
+/* ============================================================ 1. design tokens */
+
 :root {
-  color: #e7ecf4;
-  background: #101318;
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* Surfaces, darkest to lightest. */
+  --surface-0: #0a0d12;
+  --surface-1: #10141a;
+  --surface-2: #151a21;
+  --surface-3: #1c222b;
+  --surface-4: #242c37;
+  --surface-input: #0d1117;
+  --surface-hover: rgb(255 255 255 / 5%);
+  --surface-raised: rgb(255 255 255 / 8%);
+  --surface-overlay: rgb(16 20 27 / 88%);
+  --surface-menu: #171d25;
+  --surface-tooltip: #1b222b;
+
+  /* Borders. Always 1px and always solid, so they stay crisp on HiDPI. */
+  --border-subtle: #1a2029;
+  --border: #232a34;
+  --border-strong: #2f3844;
+  --border-hover: #46536580;
+  --border-overlay: rgb(255 255 255 / 11%);
+
+  /* Text. */
+  --text: #e8edf5;
+  --text-secondary: #c4ccd9;
+  --text-muted: #93a0b1;
+  --text-dim: #6d7889;
+  --text-disabled: #556070;
+
+  /* Accent / selection. */
+  --accent: #47a3ff;
+  --accent-strong: #6ab6ff;
+  --accent-text: #a9d4ff;
+  --accent-soft: rgb(71 163 255 / 16%);
+  --accent-border: rgb(71 163 255 / 55%);
+  --selection: rgb(71 163 255 / 24%);
+  --selection-border: rgb(71 163 255 / 62%);
+
+  /* Semantic. */
+  --danger: #ff6b6b;
+  --danger-text: #ffb8b8;
+  --danger-soft: rgb(255 107 107 / 13%);
+  --danger-soft-strong: rgb(255 107 107 / 22%);
+  --danger-border: rgb(255 107 107 / 45%);
+  --warning: #efb02f;
+  --warning-text: #ffdc9a;
+  --warning-soft: rgb(239 176 47 / 13%);
+  --warning-border: rgb(239 176 47 / 42%);
+  --success: #4ac98c;
+  --success-text: #a6e8c5;
+  --success-soft: rgb(74 201 140 / 13%);
+  --success-border: rgb(74 201 140 / 42%);
+
+  /* Transform axes, shared by the gizmo hint and the vector inputs. */
+  --axis-x: #ff6b7a;
+  --axis-y: #7fd95f;
+  --axis-z: #5aa9ff;
+
+  /* Spacing scale. */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 48px;
+
+  /* Type scale. The editor is deliberately compact. */
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-lg: 15px;
+  --font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  /* Radii. */
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 7px;
+  --radius-xl: 12px;
+  --radius-pill: 999px;
+
+  /* Elevation. */
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-2: 0 4px 14px rgb(0 0 0 / 38%);
+  --shadow-3:
+    0 14px 34px rgb(0 0 0 / 45%),
+    0 2px 6px rgb(0 0 0 / 30%);
+
+  /* Control metrics. */
+  --control-height: 28px;
+  --control-height-sm: 24px;
+  --topbar-height: 44px;
+  --panel-header-height: 30px;
+  --status-bar-height: 24px;
+
+  /* Motion. */
+  --dur-fast: 110ms;
+  --dur-base: 180ms;
+  --ease: cubic-bezier(0.32, 0.72, 0.35, 1);
+
+  /* Focus. */
+  --focus-ring-color: var(--accent);
+  --focus-ring: 2px solid var(--focus-ring-color);
+
+  color: var(--text);
+  background: var(--surface-0);
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color-scheme: dark;
+  accent-color: var(--accent);
 }
+
+/* ============================================================ 2. reset and base */
 
 * {
   box-sizing: border-box;
@@ -19,229 +151,392 @@ body,
   margin: 0;
 }
 
+body {
+  overscroll-behavior: none;
+}
+
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
+h1,
+h2,
+h3,
+h4 {
+  font-weight: 650;
+}
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 1px;
+  border-radius: var(--radius-sm);
+}
+
+/* Thin, unobtrusive scrollbars everywhere. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--text-disabled);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ============================================================ 3. shell */
+
 .appShell {
   display: grid;
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: var(--topbar-height) minmax(0, 1fr) var(--status-bar-height);
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #0d1015;
+  background: var(--surface-0);
 }
+
+/* Whole-window highlight while files are dragged over the editor. */
+.appShell.isDragTarget::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 600;
+  border: 2px dashed var(--accent-border);
+  background: rgb(71 163 255 / 8%);
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------ top bar */
 
 .topBar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid #272d37;
-  background: #181d25;
-}
-
-.brand,
-.button,
-.segmented,
-.toolBadge {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
 }
 
 .brand {
-  min-width: 190px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 0 0 auto;
+  padding-right: var(--space-2);
+  color: var(--text);
 }
 
-.button,
-.segmented button {
-  height: 32px;
-  border: 1px solid #343d4a;
-  border-radius: 6px;
-  color: #e7ecf4;
-  background: #202630;
-  cursor: pointer;
-}
-
-.button {
-  padding: 0 10px;
-}
-
-.buttonIconOnly {
-  width: 32px;
+.brandMark {
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
-  padding: 0;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
-.button:hover,
-.segmented button:hover,
-.button.active,
-.segmented .active {
-  border-color: #5fd6ff;
-  background: #253241;
+.brandName {
+  font-size: var(--font-size-md);
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
 }
 
-.button.primary {
-  border-color: #4db678;
-  background: #224833;
-}
-
-.button:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
-.segmented {
-  gap: 0;
-}
-
-.segmented button {
-  width: 34px;
-  justify-content: center;
-  border-radius: 0;
-}
-
-.segmented button:first-child {
-  border-radius: 6px 0 0 6px;
-}
-
-.segmented button:last-child {
-  border-radius: 0 6px 6px 0;
-}
-
-.status {
-  flex: 1 1 auto;
+.topBarLeft,
+.topBarCenter,
+.topBarRight {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   min-width: 0;
+}
+
+.topBarLeft {
+  flex: 1 1 0;
+}
+
+.topBarCenter {
+  flex: 0 0 auto;
+  justify-content: center;
+}
+
+.topBarRight {
+  flex: 1 1 0;
+  justify-content: flex-end;
+}
+
+.topBarDivider {
+  width: 1px;
+  height: 20px;
+  flex: 0 0 auto;
+  background: var(--border);
+}
+
+.topBarTrackName {
+  min-width: 0;
+  max-width: 22ch;
   overflow: hidden;
-  color: #9faaba;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.topBarModeGroup {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-.topBarModeLabel {
-  color: #9faaba;
-  font-size: 12px;
-}
+/* Legacy status slot: the message now lives in the bottom status bar. */
+/* ------------------------------------------------------------ docks */
 
 .shellBody {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--inspector-width, 320px);
+  grid-template-columns: minmax(0, 1fr) var(--inspector-width, 340px);
   grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
   overflow: hidden;
+  background: var(--surface-0);
 }
 
 .workspace {
+  position: relative;
   display: grid;
   grid-column: 1;
   grid-row: 1;
-  grid-template-columns: var(--place-assets-width, 220px) minmax(0, 1fr);
+  grid-template-columns: var(--place-assets-width, 272px) minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
 }
 
-.shellBody.inspectorCollapsed .inspector {
-  overflow: hidden;
-  padding: 0;
-  border-left: 0;
-  visibility: hidden;
+/* Drag handles. Wide hit area, thin visible line, double-click resets the dock. */
+.sidebarResizeHandle,
+.dockHandle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 6;
+  width: 9px;
+  cursor: ew-resize;
+  touch-action: none;
 }
 
+.sidebarResizeHandle::before,
+.dockHandle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: transparent;
+  transform: translateX(-50%);
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.sidebarResizeHandle:hover::before,
+.sidebarResizeHandle.isActive::before,
+.dockHandle:hover::before,
+.dockHandle.isActive::before {
+  width: 2px;
+  background: var(--accent);
+}
+
+.dockHandleLeft {
+  left: calc(var(--place-assets-width, 272px) - 4px);
+}
+
+.sidebarResizeHandleRight {
+  right: 0;
+}
+
+.sidebarResizeHandleLeft {
+  left: 0;
+}
+
+/* The left dock. Mode panels render `aside.placeAssetsPanel` into this slot. */
 .placeAssetsPanel {
   position: relative;
-  min-width: 0;
-  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 0;
-  border-right: 1px solid #272d37;
-  background: #141920;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
+  border-right: 1px solid var(--border);
+  background: var(--surface-1);
 }
 
+.panelHeader,
 .placeAssetsHeader {
-  min-height: 48px;
-  align-items: flex-start;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  min-height: var(--panel-header-height);
+  height: var(--panel-header-height);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
 }
 
+.panelHeader h2,
+.placeAssetsHeader h2,
+.paneHeader h2,
+.inspector h2,
+.browserHeader strong {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+  letter-spacing: 0.055em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.panelHeader > div,
+.placeAssetsHeader > div {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+/* Mode panels put a one-line description under the title; keep it on the header line. */
 .panelSubtle {
-  margin: 4px 0 0;
-  color: #9faaba;
-  font-size: 11px;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
   line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .placeAssetsBody {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 0 10px 10px;
+  padding: var(--space-3);
 }
 
 .placeAssetsGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: var(--space-3);
 }
 
 .placeAssetTile {
   display: grid;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
-  padding: 8px;
-  border: 1px solid #33404d;
-  border-radius: 6px;
-  color: #dbe5f2;
-  background: #1c2430;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  background: var(--surface-2);
   cursor: grab;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+
+.placeAssetTile:hover {
+  border-color: var(--border-hover);
+  background: var(--surface-3);
+}
+
+.placeAssetTile:active {
+  cursor: grabbing;
 }
 
 .placeAssetTile .objectPreview {
   width: 100%;
   min-width: 0;
-  height: 68px;
+  height: 56px;
 }
 
 .placeAssetTile strong {
   min-width: 0;
   overflow: hidden;
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
-  line-height: 1.2;
 }
 
-.placeAssetsCollapsed .placeAssetsPanel {
-  overflow: hidden;
+/*
+ * Collapsed docks. `PanelRail` renders the slim icon strip; the dock keeps its grid slot so
+ * collapsing one never reflows the viewport contents.
+ */
+.workspace > .uiPanelRail {
+  grid-column: 1;
+  grid-row: 1;
+  border-right: 1px solid var(--border);
+  background: var(--surface-1);
 }
 
-.placeAssetsCollapsed .placeAssetsHeader {
-  justify-content: center;
+.shellBody > .uiPanelRail {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  border-left: 1px solid var(--border);
+  background: var(--surface-1);
 }
 
-.placeAssetsCollapsed .placeAssetsHeader > div {
-  display: none;
+/* ------------------------------------------------------------ status bar host */
+
+.appShell > .uiStatusBar {
+  grid-row: 3;
 }
 
-.placeAssetsCollapsed .placeAssetsBody,
-.placeAssetsCollapsed .panelSubtle {
-  display: none;
-}
+/* ============================================================ 4. viewport */
 
 .viewport {
   position: relative;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  background: var(--surface-0);
 }
 
 .viewport canvas {
@@ -262,138 +557,144 @@ input {
 .viewportToolbar,
 .selectionHud,
 .dropHint,
-.rendererStatus {
+.rendererStatus,
+.viewportAxisHint {
   position: absolute;
   z-index: 2;
 }
 
-.viewportToolbar,
-.selectionHud,
-.rendererStatus {
-  pointer-events: none;
-}
-
 .viewportToolbar {
+  display: flex;
+  top: var(--space-4);
+  left: var(--space-4);
+  align-items: center;
+  gap: var(--space-2);
+  max-width: calc(100% - 2 * var(--space-4));
+  padding: 4px;
+  border: 1px solid var(--border-overlay);
+  border-radius: var(--radius-lg);
+  color: var(--text-secondary);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-2);
+  backdrop-filter: blur(10px);
+  font-size: var(--font-size-sm);
   pointer-events: auto;
 }
 
 .viewportTopRightStack {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: var(--space-4);
+  right: var(--space-4);
   z-index: 3;
   display: grid;
   justify-items: end;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
+/* Floating overlay panels (route visibility, fill-between, mode overlays). */
 .routeVisibilityHud {
   position: relative;
   pointer-events: auto;
 }
 
 .routeVisibilityButton {
-  width: 32px;
-  height: 32px;
-  background: rgba(17, 21, 28, 0.9);
-  backdrop-filter: blur(6px);
+  background: var(--surface-overlay);
+  backdrop-filter: blur(10px);
+}
+
+.routeVisibilityPanel,
+.viewportOverlayPanel {
+  display: grid;
+  gap: var(--space-3);
+  width: 248px;
+  max-height: min(60vh, 420px);
+  overflow: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--border-overlay);
+  border-radius: var(--radius-lg);
+  color: var(--text-secondary);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-3);
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
 }
 
 .routeVisibilityPanel {
-  display: grid;
-  gap: 8px;
-  width: 220px;
-  max-height: min(320px, calc(100vh - 120px));
-  margin-top: 8px;
-  overflow: auto;
-  padding: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
-  color: #dbe3ef;
-  background: rgba(17, 21, 28, 0.92);
-  backdrop-filter: blur(6px);
+  width: 232px;
+  margin-top: var(--space-3);
 }
 
-.viewportOverlayPanel {
-  display: grid;
-  gap: 8px;
-  width: 248px;
-  padding: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
-  color: #dbe3ef;
-  background: rgba(17, 21, 28, 0.92);
-  backdrop-filter: blur(6px);
-  pointer-events: auto;
+.routeVisibilityPanel strong,
+.viewportOverlayHeader strong {
+  color: var(--text);
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 .viewportOverlayHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-}
-
-.viewportOverlayHeader strong {
-  font-size: 12px;
+  gap: var(--space-3);
 }
 
 .viewportOverlayDetail,
 .viewportOverlayHint {
-  color: #cbd5e1;
-  font-size: 12px;
-  line-height: 1.4;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
 }
 
 .viewportOverlayField {
   display: grid;
-  gap: 4px;
-  color: #9faaba;
-  font-size: 12px;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
 }
 
 .viewportOverlayField input {
   min-width: 0;
-  height: 28px;
-  border: 1px solid #343d4a;
-  border-radius: 5px;
-  padding: 0 7px;
-  color: #eef3fb;
-  background: #11161d;
+  height: var(--control-height-sm);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  color: var(--text);
+  background: var(--surface-input);
 }
 
 .viewportOverlayField input:focus {
-  border-color: #5fd6ff;
+  border-color: var(--accent);
   outline: none;
+  box-shadow: 0 0 0 1px var(--accent-border);
 }
 
 .viewportOverlayActions {
   display: flex;
   justify-content: flex-end;
-}
-
-.routeVisibilityPanel strong {
-  font-size: 12px;
+  gap: var(--space-2);
 }
 
 .routePanelSection {
   display: grid;
-  gap: 6px;
-  padding-top: 4px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-overlay);
 }
 
 .routeVisibilityEmpty {
-  color: #9faaba;
-  font-size: 12px;
+  color: var(--text-dim);
+  font-size: var(--font-size-sm);
 }
 
 .routeVisibilityRow {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: #cbd5e1;
-  font-size: 12px;
+  gap: var(--space-3);
+  min-height: 20px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
 }
 
 .routeVisibilityRow input {
@@ -403,206 +704,154 @@ input {
 .routeModeButtons {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .routeModeButton {
-  height: 28px;
-  border: 1px solid #343d4a;
-  border-radius: 6px;
-  color: #dbe3ef;
-  background: #202630;
+  height: var(--control-height-sm);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: var(--surface-3);
+  font-size: var(--font-size-xs);
   cursor: pointer;
+}
+
+.routeModeButton:hover {
+  border-color: var(--border-hover);
+  background: var(--surface-4);
 }
 
 .routeModeButton.active {
-  border-color: #5fd6ff;
-  background: #253241;
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+  background: var(--accent-soft);
 }
 
-.viewportToolbar {
-  display: flex;
-  top: 12px;
-  left: 12px;
-  align-items: center;
-  gap: 8px;
-  max-width: calc(100% - 24px);
-  padding: 7px 8px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
-  color: #c3ccd8;
-  background: rgba(17, 21, 28, 0.82);
-  backdrop-filter: blur(6px);
-  font-size: 12px;
-}
-
-.rendererBadge,
-.toolBadge {
-  padding: 3px 7px;
-  border-radius: 5px;
-  background: #26303d;
-  color: #f5f7fb;
-}
-
-.viewportToolSegmented button {
-  width: 34px;
-}
-
-.viewportModeSelect {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: #cbd5e1;
-  font-size: 12px;
-}
-
-.viewportModeSelect span {
-  color: #9faaba;
-}
-
-.viewportModeSelect select {
-  height: 30px;
-  border: 1px solid #343d4a;
-  border-radius: 6px;
-  padding: 0 28px 0 9px;
-  color: #eef3fb;
-  background: #202630;
-  cursor: pointer;
-}
-
-.viewportModeSelect select:focus {
-  border-color: #5fd6ff;
-  outline: none;
-}
-
+/* Selection pill, bottom-left. */
 .selectionHud {
-  right: 16px;
-  bottom: 16px;
-  max-width: 320px;
-  padding: 9px 11px;
-  border: 1px solid rgba(95, 214, 255, 0.55);
-  border-radius: 6px;
-  background: rgba(18, 25, 34, 0.9);
+  left: var(--space-4);
+  bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: min(420px, calc(100% - 2 * var(--space-4)));
+  padding: 5px var(--space-3);
+  border: 1px solid var(--selection-border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-2);
+  backdrop-filter: blur(10px);
+  font-size: var(--font-size-sm);
+  pointer-events: none;
 }
 
+.selectionHudDot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.selectionHudName {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selectionHudMeta {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+/* Renderer status pill, bottom-centre-left of the selection pill. */
 .rendererStatus {
-  left: 16px;
-  bottom: 16px;
-  max-width: min(520px, calc(100% - 32px));
-  padding: 8px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
-  color: #cbd5e1;
-  background: rgba(18, 25, 34, 0.82);
-  font-size: 12px;
+  left: var(--space-4);
+  bottom: calc(var(--space-4) + 30px);
+  max-width: min(520px, calc(100% - 2 * var(--space-4)));
+  overflow: hidden;
+  padding: 3px var(--space-3);
+  border: 1px solid var(--border-overlay);
+  border-radius: var(--radius-pill);
+  color: var(--text-dim);
+  background: var(--surface-overlay);
+  backdrop-filter: blur(10px);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.viewportAxisHint {
+  right: var(--space-4);
+  bottom: var(--space-4);
+  pointer-events: none;
 }
 
 .marqueeSelection {
   position: absolute;
   z-index: 2;
+  border: 1px solid var(--selection-border);
+  background: rgb(71 163 255 / 12%);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 8%);
   pointer-events: none;
-  border: 1px solid rgba(95, 214, 255, 0.95);
-  background: rgba(95, 214, 255, 0.12);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
+/* Empty viewport: the drop zone. */
 .dropHint {
   top: 50%;
   left: 50%;
-  width: min(420px, calc(100% - 32px));
-  padding: 18px 20px;
-  transform: translate(-50%, -50%);
-  border: 1px dashed #657286;
-  border-radius: 8px;
-  color: #d5dce8;
-  background: rgba(24, 29, 37, 0.82);
+  width: min(460px, calc(100% - 32px));
+  padding: var(--space-6);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-xl);
+  background: rgb(21 26 33 / 72%);
+  backdrop-filter: blur(4px);
   text-align: center;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
 }
+
+.dropHint .uiEmptyStateIcon {
+  border-color: var(--accent-border);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* ============================================================ 5. inspector */
 
 .inspector {
+  position: relative;
   grid-column: 2;
   grid-row: 1 / span 2;
-  position: relative;
-  min-width: 0;
-  min-height: 0;
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
-  padding: 10px 10px 12px;
-  border-left: 1px solid #272d37;
-  background: #11161c;
-}
-
-.sidebarResizeHandle {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 10px;
-  cursor: ew-resize;
-  z-index: 4;
-}
-
-.sidebarResizeHandle::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: rgba(95, 214, 255, 0.18);
-  transition: background 120ms ease;
-}
-
-.sidebarResizeHandle:hover::before {
-  background: rgba(95, 214, 255, 0.72);
-}
-
-.sidebarResizeHandleRight {
-  right: 0;
-}
-
-.sidebarResizeHandleRight::before {
-  right: 0;
-}
-
-.sidebarResizeHandleLeft {
-  left: 0;
-}
-
-.sidebarResizeHandleLeft::before {
-  left: 0;
-}
-
-.inspector h2,
-.browserHeader strong {
-  margin: 0;
-  font-size: 13px;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-
-.panelHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0 4px 10px;
-  border-bottom: 1px solid #242b35;
+  border-left: 1px solid var(--border);
+  background: var(--surface-1);
 }
 
 .rightSidebarPanels {
   display: flex;
-  flex-direction: column;
   flex: 1 1 auto;
+  flex-direction: column;
   min-height: 0;
-  padding-top: 10px;
 }
 
 .sidebarPane {
-  min-height: 0;
   display: flex;
   flex-direction: column;
-  border: 1px solid #222b35;
-  background: #151a21;
+  min-height: 0;
+  background: transparent;
 }
 
 .detailsPane {
@@ -613,27 +862,35 @@ input {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  border-bottom: 1px solid #242b35;
-  background: #171d24;
+  gap: var(--space-3);
+  flex: 0 0 auto;
+  min-height: var(--panel-header-height);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-1);
 }
 
 .paneMeta {
-  color: #94a0b2;
-  font-size: 11px;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
 }
 
 .paneBody {
+  flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 10px;
+  padding: var(--space-4);
 }
 
 .paneBody h2 {
-  margin: 18px 0 10px;
-  padding-top: 12px;
-  border-top: 1px solid #232b35;
+  margin: var(--space-5) 0 var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .paneBody > h2:first-child {
@@ -645,82 +902,161 @@ input {
 .inspectorSections {
   display: flex;
   width: 100%;
-  margin: 0 0 14px;
+  margin: 0 0 var(--space-4);
 }
 
+.inspectorSections .uiSegment,
 .inspectorSections button {
-  flex: 1;
+  flex: 1 1 0;
   width: auto;
-  padding: 0 12px;
 }
 
+/* Icon button. Kept for the mode panels that use `.iconButton` directly. */
 .iconButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid #343d4a;
-  border-radius: 6px;
-  color: #e7ecf4;
-  background: #202630;
+  width: var(--control-height);
+  height: var(--control-height);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  background: transparent;
   cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
 }
 
 .iconButton:hover {
-  border-color: #5fd6ff;
-  background: #253241;
+  border-color: transparent;
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.iconButton:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+/* Legacy generic button, still used by the mode panels and inspector sections. */
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  background: var(--surface-3);
+  font-size: var(--font-size-sm);
+  /* Matches `.uiButton` exactly, so a legacy button and a design-system one are the same. */
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.button:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  background: var(--surface-4);
+}
+
+.button.active {
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
+.button.primary {
+  border-color: var(--accent-border);
+  color: #061422;
+  background: var(--accent);
+  font-weight: 600;
+}
+
+.button:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.buttonIconOnly {
+  width: var(--control-height);
+  padding: 0;
+}
+
+/* Legacy segmented group; the primitive adds `uiSegmented` on top of this class. */
+.segmented {
+  display: inline-flex;
+  align-items: center;
 }
 
 .muted {
-  margin: 0 0 16px;
-  color: #9faaba;
-  line-height: 1.45;
+  margin: 0 0 var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
 }
 
 .detailsSummaryBar {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-  gap: 8px;
-  margin-bottom: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
 }
 
 .detailsSummaryItem {
   display: grid;
   gap: 2px;
-  padding: 8px 10px;
-  border: 1px solid #27303a;
-  background: #161c24;
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
 }
 
 .detailsSummaryItem span {
-  color: #8e9bad;
-  font-size: 11px;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .detailsSummaryItem strong {
-  color: #edf2fb;
-  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 550;
   line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+/* Property grid used by every inspector section. */
 .propertyGrid {
   display: grid;
   gap: 0;
-  margin-bottom: 22px;
-  border-top: 1px solid #232b35;
+  margin-bottom: var(--space-5);
 }
 
 .detailsSectionHeader {
   grid-column: 1 / -1;
-  margin-top: 12px;
-  padding: 12px 0 8px;
-  border-top: 1px solid #232b35;
-  color: #aeb8c7;
-  font-size: 11px;
+  margin-top: var(--space-4);
+  padding: var(--space-4) 0 var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: 10.5px;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
 }
 
@@ -733,13 +1069,37 @@ input {
 .propertyGrid label,
 .advancedDetailsBody label {
   display: grid;
-  grid-template-columns: minmax(112px, 38%) minmax(0, 1fr);
-  align-items: start;
-  gap: 6px 12px;
-  padding: 9px 0;
-  border-bottom: 1px solid #232b35;
-  color: #9faaba;
-  font-size: 12px;
+  grid-template-columns: minmax(104px, 38%) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.propertyGrid label:last-child,
+.advancedDetailsBody label:last-child {
+  border-bottom: 0;
+}
+
+/*
+ * Multi-column value rows (X/Y/Z vectors, the four object settings, the post-effect triples)
+ * take the whole row and put their label above, for the same reason as `.uiField` in
+ * components.css: beside a label column each column is far too narrow for a track coordinate.
+ */
+.propertyGrid label:has(.vectorInputs),
+.propertyGrid label:has(.settingInputs),
+.advancedDetailsBody label:has(.vectorInputs),
+.advancedDetailsBody label:has(.settingInputs) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.propertyGrid label:has(.vectorInputs) > *,
+.propertyGrid label:has(.settingInputs) > *,
+.advancedDetailsBody label:has(.vectorInputs) > *,
+.advancedDetailsBody label:has(.settingInputs) > * {
+  grid-column: 1;
 }
 
 .propertyGrid label > div,
@@ -757,119 +1117,161 @@ input {
 
 .propertyGrid span {
   min-width: 0;
+  color: var(--text);
+  font-size: var(--font-size-sm);
   overflow-wrap: anywhere;
-  color: #eef3fb;
-  font-size: 13px;
+}
+
+/* `Field` renders its own two-column grid, so opt it out of the label rules above. */
+.propertyGrid .uiField > .uiFieldControl,
+.propertyGrid .uiField > .uiFieldHelp {
+  grid-column: 2;
+}
+
+.propertyGrid .uiField > .uiFieldLabel {
+  grid-column: 1;
 }
 
 .advancedDetails {
-  margin: 0 0 22px;
-  border-top: 1px solid #232b35;
-  border-bottom: 1px solid #232b35;
+  margin: 0 0 var(--space-5);
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
   background: transparent;
 }
 
 .advancedDetails summary {
-  cursor: pointer;
+  padding: var(--space-3) 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+  letter-spacing: 0.05em;
   list-style: none;
-  padding: 10px 0;
-  color: #c8d2df;
-  font-size: 12px;
   text-transform: uppercase;
+  cursor: pointer;
 }
 
 .advancedDetails summary::-webkit-details-marker {
   display: none;
 }
 
+.advancedDetails summary:hover {
+  color: var(--text);
+}
+
 .advancedDetailsBody {
   display: grid;
   gap: 0;
-  padding: 0 0 8px;
+  padding: 0 0 var(--space-3);
 }
 
 .actionRow {
   display: flex;
   align-items: center;
-  gap: 8px;
-}
-
-.actionStack {
-  display: grid;
-  gap: 6px;
-}
-
-.toggleGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.objectPicker {
-  display: grid;
-  gap: 6px;
-}
-
-.objectPickerSearch {
-  width: 100%;
+  gap: var(--space-2);
+  min-width: 0;
 }
 
 .actionRow span {
   flex: 1;
 }
 
+.actionStack {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.toggleGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.objectPicker {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.objectPickerSearch {
+  width: 100%;
+}
+
 .vectorInputs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .settingInputs {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .postEffectEditor {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .colorField {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 72px;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
-.propertyGrid input,
-.propertyGrid select {
+/* Bare inputs inside property grids (mode panels still use these directly). */
+.propertyGrid input:not([type='checkbox']):not([type='color']),
+.propertyGrid select,
+.advancedDetailsBody input:not([type='checkbox']):not([type='color']),
+.advancedDetailsBody select,
+.objectPickerSearch,
+.routeInput {
   min-width: 0;
-  height: 28px;
-  border: 1px solid #343d4a;
-  border-radius: 0;
-  padding: 0 7px;
-  color: #eef3fb;
-  background: #11161d;
+  height: var(--control-height-sm);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  color: var(--text);
+  background: var(--surface-input);
+  font-size: var(--font-size-sm);
 }
 
 .propertyGrid input:focus,
-.propertyGrid select:focus {
-  border-color: #5fd6ff;
+.propertyGrid select:focus,
+.advancedDetailsBody input:focus,
+.advancedDetailsBody select:focus,
+.objectPickerSearch:focus,
+.routeInput:focus {
+  border-color: var(--accent);
   outline: none;
+  box-shadow: 0 0 0 1px var(--accent-border);
+}
+
+.propertyGrid input[type='color'] {
+  width: 100%;
+  height: var(--control-height-sm);
+  padding: 2px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-input);
+  cursor: pointer;
 }
 
 .inlineAction {
-  height: 28px;
-  border: 1px solid #343d4a;
-  border-radius: 0;
-  color: #eef3fb;
-  background: #11161d;
+  height: var(--control-height-sm);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: var(--surface-3);
+  font-size: var(--font-size-xs);
   cursor: pointer;
 }
 
 .inlineAction:hover {
-  border-color: #5fd6ff;
+  border-color: var(--border-hover);
+  color: var(--text);
+  background: var(--surface-4);
 }
 
 .toggleButton {
@@ -877,100 +1279,109 @@ input {
 }
 
 .toggleButton.isActive {
-  border-color: #5fd6ff;
-  background: rgba(95, 214, 255, 0.14);
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+  background: var(--accent-soft);
 }
 
 .routeInput {
   width: 100%;
 }
 
+/* Validation. */
 .validationList {
   display: grid;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .validationSummary {
   display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
 }
 
 .validationBadge {
   display: inline-flex;
   align-items: center;
-  padding: 4px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  line-height: 1;
-  background: #232a34;
-  color: #c7d0dd;
+  padding: 3px var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  background: var(--surface-2);
+  font-size: var(--font-size-xs);
+  line-height: 1.3;
 }
 
 .validationBadge.error {
-  background: #49232a;
-  color: #ffd7d7;
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+  background: var(--danger-soft);
 }
 
 .validationBadge.warning {
-  background: #47361d;
-  color: #ffe8bd;
+  border-color: var(--warning-border);
+  color: var(--warning-text);
+  background: var(--warning-soft);
 }
 
 .validationIssue {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 8px;
-  border-radius: 6px;
-  line-height: 1.35;
-  font-size: 12px;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
 }
 
 .validationCopy {
   display: grid;
-  gap: 3px;
+  gap: 2px;
+  min-width: 0;
 }
 
 .validationCopy strong {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
 }
 
 .validationCopy span {
   color: inherit;
-  opacity: 0.88;
+  opacity: 0.85;
+  overflow-wrap: anywhere;
 }
 
 .validationList .error {
-  color: #ffd7d7;
-  background: #49232a;
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+  background: var(--danger-soft);
 }
 
 .validationList .warning {
-  color: #ffe8bd;
-  background: #47361d;
+  border-color: var(--warning-border);
+  color: var(--warning-text);
+  background: var(--warning-soft);
 }
 
+/* ============================================================ 6. content browser */
+
 .contentBrowser {
+  position: relative;
   grid-column: 1;
   grid-row: 2;
-  position: relative;
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
-  height: 248px;
-  min-height: 46px;
-  border-top: 1px solid #272d37;
-  background: #171c24;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 260px;
+  min-height: var(--panel-header-height);
   overflow: hidden;
-  transition: height 150ms ease;
+  border-top: 1px solid var(--border);
+  background: var(--surface-1);
+  transition: height var(--dur-base) var(--ease);
 }
 
 .contentBrowser.resizing {
   transition: none;
-}
-
-.contentBrowser.collapsed {
-  height: 46px;
 }
 
 .contentBrowserResizeHandle {
@@ -978,9 +1389,10 @@ input {
   top: 0;
   left: 0;
   right: 0;
-  height: 10px;
+  z-index: 6;
+  height: 9px;
   cursor: ns-resize;
-  z-index: 4;
+  touch-action: none;
 }
 
 .contentBrowserResizeHandle::before {
@@ -989,187 +1401,208 @@ input {
   top: 0;
   left: 0;
   right: 0;
-  height: 2px;
-  background: rgba(95, 214, 255, 0.18);
-  transition: background 120ms ease;
+  height: 1px;
+  background: transparent;
+  transition: background var(--dur-fast) var(--ease);
 }
 
 .contentBrowserResizeHandle:hover::before,
 .contentBrowser.resizing .contentBrowserResizeHandle::before {
-  background: rgba(95, 214, 255, 0.72);
+  height: 2px;
+  background: var(--accent);
 }
 
-.collapseButton {
+/* Grip dots so the handle is discoverable. */
+.contentBrowserResizeHandle::after {
+  content: '';
   position: absolute;
-  top: 8px;
-  right: 10px;
-  width: 30px;
-  height: 30px;
-  border: 1px solid #343d4a;
-  border-radius: 6px;
-  color: #e7ecf4;
-  background: #202630;
-  cursor: pointer;
+  top: 3px;
+  left: 50%;
+  width: 28px;
+  height: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+  transform: translateX(-50%);
+}
+
+.contentBrowserResizeHandle:hover::after {
+  background: var(--accent);
 }
 
 .browserHeader {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  min-height: 46px;
-  padding: 12px 52px 0 14px;
+  align-items: center;
+  gap: var(--space-3);
   min-width: 0;
+  height: var(--panel-header-height);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
 }
 
 .browserHeader span {
   min-width: 0;
   overflow: hidden;
-  color: #9faaba;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.browserSearchRow {
-  padding: 0 14px 8px;
+.browserHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.browserSearch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 220px;
+}
+
+.browserSearch svg {
+  position: absolute;
+  left: var(--space-2);
+  color: var(--text-dim);
+  pointer-events: none;
 }
 
 .browserSearchInput {
   width: 100%;
-  height: 32px;
-  border: 1px solid #343d4a;
-  border-radius: 6px;
-  padding: 0 10px;
-  color: #eef3fb;
-  background: #11161d;
+  height: var(--control-height-sm);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 0 26px 0 25px;
+  color: var(--text);
+  background: var(--surface-input);
+  font-size: var(--font-size-sm);
 }
 
-.browserSearchInput:focus {
-  border-color: #5fd6ff;
-  outline: none;
-}
-
-.quickObjectsRow {
-  display: flex;
-  gap: 8px;
-  overflow: auto hidden;
-  padding: 0 14px 10px;
-}
-
-.quickObjectChip {
-  display: grid;
-  gap: 6px;
-  min-width: 104px;
-  width: 104px;
-  padding: 8px;
-  border: 1px solid #33404d;
-  border-radius: 6px;
-  color: #dbe5f2;
-  background: #1c2430;
-  cursor: grab;
-}
-
-.quickObjectChip .objectPreview {
-  width: 100%;
-  min-width: 0;
-  height: 68px;
-}
-
-.quickObjectChip strong,
-.quickObjectChip span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.quickObjectChip strong {
-  font-size: 12px;
-  line-height: 1.2;
-}
-
-.quickObjectChip span {
-  color: #9faaba;
-  font-size: 11px;
-}
-
-.browserFolders {
-  display: flex;
-  gap: 8px;
-  overflow: auto hidden;
-  padding: 10px 14px 8px;
-  min-width: 0;
-}
-
-.collapsed .browserSearchRow,
-.collapsed .quickObjectsRow,
-.collapsed .browserFolders {
+.browserSearchInput::-webkit-search-cancel-button {
   display: none;
 }
 
-.browserFolder {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  padding: 7px 10px;
-  border: 1px solid #2f3743;
-  border-radius: 6px;
-  color: #cbd5e1;
-  background: #1b212a;
+.browserSearchInput:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 1px var(--accent-border);
+}
+
+.browserSearchClear {
+  position: absolute;
+  right: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  background: transparent;
   cursor: pointer;
-  text-align: left;
 }
 
-.browserFolder strong,
-.browserFolder span {
-  min-width: 0;
+.browserSearchClear:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.browserTileSize {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-dim);
+}
+
+.browserTileSize input[type='range'] {
+  width: 88px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* Body: folder tree, tile grid, details pane. */
+.browserBody {
+  display: grid;
+  grid-template-columns: 186px minmax(0, 1fr) 232px;
+  min-height: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.browserFolder strong {
-  font-size: 12px;
-}
-
-.browserFolder span {
-  color: #9faaba;
-  font-size: 11px;
-}
-
-.browserFolder.active {
-  border-color: #5fd6ff;
-  background: #243241;
+.browserFolders {
+  min-height: 0;
+  padding: var(--space-2);
+  border-right: 1px solid var(--border-subtle);
+  background: var(--surface-2);
 }
 
 .assetStrip {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
-  gap: 10px;
-  overflow: auto;
-  min-height: 0;
-  padding: 0 14px 14px;
+  grid-template-columns: repeat(auto-fill, minmax(var(--tile-size, 132px), 1fr));
+  gap: var(--space-3);
   align-content: start;
-}
-
-.collapsed .assetStrip {
-  display: none;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-3);
 }
 
 .assetTile {
   display: grid;
-  grid-template-rows: 56px auto auto;
-  gap: 5px;
+  grid-template-rows: auto auto auto;
+  gap: var(--space-2);
   min-width: 0;
-  padding: 8px;
-  border: 1px solid #2c3440;
-  border-radius: 8px;
-  background: #202630;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  background: var(--surface-2);
   cursor: grab;
+  text-align: left;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+
+.assetTile:hover {
+  border-color: var(--border-hover);
+  background: var(--surface-3);
+}
+
+.assetTile:active {
+  cursor: grabbing;
+}
+
+.assetTile.selected {
+  border-color: var(--selection-border);
+  background: var(--selection);
 }
 
 .assetTile.disabled {
   cursor: default;
-  opacity: 0.72;
+  opacity: 0.6;
+}
+
+/*
+ * Thumbnails are rendered square (128x128) by `src/lib/thumbnail`, so the slot is square
+ * too: `object-fit: contain` into a wide slot letterboxes the model and leaves visible bars,
+ * which is what made the old previews read as grey blobs.
+ */
+.assetTile .thumbnail {
+  height: auto;
+  aspect-ratio: 1;
+}
+
+/* Hover zoom on the thumbnail only, so the tile itself never moves. */
+.assetTile .objectPreview img {
+  transition: transform var(--dur-base) var(--ease);
+}
+
+.assetTile:hover .objectPreview img {
+  transform: scale(1.12);
 }
 
 .assetTile strong,
@@ -1181,45 +1614,47 @@ input {
 }
 
 .assetTile strong {
-  font-size: 12px;
+  color: var(--text);
+  font-size: var(--font-size-xs);
+  font-weight: 550;
 }
 
 .assetTile span {
-  color: #9faaba;
-  font-size: 11px;
+  color: var(--text-dim);
+  font-size: 10.5px;
 }
 
 .browserEmpty {
+  grid-column: 1 / -1;
   margin: 0;
-  color: #9faaba;
-  font-size: 12px;
+  color: var(--text-dim);
+  font-size: var(--font-size-sm);
 }
 
+/* Thumbnails. */
 .thumbnail {
   display: grid;
   place-items: center;
-  border: 1px solid #3e5364;
-  border-radius: 6px;
-  background:
-    linear-gradient(135deg, rgba(95, 214, 255, 0.25), transparent),
-    #121820;
-  color: #eef8ff;
-  font-size: 12px;
-  font-weight: 700;
+  height: 60px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(140deg, rgb(71 163 255 / 16%), transparent 60%), var(--surface-input);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .thumbnail.brres {
-  border-color: #4b715d;
-  background:
-    linear-gradient(135deg, rgba(77, 182, 120, 0.25), transparent),
-    #121820;
+  border-color: rgb(74 201 140 / 35%);
+  background: linear-gradient(140deg, rgb(74 201 140 / 16%), transparent 60%), var(--surface-input);
 }
 
 .thumbnail.kmp {
-  border-color: #7c6a42;
-  background:
-    linear-gradient(135deg, rgba(228, 196, 65, 0.24), transparent),
-    #121820;
+  border-color: rgb(239 176 47 / 35%);
+  background: linear-gradient(140deg, rgb(239 176 47 / 16%), transparent 60%), var(--surface-input);
 }
 
 .objectPreview {
@@ -1227,9 +1662,8 @@ input {
   align-items: stretch;
   justify-items: stretch;
   overflow: hidden;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
+  border-color: var(--border);
+  background: var(--surface-input);
 }
 
 .objectPreview img {
@@ -1237,92 +1671,194 @@ input {
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: contain;
   padding: 0;
+  object-fit: contain;
   background: transparent;
 }
 
 .objectPreview[data-state='missing'] {
-  border-color: #5a4936;
-  background:
-    linear-gradient(140deg, rgba(246, 160, 77, 0.18), transparent 55%),
-    #101820;
+  border-color: rgb(239 176 47 / 28%);
+  background: linear-gradient(140deg, rgb(239 176 47 / 12%), transparent 55%), var(--surface-input);
 }
 
-.previewId,
 .previewModel {
   position: absolute;
   z-index: 1;
-  left: 6px;
-  right: 6px;
+  left: var(--space-2);
+  right: var(--space-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.previewId {
-  top: 5px;
-  color: #dff7ff;
-  font-size: 11px;
-}
-
 .previewModel {
-  bottom: 5px;
-  color: #aebccc;
-  font-size: 10px;
+  bottom: 4px;
+  color: var(--text-dim);
+  font-size: 9.5px;
   font-weight: 600;
   text-transform: uppercase;
 }
 
 .previewStack {
   position: absolute;
-  inset: 14px 12px 18px;
+  inset: 30% 22% 32%;
   transform: skewX(-16deg);
 }
 
 .previewStack i {
   position: absolute;
   display: block;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: 3px;
-  background: rgba(95, 214, 255, 0.3);
-  box-shadow: 0 7px 16px rgba(0, 0, 0, 0.25);
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 2px;
+  background: rgb(71 163 255 / 28%);
+  box-shadow: var(--shadow-1);
 }
 
 .previewStack i:nth-child(1) {
-  inset: 12px 18px 2px 0;
+  inset: 40% 45% 0 0;
 }
 
 .previewStack i:nth-child(2) {
-  inset: 6px 9px 8px 9px;
-  background: rgba(143, 211, 255, 0.34);
+  inset: 20% 22% 20% 22%;
+  background: rgb(122 190 255 / 32%);
 }
 
 .previewStack i:nth-child(3) {
-  inset: 0 0 14px 18px;
-  background: rgba(82, 218, 120, 0.28);
+  inset: 0 0 40% 45%;
+  background: rgb(74 201 140 / 26%);
+}
+
+/* Details pane: what the focused tile actually is, in words. */
+.browserDetails {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-3);
+  border-left: 1px solid var(--border-subtle);
+  background: var(--surface-2);
+}
+
+.thumbnailLarge {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 100%;
+  max-width: 148px;
+  height: auto;
+  aspect-ratio: 1;
+}
+
+.browserDetailsTitle {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+}
+
+.browserDetailsCaption {
+  margin: -4px 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.browserDetailsFacts {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.browserDetailsFact {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.browserDetailsFact dt {
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.browserDetailsFact dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.browserDetailsHint {
+  margin: auto 0 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  color: var(--accent-text);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.browserDetailsHint--muted {
+  color: var(--text-dim);
+}
+
+/* Collapsed content browser: only the header strip remains. */
+.contentBrowser.collapsed {
+  height: var(--panel-header-height);
+}
+
+.collapsed .browserBody {
+  display: none;
+}
+
+/* ============================================================ 7. responsive */
+
+@media (max-width: 1280px) {
+  .browserBody {
+    grid-template-columns: 172px minmax(0, 1fr) 200px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .browserDetails {
+    display: none;
+  }
+
+  .browserBody {
+    grid-template-columns: 172px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 980px) {
+  .topBarTrackName,
+  .brandName {
+    display: none;
+  }
 }
 
 @media (max-width: 860px) {
   .shellBody {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) minmax(260px, 36vh) auto;
+    grid-template-rows: minmax(0, 1fr) minmax(240px, 34vh) auto;
   }
 
   .workspace {
-    grid-template-columns: 1fr;
     grid-column: 1;
     grid-row: 1;
-  }
-
-  .shellBody.inspectorCollapsed {
-    grid-template-rows: minmax(0, 1fr) 0 auto;
+    grid-template-columns: 1fr;
   }
 
   .inspector {
     grid-column: 1;
     grid-row: 2;
-    border-top: 1px solid #272d37;
+    border-top: 1px solid var(--border);
     border-left: 0;
   }
 
@@ -1331,11 +1867,16 @@ input {
     grid-row: 3;
   }
 
-  .sidebarResizeHandle {
+  .sidebarResizeHandle,
+  .dockHandle {
     display: none;
   }
 
-  .brand {
-    min-width: 0;
+  .browserBody {
+    grid-template-columns: 130px minmax(0, 1fr);
+  }
+
+  .browserDetails {
+    display: none;
   }
 }

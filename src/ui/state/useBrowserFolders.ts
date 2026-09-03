@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { EditorProjectState } from '../../lib/brresEditor';
 import type { CourseAssetDatabase } from '../../lib/courseAssets';
 import type { CommonResourceArchive } from '../../lib/objflow';
 import type { TrackDocument } from '../../lib/track';
@@ -8,13 +7,11 @@ import { buildBrowserFolders, filterBrowserFolder, type BrowserFolderId } from '
 /** Content browser folder model: which folders exist, which one is open, and the search filter. */
 export function useBrowserFolders({
   track,
-  projectState,
   objFlow,
   commonArchive,
   courseAssetDb,
 }: {
   track: TrackDocument | null;
-  projectState: EditorProjectState | null;
   objFlow: CommonResourceArchive['objFlow'] | null;
   commonArchive: CommonResourceArchive | null;
   courseAssetDb: CourseAssetDatabase | null;
@@ -23,8 +20,8 @@ export function useBrowserFolders({
   const [browserQuery, setBrowserQuery] = useState('');
 
   const browserFolders = useMemo(
-    () => buildBrowserFolders({ track, projectState, objFlow, commonArchive, courseAssetDb }),
-    [commonArchive, courseAssetDb, objFlow, projectState, track],
+    () => buildBrowserFolders({ track, objFlow, commonArchive, courseAssetDb }),
+    [commonArchive, courseAssetDb, objFlow, track],
   );
   const activeBrowserFolder = browserFolders.find((folder) => folder.id === browserFolder) ?? browserFolders[0] ?? null;
   const filteredBrowserFolder = useMemo(() => filterBrowserFolder(activeBrowserFolder, browserQuery), [activeBrowserFolder, browserQuery]);

@@ -1,6 +1,11 @@
 /*
  * KMP-mode styles. Imported by `KmpMode.tsx`, so they only load with the mode. Everything is
  * scoped under a `kmp*` class name; the shared shell styles in `src/styles.css` are untouched.
+ *
+ * Colours, spacing, radii, type sizes and control metrics all come from the design tokens in
+ * the `:root` block of `src/styles.css` — no raw literals here except geometry that is tied to
+ * a specific pixel size (icon boxes, the accent dot, the outliner row height, the HUD label
+ * column). Those are called out with comments where they appear.
  */
 
 .kmpPanel .placeAssetsHeader {
@@ -8,28 +13,30 @@
      item count spills over the tree below it. */
   flex: 0 0 auto;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .kmpTreeToolbar {
   display: flex;
-  gap: 4px;
+  gap: var(--space-2);
   flex: 0 0 auto;
 }
 
 .kmpTreeToolbar .button {
   flex: 1 1 0;
-  padding: 4px 7px;
-  font-size: 11px;
+  /* `.button` fixes the height, so only the horizontal padding matters here; the buttons also
+     stretch (`flex: 1 1 0`), which is why snapping 7px -> --space-2 is invisible. */
+  padding: var(--space-2);
+  font-size: var(--font-size-xs);
 }
 
 .kmpPanelBody {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 0 8px 12px;
+  padding: 0 var(--space-3) var(--space-4);
   display: grid;
-  gap: 8px;
+  gap: var(--space-3);
   align-content: start;
 }
 
@@ -39,44 +46,52 @@
 
 .kmpTree {
   display: grid;
+  /* Hairline separation between rows; deliberately not on the spacing scale. */
   gap: 1px;
   align-content: start;
 }
 
 .kmpTreeEmpty {
   margin: 0;
-  padding: 10px 2px;
-  color: #9faaba;
-  font-size: 12px;
+  padding: var(--space-3) var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
 }
 
 .kmpTreeRow {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: var(--radius-md);
+  /* `KmpOutliner.tsx` sets `paddingLeft: 4 + depth * 13` inline, so the row keeps its own
+     vertical metrics and gets no horizontal padding from here. 22px is off the control scale
+     on purpose — --control-height-sm (24px) would make deep trees noticeably taller. */
   min-height: 22px;
 }
 
 .kmpTreeRow.isSection {
-  margin-top: 4px;
+  margin-top: var(--space-2);
 }
 
 .kmpTreeRow.isSection .kmpTreeName {
   font-weight: 600;
-  color: #dbe4f0;
+  color: var(--text);
 }
 
+/* Same recipe as `.uiTreeRow.is-selected` / `.assetTile.selected`, so a selected KMP row reads
+   identically to a selected row anywhere else in the app. */
 .kmpTreeRow.isSelected {
-  background: #1d2836;
-  border-color: #2f4460;
+  background: var(--selection);
+  border-color: var(--selection-border);
 }
 
+/* The primary row of a multi-selection. There is no token one step above --selection, so it
+   escalates on the border instead: full-strength --accent against --selection-border's 62%. */
 .kmpTreeRow.isPrimary {
-  background: #24334a;
-  border-color: #3d5c86;
+  background: var(--selection);
+  border-color: var(--accent);
 }
 
 .kmpTreeRow.isHidden .kmpTreeName,
@@ -85,25 +100,26 @@
 }
 
 .kmpTreeRow:hover {
-  background: #182130;
+  background: var(--surface-hover);
 }
 
 .kmpTreeChevron {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  /* Icon box, sized to the row's first grid column. */
   width: 16px;
   height: 18px;
   padding: 0;
   border: 0;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: #8fa0b6;
+  color: var(--text-muted);
   cursor: pointer;
 }
 
 .kmpTreeChevron:hover {
-  color: #e7ecf4;
+  color: var(--text);
 }
 
 .kmpTreeChevronSpacer {
@@ -113,18 +129,20 @@
 .kmpTreeLabel {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-2);
   min-width: 0;
   width: 100%;
-  padding: 2px 4px;
+  padding: var(--space-1) var(--space-2);
   border: 0;
   background: transparent;
-  color: #cfd8e6;
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
   text-align: left;
   cursor: pointer;
 }
 
+/* The dot's colour is an inline style from `KmpOutliner.tsx` (the per-section accent), so only
+   the geometry lives here. */
 .kmpTreeAccent {
   flex: 0 0 auto;
   width: 7px;
@@ -146,8 +164,8 @@
   flex: 1 1 0;
   flex-shrink: 200;
   min-width: 0;
-  color: #7d8b9e;
-  font-size: 11px;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -160,20 +178,22 @@
 }
 
 .kmpTreeIssue.isError {
-  color: #ff6b6b;
+  color: var(--danger);
 }
 
 .kmpTreeIssue.isWarning {
-  color: #ffc45e;
+  color: var(--warning);
 }
 
 .kmpTreeCount {
   flex: 0 0 auto;
-  padding: 0 5px;
-  border-radius: 8px;
-  background: #1b2432;
-  color: #8fa0b6;
-  font-size: 10px;
+  padding: 0 var(--space-2);
+  /* A count badge: --radius-pill matches `.validationBadge` and the other pills in the shell. */
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  /* Fixed badge height; must stay under the 22px row. */
   line-height: 15px;
 }
 
@@ -181,159 +201,169 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  /* Icon box. */
   width: 20px;
   height: 20px;
   padding: 0;
   border: 0;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: #8fa0b6;
+  color: var(--text-muted);
   cursor: pointer;
 }
 
+/* Matches `.uiTreeEye:hover` in components.css. */
 .kmpTreeEye:hover {
-  background: #23304a;
-  color: #e7ecf4;
+  background: var(--surface-3);
+  color: var(--text);
 }
 
 /* --- Inspector ------------------------------------------------------------- */
 
 .kmpInspector {
   display: grid;
-  gap: 12px;
+  gap: var(--space-4);
   align-content: start;
 }
 
+/* A card inside the panel: the dock is --surface-1, so the group sits one step above it. */
 .kmpToolGroup {
   display: grid;
-  gap: 7px;
+  gap: var(--space-3);
   align-content: start;
-  padding: 9px 10px;
-  border: 1px solid #232c39;
-  border-radius: 7px;
-  background: #141a23;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
 }
 
 .kmpToolGroup h3 {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #8fa0b6;
+  color: var(--text-muted);
 }
 
 .kmpSelectionName {
   margin: 0;
-  font-size: 13px;
-  color: #e7ecf4;
+  font-size: var(--font-size-md);
+  color: var(--text);
 }
 
 .kmpToolHint {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.45;
-  color: #8b9aad;
+  color: var(--text-muted);
 }
 
 .kmpButtonRow {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: var(--space-2);
 }
 
+/* Same recipe as `.button.active` / `.toggleButton.isActive` in styles.css. */
 .kmpButtonRow .button.isActive {
-  border-color: #4f7fc4;
-  background: #24405f;
-  color: #eaf2ff;
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-text);
 }
 
 .kmpLinkEditor {
   display: grid;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .kmpLinkLabel {
-  font-size: 11px;
-  color: #8fa0b6;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
 }
 
 .kmpLinkChips {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-2);
   align-items: center;
 }
 
 .kmpLinkChip {
-  padding: 2px 7px;
-  border: 1px solid #33445e;
-  border-radius: 10px;
-  background: #1a2434;
-  color: #cfd8e6;
-  font-size: 11px;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-strong);
+  /* Chips are ~19px tall, so the old 10px radius was already effectively a pill. */
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
   cursor: pointer;
 }
 
+/* Clicking a chip removes the link, hence the destructive hover. */
 .kmpLinkChip:hover {
-  border-color: #6b4444;
-  background: #2c1f1f;
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
 }
 
 .kmpIssueLink {
   padding: 0;
   border: 0;
   background: transparent;
-  color: #cfd8e6;
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
   line-height: 1.4;
   text-align: left;
   cursor: pointer;
 }
 
 .kmpIssueLink:hover {
-  color: #9dc6ff;
+  color: var(--accent-text);
   text-decoration: underline;
 }
 
 .kmpIssueFix {
   justify-self: start;
-  margin-top: 4px;
+  margin-top: var(--space-2);
 }
 
 /* --- Viewport HUD ---------------------------------------------------------- */
 
 .kmpToolsOverlay {
   display: grid;
-  gap: 6px;
+  gap: var(--space-2);
+  /* Keeps the HUD at least as wide as `.viewportOverlayPanel` (248px) so the tool rows do not
+     reflow when the overlay is used standalone. */
   min-width: 250px;
 }
 
 .kmpToolsRow {
   display: grid;
+  /* Fixed label column so every row's buttons start at the same x. */
   grid-template-columns: 92px minmax(0, 1fr);
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .kmpToolsLabel {
-  font-size: 11px;
-  color: #8fa0b6;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
 }
 
 .kmpToolsButtons {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .kmpToolsButtons .button {
-  padding: 3px 7px;
-  font-size: 11px;
+  /* `.button` fixes the height; only the horizontal padding is doing work. */
+  padding: 0 var(--space-3);
+  font-size: var(--font-size-xs);
 }
 
 .kmpToolsButtons .button.isActive {
-  border-color: #4f7fc4;
-  background: #24405f;
-  color: #eaf2ff;
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-text);
 }

@@ -257,3 +257,77 @@ that are installed on this machine (316 now report no errors at all):
   that screen and ports routinely leave a stale value there.
 - A camera type that does not travel along a route no longer has its route field checked. Retail
   Bowser's Castle stores 251 in that field on a stationary camera, which the game ignores.
+
+### Agent K — UI redesign and content browser (wave 2)
+
+Section 7 is done: the editor is one dark 3D-editor shell instead of a pile of ad-hoc panels.
+
+- **Design system** (`src/ui/components/`, documented in `docs/UI.md`): tokens for colour,
+  spacing, radius, type, elevation, control metrics and motion, plus Panel/PanelHeader/
+  PanelSection/PanelRail, Toolbar, Button/IconButton/ToolButton, SegmentedControl, Tabs,
+  Field/FieldRow/FieldGroup, NumberInput, VectorInput, Select, Toggle, ColorField, TreeView,
+  Tooltip/Kbd, MenuSurface/ContextMenu, Popover, Toast, StatusBar, EmptyState/Skeleton,
+  ShortcutOverlay, LoadingOverlay, AxisGizmo. The maths behind the fiddly ones is pure and
+  unit tested: `numberScrub.ts` (drag-to-scrub, key stepping, parsing), `treeModel.ts`
+  (flatten, virtualisation window, the ARIA keyboard model), `statusMessage.ts` (severity,
+  summary/detail split, which messages deserve a toast).
+- **Dockable shell**: left, right and bottom docks resize by dragging, reset on double-click,
+  collapse to a labelled icon rail that keeps its grid slot (so nothing reflows), and persist
+  size + collapse state (`usePanelLayout`, `mkw.editor.layout.v2`). New top bar with a File
+  menu (open, import Common.szs, export, recent tracks), the mode switch, dock toggles and
+  Export. The old free-text status line in the header became a real status bar (severity icon,
+  message, record/route/issue/FPS stats) plus a toast stack for failures and finished
+  imports/exports. `?` opens a keyboard-shortcut sheet.
+- **Content browser finished**: folder *tree* (Game Objects / Track Data / This Track), search,
+  a tile grid with an adjustable tile size, and a details pane that names the asset, its object
+  id in hex and decimal, which of its models are loaded, and its shapes/textures/animations.
+  `browserEntries.ts` is the one record the grid, the keyboard navigation and the details pane
+  all read. Drag-to-place still works for both objects and track-data points.
+- **Thumbnails fixed** — the user's named complaint. Wave 1's real-renderer pipeline was
+  working, but the 128x128 renders were `object-fit: contain`-ed into a 2:1 tile slot and the
+  renderer's clear colour did not match the slot, so every tile had two grey bars: the "broken
+  meshes" look. Tile slots are now square and `DEFAULT_BACKGROUND` is exactly `--surface-input`.
+  The loaded track's own archives now show their previews too instead of a generic icon.
+  Measured in the browser: of 24 sampled tiles on `Z0.szs`, 24 decode to a drawn, multi-colour
+  image (73–1884 distinct colours); 201 of 221 shared-object tiles have a real render.
+- **All four modes restyled onto the tokens**: `camera.css`, `model.css`, `visual.css` and
+  `kmp.css` went from 170 raw colour literals and zero `var(--…)` to 3 literals and 400 token
+  references, each with an empty selector-set diff so every probe hook survived. The left
+  dock's default width went 232px → 272px because the camera/model/visual/KMP outliners were
+  being clipped at 232.
+- **Vector rows fixed** (agent J's complaint): at the old 320px inspector, an X/Y/Z row beside
+  a label column left about 40px per axis, which clips a five-digit track coordinate. Any
+  field row holding a vector (or the four-column object settings) now takes the whole row with
+  its label above, and the inspector's default width is 380px. Measured in the browser at
+  1280x800: the narrowest axis field is 77px and nothing is clipped, with values like
+  `-21164.8887`.
+- **KMP mode** keeps its own outliner rather than moving to `TreeView`: a KMP row can stand for
+  many entities, section rows carry viewport visibility layers, rows carry a path-group accent
+  and a validation badge, and shift-click does range selection — `TreeView` would end up shaped
+  entirely by that one caller. `docs/UI.md` §5 records that decision and the six DOM contracts
+  `scripts/probe-kmp-mode-ui.js` depends on, so a later unification knows what it must keep.
+- **Removed**: the "Model Nodes" content-browser folder (model mode's outliner supersedes it,
+  per agent G), the dead archive-node inspector block, `CourseAssetThumbnail`, and the dead
+  `.status`, `.dockRail*`, `.quickObjects*` and `.previewId` CSS.
+
+Verified with `npx tsc --noEmit -p tsconfig.json` (clean), `npx vitest run` (651 passed / 1
+skipped, up from the 580 baseline after J's KMP merge), `npx vite build` (ok), and real-browser
+probes on `Z0.szs`, `Z10.szs`
+and a Nintendo track at 1600x1000 and 1280x800 (`scripts/ui-shell-probe.mjs` with
+`scripts/probe-ui-shell.js`, `probe-thumbnails.js`, `probe-browser-drag.js`). Every other
+agent's probe was re-run green against the restyled build: `probe-camera-ui.js`,
+`probe-camera-handle-drag.js`, `probe-model-mode-ui.js`, `probe-visual-ui.js`,
+`probe-kmp-mode-ui.js` and `probe-kmp-regression.js`.
+
+Two probe selectors were updated because the redesign deliberately renamed the hook: `.status`
+→ `.uiStatusMessage` and `.button.primary` → `.topBarRight .uiButton--primary` in
+`probe-visual-ui.js`, and `input[type="number"]` now also accepts `input[role="spinbutton"]`
+(the shared `NumberInput` is a text input with `role="spinbutton"` so it can support
+drag-to-scrub and a comma decimal separator).
+
+**Not done:** two cosmetic loose ends listed in `docs/UI.md` §6 — KMP mode uses raw `title=`
+attributes where the rest of the app uses the styled `Tooltip`, and the four mode panels lay
+their button rows out by hand instead of using `FieldRow`/`Toolbar`.
+`npm run smoke:browser` still cannot pass on this host: it runs headless Edge,
+which only gets SwiftShader, and noclip refuses to start there — its non-WebGL checks
+(`hasInspectorToggle`, `hasContentBrowserToggle`, `hasObjectThumbnailImage`) do pass.
