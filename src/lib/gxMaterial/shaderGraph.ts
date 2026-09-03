@@ -547,7 +547,10 @@ class Compiler {
     });
     if (stage.texMap !== GX.TexMapID.TEXMAP_NULL) {
       if (stage.texMap >= this.material.samplers.length) {
-        this.error(`This stage samples texture slot ${stage.texMap + 1}, but the material only has ${this.material.samplers.length}.`, nodeId);
+        // A pinned stage is copied out as it stands, so a slot the material has no layer for is
+        // something to point at rather than something to refuse: retail tracks ship materials
+        // like this and rewriting one unchanged has to keep working.
+        this.warn(`This stage samples texture slot ${stage.texMap + 1}, but the material only has ${this.material.samplers.length}.`, nodeId);
       } else {
         this.usage.samplers.push(stage.texMap);
         this.usage.texCoords.push(stage.texCoordId);

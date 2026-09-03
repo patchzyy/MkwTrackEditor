@@ -37,9 +37,9 @@ import {
   TEV_FIELDS as TEV,
   decodeMaterialBlock,
   encodeMaterialBlock,
+  collectMaterialIssues,
   materialBlockSize,
   tevBlocksEqual,
-  validateMaterialDoc,
 } from './materialCodec';
 import {
   GxMaterialError,
@@ -316,7 +316,6 @@ export function applyMaterial(
   doc: GxMaterialDoc,
   options: ApplyMaterialOptions = {},
 ): ApplyMaterialResult {
-  validateMaterialDoc(doc);
   const raw = readBrresRaw(brres);
   const { subFile, editor } = openModel(raw, modelName);
   if (editor.version !== 0x0b) {
@@ -326,6 +325,20 @@ export function applyMaterial(
   const materialDic = editor.getDic('material')!;
   const located = locateMaterial(editor, materialName);
   const warnings: string[] = [];
+
+  // Refuse what this edit broke, but not what it inherited: retail content contains materials
+  // whose stage samples a texture slot they have no layer for, and writing one of those back
+  // unchanged has to keep working.
+  const before = new Set(collectMaterialIssues(decodeMaterialBlock({
+    block: located.block,
+    tev: located.tev,
+    name: materialName,
+    readName: (offset) => editor.readNameAt(located.offset + offset),
+  })).map((issue) => issue.code));
+  for (const issue of collectMaterialIssues(doc)) {
+    if (!before.has(issue.code)) throw new GxMaterialError(issue.message);
+    warnings.push(`${issue.message} It was already like that, so it was left alone.`);
+  }
 
   // Every sampled texture has to exist in the archive, or the export renders untextured.
   const archiveTextures = new Set(raw.groups.find((group) => group.name === BRRES_TEXTURES_GROUP)?.entries.map((entry) => entry.name) ?? []);

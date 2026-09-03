@@ -109,14 +109,33 @@ export function readDisplayList(data: Uint8Array, offset: number, length: number
   }
 }
 
+/**
+ * The raw value of a BP write that sits at a known slot, or `null` when the slot holds something
+ * else. Unlike the replayed register file this is the value as *stored*, masks and all, which is
+ * what an encoder needs when it wants to leave a field it does not model exactly as it found it.
+ */
+export function rawBpWriteAt(data: Uint8Array, offset: number, reg: number): number | null {
+  if (offset < 0 || offset + 5 > data.length) return null;
+  if (data[offset] !== CMD_BP || data[offset + 1] !== (reg & 0xff)) return null;
+  return ((data[offset + 2] << 16) | (data[offset + 3] << 8) | data[offset + 4]) >>> 0;
+}
+
 // ------------------------------------------------------------------------------------- writing
 
 class DisplayListWriter {
   public readonly bytes: Uint8Array;
   private readonly view: DataView;
 
-  constructor(size: number) {
+  /**
+   * `base` is the list being replaced. Starting from it rather than from zeroes keeps every write
+   * this encoder does not make — the register slots of stages past the live count, the emboss
+   * fields of a regular texgen, an indirect matrix a material set but no longer uses — exactly as
+   * the exporter left them. Those slots are replayed into registers nothing reads, so carrying
+   * them is free, and it is what makes an untouched material round trip byte for byte.
+   */
+  constructor(size: number, base?: Uint8Array) {
     this.bytes = new Uint8Array(size);
+    if (base && base.length >= size) this.bytes.set(base.subarray(0, size), 0);
     this.view = new DataView(this.bytes.buffer);
   }
 
@@ -172,8 +191,8 @@ export interface MaterialDlInput {
   texGens: ReadonlyArray<readonly [number, number]>;
 }
 
-export function writeMaterialDisplayList(input: MaterialDlInput): Uint8Array {
-  const w = new DisplayListWriter(MAT_DL_SIZE);
+export function writeMaterialDisplayList(input: MaterialDlInput, base?: Uint8Array): Uint8Array {
+  const w = new DisplayListWriter(MAT_DL_SIZE, base);
   w.bp(MAT_DL.alphaFunc, GX.BPRegister.TEV_ALPHAFUNC_ID, input.alphaFunc);
   w.bp(MAT_DL.zMode, GX.BPRegister.PE_ZMODE_ID, input.zMode);
   w.bp(MAT_DL.cModeMask, BP_MASK_REG, CMODE_MASK);
@@ -237,12 +256,12 @@ export interface TevDlInput {
   indRefs: number;
   /** Per stage pair: `[konstSel, order]`. */
   pairs: ReadonlyArray<readonly [number, number]>;
-  /** Per stage: `[colorEnv, alphaEnv, indCmd]`. */
-  stages: ReadonlyArray<readonly [number, number, number]>;
+  /** Per stage: `[colorEnv, alphaEnv, indCmd]`; a null indirect command leaves the slot alone. */
+  stages: ReadonlyArray<readonly [number, number, number | null]>;
 }
 
-export function writeTevDisplayList(input: TevDlInput): Uint8Array {
-  const w = new DisplayListWriter(TEV_DL_SIZE);
+export function writeTevDisplayList(input: TevDlInput, base?: Uint8Array): Uint8Array {
+  const w = new DisplayListWriter(TEV_DL_SIZE, base);
   for (let n = 0; n < 8; n++) {
     const base = TEV_DL.swap + n * 0x0a;
     w.bp(base, BP_MASK_REG, SWAP_MASK);
@@ -261,7 +280,7 @@ export function writeTevDisplayList(input: TevDlInput): Uint8Array {
       if (!stage) break;
       w.bp(base + TEV_DL.pairColorEnv + half * 0x05, GX.BPRegister.TEV_COLOR_ENV_0_ID + (k * 2 + half) * 2, stage[0]);
       w.bp(base + TEV_DL.pairAlphaEnv + half * 0x05, GX.BPRegister.TEV_ALPHA_ENV_0_ID + (k * 2 + half) * 2, stage[1]);
-      w.bp(base + TEV_DL.pairIndCmd + half * 0x05, GX.BPRegister.IND_CMD0_ID + k * 2 + half, stage[2]);
+      if (stage[2] !== null) w.bp(base + TEV_DL.pairIndCmd + half * 0x05, GX.BPRegister.IND_CMD0_ID + k * 2 + half, stage[2]);
     }
   }
   return w.bytes;

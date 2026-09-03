@@ -25,8 +25,10 @@
 import * as GX from '../../../vendor/noclip.website/src/gx/gx_enum';
 import {
   MAT_DL_SIZE,
+  TEV_DL,
   TEV_DL_SIZE,
   bpValue,
+  rawBpWriteAt,
   createRegisterFile,
   isCompareOp,
   packBits,
@@ -187,6 +189,15 @@ function decodeChannelControl(chanCtrl: number): GxChannelControlDoc {
       ? (attnSelect ? GX.AttenuationFunction.SPOT : GX.AttenuationFunction.SPEC)
       : GX.AttenuationFunction.NONE,
   };
+}
+
+function sameChannelControl(a: GxChannelControlDoc, b: GxChannelControlDoc): boolean {
+  return a.lightingEnabled === b.lightingEnabled
+    && a.materialSource === b.materialSource
+    && a.ambientSource === b.ambientSource
+    && a.litMask === b.litMask
+    && a.diffuseFunction === b.diffuseFunction
+    && a.attenuationFunction === b.attenuationFunction;
 }
 
 function decodeRgba8(value: number): GxColor {
@@ -552,10 +563,12 @@ function encodeTexGen(texGen: GxTexGenDoc, base: number): number {
     projection = 0;
     sourceRow = texGen.source === GX.TexGenSrc.COLOR1 ? 3 : 2;
   }
-  // NW4R writes the input form to match the projection: 2x4 texgens use AB11, 3x4 use ABC1.
+  // The input form is not part of the document. NW4R matches it to the projection (2x4 texgens
+  // use AB11, 3x4 use ABC1) but not every exporter does, so keep whatever was there.
+  const form = base === TEXGEN_XF_BASE ? projection : (base >>> 2) & 0x01;
   return packBits([
     [projection, 1, 1],
-    [projection, 2, 1],
+    [form, 2, 1],
     [rawType, 4, 3],
     [sourceRow, 7, 5],
     [embossSource, 12, 3],
@@ -564,33 +577,37 @@ function encodeTexGen(texGen: GxTexGenDoc, base: number): number {
   ]);
 }
 
-function encodeTevStagePair(stages: readonly GxTevStageDoc[], pair: number): [konst: number, order: number] {
-  const even = stages[pair * 2];
-  const odd = stages[pair * 2 + 1];
-  let konst = 0;
-  let order = 0;
+/**
+ * The konst-selection and texture-order registers a stage pair shares.
+ *
+ * Both start from what is already in the file, because both hold fields no reader looks at: the
+ * half of a pair with only one stage, the texture slot named by a stage that samples no texture,
+ * and (in the konst register) the low four bits, which the swap-table write owns and the konst
+ * write masks out. Exporters put different things there and the point is to disturb none of it.
+ */
+function encodeTevStagePair(
+  stages: readonly GxTevStageDoc[],
+  pair: number,
+  baseKonst: number,
+  baseOrder: number,
+): [konst: number, order: number] {
+  let konst = baseKonst >>> 0;
+  let order = baseOrder >>> 0;
+  const set = (target: number, value: number, shift: number, width: number) =>
+    ((target & ~(((1 << width) - 1) << shift)) | ((value & ((1 << width) - 1)) << shift)) >>> 0;
+
   const apply = (stage: GxTevStageDoc | undefined, shiftBase: number, konstShift: number) => {
-    if (!stage) {
-      // The unused half of an odd-length pair: NW4R parks it on texmap 7, texcoord 7 and the
-      // zero color channel, with the konst selections left at "constant 1".
-      order |= packBits([[7, shiftBase + 0, 3], [7, shiftBase + 3, 3], [7, shiftBase + 7, 3]]);
-      return;
-    }
+    if (!stage) return;
     const enabled = stage.texMap !== GX.TexMapID.TEXMAP_NULL;
-    order |= packBits([
-      // A stage with no texture parks the slot on texmap 7, the same way an unused stage does.
-      [enabled ? stage.texMap : 7, shiftBase + 0, 3],
-      [stage.texCoordId, shiftBase + 3, 3],
-      [enabled ? 1 : 0, shiftBase + 6, 1],
-      [stage.channelId, shiftBase + 7, 3],
-    ]);
-    konst |= packBits([
-      [stage.konstColorSel, konstShift + 0, 5],
-      [stage.konstAlphaSel, konstShift + 5, 5],
-    ]);
+    if (enabled) order = set(order, stage.texMap, shiftBase + 0, 3);
+    order = set(order, stage.texCoordId, shiftBase + 3, 3);
+    order = set(order, enabled ? 1 : 0, shiftBase + 6, 1);
+    order = set(order, stage.channelId, shiftBase + 7, 3);
+    konst = set(konst, stage.konstColorSel, konstShift + 0, 5);
+    konst = set(konst, stage.konstAlphaSel, konstShift + 5, 5);
   };
-  apply(even, 0, 4);
-  apply(odd, 12, 14);
+  apply(stages[pair * 2], 0, 4);
+  apply(stages[pair * 2 + 1], 12, 14);
   return [konst >>> 0, order >>> 0];
 }
 
@@ -648,63 +665,96 @@ function encodeIndMatrix(matrix: GxIndMatrixDoc): [number, number, number] {
   ];
 }
 
+function sameIndMatrix(a: GxIndMatrixDoc, b: GxIndMatrixDoc): boolean {
+  return a.scaleExp === b.scaleExp && a.m.every((value, i) => value === b.m[i]);
+}
+
 function isDefaultIndMatrix(matrix: GxIndMatrixDoc): boolean {
   return matrix.m.every((value) => value === 0) && matrix.scaleExp === -IND_SCALE_BIAS;
 }
 
-/** Rejects a document the GX hardware could not run, in words a track author can act on. */
-export function validateMaterialDoc(doc: GxMaterialDoc): void {
-  const limit = (count: number, max: number, what: string) => {
-    if (count > max) throw new GxMaterialError(`"${doc.name}" has ${count} ${what}; the GX hardware allows at most ${max}.`);
-  };
-  limit(doc.samplers.length, GX_LIMITS.samplers, 'textures');
-  limit(doc.texGens.length, GX_LIMITS.texGens, 'texture coordinate generators');
-  limit(doc.tevStages.length, GX_LIMITS.tevStages, 'TEV stages');
-  limit(doc.indTexStages.length, GX_LIMITS.indTexStages, 'indirect texture stages');
-  limit(doc.channels.length, GX_LIMITS.channels, 'lighting channels');
-  if (doc.texSrts.length !== doc.samplers.length) {
-    throw new GxMaterialError(`"${doc.name}" has ${doc.texSrts.length} texture transforms for ${doc.samplers.length} textures; there must be one each.`);
-  }
-  if (doc.tevStages.length === 0) throw new GxMaterialError(`"${doc.name}" needs at least one TEV stage.`);
+/** Something wrong with a document, in words a track author can act on. */
+export interface MaterialIssue {
+  /** Stable identity, so a defect a material already had is not reported as one the editor made. */
+  code: string;
+  message: string;
+}
 
-  const inRange = (value: number, max: number, what: string) => {
+/**
+ * Everything wrong with a document, hard limits first.
+ *
+ * The split between "throw" and "warn" is not made here: `applyMaterial` compares the issues of
+ * the document it is given against those of the material already in the file, and only refuses
+ * the ones that are new. Retail content really does contain materials whose stage samples a
+ * texture slot the material has no layer for, and writing such a material back unchanged has to
+ * keep working.
+ */
+export function collectMaterialIssues(doc: GxMaterialDoc): MaterialIssue[] {
+  const issues: MaterialIssue[] = [];
+  const limit = (count: number, max: number, code: string, what: string) => {
+    if (count > max) issues.push({ code, message: `"${doc.name}" has ${count} ${what}; the GX hardware allows at most ${max}.` });
+  };
+  limit(doc.samplers.length, GX_LIMITS.samplers, 'limit.samplers', 'textures');
+  limit(doc.texGens.length, GX_LIMITS.texGens, 'limit.texgens', 'texture coordinate generators');
+  limit(doc.tevStages.length, GX_LIMITS.tevStages, 'limit.stages', 'TEV stages');
+  limit(doc.indTexStages.length, GX_LIMITS.indTexStages, 'limit.indstages', 'indirect texture stages');
+  limit(doc.channels.length, GX_LIMITS.channels, 'limit.channels', 'lighting channels');
+  if (doc.texSrts.length !== doc.samplers.length) {
+    issues.push({
+      code: 'limit.texsrts',
+      message: `"${doc.name}" has ${doc.texSrts.length} texture transforms for ${doc.samplers.length} textures; there must be one each.`,
+    });
+  }
+  if (doc.tevStages.length === 0) issues.push({ code: 'limit.nostages', message: `"${doc.name}" needs at least one TEV stage.` });
+
+  const inRange = (value: number, max: number, code: string, what: string) => {
     if (!Number.isInteger(value) || value < 0 || value > max) {
-      throw new GxMaterialError(`"${doc.name}" has an out-of-range ${what} (${value}).`);
+      issues.push({ code, message: `"${doc.name}" has an out-of-range ${what} (${value}).` });
     }
   };
-  inRange(doc.cullMode, 3, 'cull mode');
-  if (doc.lightSetIndex < -128 || doc.lightSetIndex > 127) throw new GxMaterialError(`"${doc.name}" has an out-of-range light set index (${doc.lightSetIndex}).`);
-  if (doc.fogIndex < -128 || doc.fogIndex > 127) throw new GxMaterialError(`"${doc.name}" has an out-of-range fog index (${doc.fogIndex}).`);
+  inRange(doc.cullMode, 3, 'range.cull', 'cull mode');
+  if (doc.lightSetIndex < -128 || doc.lightSetIndex > 127) issues.push({ code: 'range.lightset', message: `"${doc.name}" has an out-of-range light set index (${doc.lightSetIndex}).` });
+  if (doc.fogIndex < -128 || doc.fogIndex > 127) issues.push({ code: 'range.fog', message: `"${doc.name}" has an out-of-range fog index (${doc.fogIndex}).` });
 
   doc.tevStages.forEach((stage, index) => {
-    inRange(stage.texCoordId, 7, `stage ${index + 1} texture coordinate`);
+    const stageName = `Stage ${index + 1} of "${doc.name}"`;
+    inRange(stage.texCoordId, 7, `range.stage${index}.texcoord`, `stage ${index + 1} texture coordinate`);
     if (stage.texMap !== GX.TexMapID.TEXMAP_NULL) {
-      inRange(stage.texMap, 7, `stage ${index + 1} texture slot`);
+      inRange(stage.texMap, 7, `range.stage${index}.texmap`, `stage ${index + 1} texture slot`);
       if (stage.texMap >= doc.samplers.length) {
-        throw new GxMaterialError(`Stage ${index + 1} of "${doc.name}" samples texture slot ${stage.texMap + 1}, but the material only has ${doc.samplers.length}.`);
+        issues.push({ code: `stage${index}.missing-texture`, message: `${stageName} samples texture slot ${stage.texMap + 1}, but the material only has ${doc.samplers.length}.` });
       }
       if (stage.texCoordId >= doc.texGens.length) {
-        throw new GxMaterialError(`Stage ${index + 1} of "${doc.name}" uses texture coordinate ${stage.texCoordId + 1}, but the material only generates ${doc.texGens.length}.`);
+        issues.push({ code: `stage${index}.missing-texcoord`, message: `${stageName} uses texture coordinate ${stage.texCoordId + 1}, but the material only generates ${doc.texGens.length}.` });
       }
     }
-    if (stage.indTexMatrix !== GX.IndTexMtxID.OFF && doc.indTexStages.length === 0) {
-      throw new GxMaterialError(`Stage ${index + 1} of "${doc.name}" uses an indirect matrix but the material has no indirect stages.`);
-    }
     if (stage.indTexMatrix !== GX.IndTexMtxID.OFF && stage.indTexStage >= doc.indTexStages.length) {
-      throw new GxMaterialError(`Stage ${index + 1} of "${doc.name}" reads indirect stage ${stage.indTexStage + 1}, but the material only has ${doc.indTexStages.length}.`);
+      issues.push({ code: `stage${index}.missing-indstage`, message: `${stageName} reads indirect stage ${stage.indTexStage + 1}, but the material only has ${doc.indTexStages.length}.` });
     }
-    inRange(stage.rasSwapTable, 3, `stage ${index + 1} raster swap table`);
-    inRange(stage.texSwapTable, 3, `stage ${index + 1} texture swap table`);
-    inRange(stage.konstColorSel, 0x1f, `stage ${index + 1} konst color selection`);
-    inRange(stage.konstAlphaSel, 0x1f, `stage ${index + 1} konst alpha selection`);
+    inRange(stage.rasSwapTable, 3, `range.stage${index}.rasswap`, `stage ${index + 1} raster swap table`);
+    inRange(stage.texSwapTable, 3, `range.stage${index}.texswap`, `stage ${index + 1} texture swap table`);
+    inRange(stage.konstColorSel, 0x1f, `range.stage${index}.konstcolor`, `stage ${index + 1} konst color selection`);
+    inRange(stage.konstAlphaSel, 0x1f, `range.stage${index}.konstalpha`, `stage ${index + 1} konst alpha selection`);
   });
   doc.indTexStages.forEach((stage, index) => {
-    inRange(stage.texMap, 7, `indirect stage ${index + 1} texture slot`);
-    inRange(stage.texCoordId, 7, `indirect stage ${index + 1} texture coordinate`);
+    inRange(stage.texMap, 7, `range.ind${index}.texmap`, `indirect stage ${index + 1} texture slot`);
+    inRange(stage.texCoordId, 7, `range.ind${index}.texcoord`, `indirect stage ${index + 1} texture coordinate`);
     if (stage.texMap >= doc.samplers.length) {
-      throw new GxMaterialError(`Indirect stage ${index + 1} of "${doc.name}" samples texture slot ${stage.texMap + 1}, but the material only has ${doc.samplers.length}.`);
+      issues.push({ code: `ind${index}.missing-texture`, message: `Indirect stage ${index + 1} of "${doc.name}" samples texture slot ${stage.texMap + 1}, but the material only has ${doc.samplers.length}.` });
     }
   });
+  return issues;
+}
+
+/** Issues that make a block impossible to lay out at all, so no encoder may ignore them. */
+export function collectFatalMaterialIssues(doc: GxMaterialDoc): MaterialIssue[] {
+  return collectMaterialIssues(doc).filter((issue) => issue.code.startsWith('limit.'));
+}
+
+/** Rejects a document the GX hardware could not run, in words a track author can act on. */
+export function validateMaterialDoc(doc: GxMaterialDoc): void {
+  const issue = collectMaterialIssues(doc)[0];
+  if (issue) throw new GxMaterialError(issue.message);
 }
 
 export interface EncodedMaterial {
@@ -728,7 +778,8 @@ export interface EncodeMaterialOptions {
 
 export function encodeMaterialBlock(options: EncodeMaterialOptions): EncodedMaterial {
   const { doc, original, originalTev, blockOffset } = options;
-  validateMaterialDoc(doc);
+  const fatal = collectFatalMaterialIssues(doc)[0];
+  if (fatal) throw new GxMaterialError(fatal.message);
 
   const originalView = viewOf(original);
   const originalLayerOffset = originalView.getUint32(MAT.layerOffset);
@@ -753,7 +804,8 @@ export function encodeMaterialBlock(options: EncodeMaterialOptions): EncodedMate
   view.setInt8(MAT.lightSet, doc.lightSetIndex);
   view.setInt8(MAT.fogSet, doc.fogIndex);
   view.setUint32(MAT.numLayers, layers);
-  view.setUint32(MAT.layerOffset, MAT.layerTable);
+  // Exporters write 0 rather than a pointer when a material has no layers at all.
+  view.setUint32(MAT.layerOffset, layers > 0 ? MAT.layerTable : (originalLayers === 0 ? originalLayerOffset : 0));
   view.setUint32(MAT.dlOffset, dlOffset);
 
   // Texture SRTs and the matrix effects that carry the map mode.
@@ -796,16 +848,28 @@ export function encodeMaterialBlock(options: EncodeMaterialOptions): EncodedMate
   view.setUint32(MAT.srtFlags, srtFlags >>> 0);
   view.setUint32(MAT.texMatrixMode, Math.max(0, TEX_MATRIX_MODES.indexOf(doc.texMatrixMode)));
 
-  // Lighting channels. Slots past `channels.length` keep whatever the source had.
+  // Lighting channels. Slots past `channels.length` keep whatever the source had, and so does the
+  // "which fields are set" word, which exporters fill in inconsistently and no reader looks at.
+  // A control word is only rewritten when it no longer means what the document says: several
+  // encodings map to the same channel control (attenuation "none" is stored both as 0 and as
+  // spot-with-attenuation-off) and some files leave junk in the unused high bits.
+  const originalChannels = originalView.getUint8(MAT.numChans);
   doc.channels.forEach((channel, i) => {
     const at = MAT.chanTable + i * 0x14;
-    view.setUint32(at + 0x00, 0x3f);
+    if (i >= originalChannels) view.setUint32(at + 0x00, 0x3f);
     view.setUint32(at + 0x04, encodeRgba8(channel.materialColor));
     view.setUint32(at + 0x08, encodeRgba8(channel.ambientColor));
-    view.setUint32(at + 0x0c, encodeChannelControl(channel.color));
-    view.setUint32(at + 0x10, encodeChannelControl(channel.alpha));
+    const keepIfEquivalent = (offset: number, control: GxChannelControlDoc) => {
+      const stored = i < originalChannels ? originalView.getUint32(at + offset) : null;
+      if (stored !== null && sameChannelControl(decodeChannelControl(stored), control)) return;
+      view.setUint32(at + offset, encodeChannelControl(control));
+    };
+    keepIfEquivalent(0x0c, channel.color);
+    keepIfEquivalent(0x10, channel.alpha);
   });
-  for (let i = doc.channels.length; i < 2; i++) view.setUint32(MAT.chanTable + i * 0x14, 0x0f);
+  for (let i = doc.channels.length; i < 2; i++) {
+    if (i < originalChannels) view.setUint32(MAT.chanTable + i * 0x14, 0x0f);
+  }
 
   // Layer table.
   const template = originalLayers > 0
@@ -867,12 +931,24 @@ export function encodeMaterialBlock(options: EncodeMaterialOptions): EncodedMate
     indScales[i >>> 1] |= packBits([[stage.scaleS, (i & 1) * 8, 4], [stage.scaleT, (i & 1) * 8 + 4, 4]]);
   });
 
+  // NW4R emits matrix 0 for a material with indirect stages and nothing at all for one without.
+  // Files disagree at the margins, so the rule is: write what was written before, plus matrix 0
+  // when indirect stages have just been added, plus any matrix the author actually filled in.
   const hasIndirect = doc.indTexStages.length > 0;
+  const originalHadIndirect = originalView.getUint8(MAT.numIndStages) > 0;
   const indMatrices = doc.indMatrices.map((matrix, n) => {
-    if (!hasIndirect) return null;
-    // NW4R only ever emits matrix 0; carry the other two only when the author gave them a value.
-    if (n > 0 && isDefaultIndMatrix(matrix)) return null;
-    return encodeIndMatrix(matrix);
+    const stored = decodeIndMatrix(
+      bpValue(originalRegs, GX.BPRegister.IND_MTXA0_ID + n * 3),
+      bpValue(originalRegs, GX.BPRegister.IND_MTXA0_ID + n * 3 + 1),
+      bpValue(originalRegs, GX.BPRegister.IND_MTXA0_ID + n * 3 + 2),
+    );
+    // Unchanged: leave the bytes exactly where the exporter put them, which is not always where
+    // this writer would put them. The one exception is a material that has just been given its
+    // first indirect stage and so has no matrix at all yet.
+    if (sameIndMatrix(stored, matrix)) {
+      return hasIndirect && !originalHadIndirect && n === 0 ? encodeIndMatrix(matrix) : null;
+    }
+    return hasIndirect ? encodeIndMatrix(matrix) : null;
   });
 
   const matDl = writeMaterialDisplayList({
@@ -889,23 +965,30 @@ export function encodeMaterialBlock(options: EncodeMaterialOptions): EncodedMate
       encodeTexGen(texGen, originalRegs.xf.get(GX.XFRegister.XF_TEX0_ID + i) ?? TEXGEN_XF_BASE),
       packBits([[texGen.postMatrix - GX.PostTexGenMatrix.PTTEXMTX0, 0, 8], [texGen.normalize ? 1 : 0, 8, 1]]),
     ] as [number, number]),
-  });
+  }, originalDlOffset > 0 && originalDlOffset + MAT_DL_SIZE <= original.length
+    ? original.subarray(originalDlOffset, originalDlOffset + MAT_DL_SIZE)
+    : undefined);
   block.set(matDl, dlOffset);
 
-  return { block, tev: encodeTevBlock(doc, originalTev), dlOffset };
+  return { block, tev: encodeTevBlock(doc, originalTev, originalLayers, originalView.getUint8(MAT.numTevStages)), dlOffset };
 }
 
 /** Rebuilds the 512-byte shared TEV block for `doc`, keeping the source block's header fields. */
-export function encodeTevBlock(doc: GxMaterialDoc, original: Uint8Array): Uint8Array {
+export function encodeTevBlock(doc: GxMaterialDoc, original: Uint8Array, originalLayers = -1, originalStages = -1): Uint8Array {
   const tev = new Uint8Array(TEV_BLOCK_SIZE);
   tev.set(original.subarray(0, Math.min(TEV_DL_OFFSET, original.length)), 0);
   const view = viewOf(tev);
   view.setUint32(TEV.size, TEV_BLOCK_SIZE);
-  view.setUint8(TEV.numStages, doc.tevStages.length);
-  // The eight texture references are the identity for every live layer; NW4R writes one even for
-  // a material with no textures at all.
-  const liveRefs = Math.max(1, doc.samplers.length);
-  for (let i = 0; i < 8; i++) view.setUint8(TEV.refs + i, i < liveRefs ? i : 0xff);
+  // The block's own stage count and texture references only mean anything alongside the material
+  // header's counts, and the two disagree in a fair few shipped files. Rewrite them when the
+  // material's counts changed and leave them alone when they did not.
+  if (doc.tevStages.length !== originalStages) view.setUint8(TEV.numStages, doc.tevStages.length);
+  if (doc.samplers.length !== originalLayers) {
+    // The eight texture references are the identity for every live layer; NW4R writes one even
+    // for a material with no textures at all.
+    const liveRefs = Math.max(1, doc.samplers.length);
+    for (let i = 0; i < 8; i++) view.setUint8(TEV.refs + i, i < liveRefs ? i : 0xff);
+  }
 
   const swap: number[] = [];
   for (const table of doc.swapTables) {
@@ -921,16 +1004,42 @@ export function encodeTevBlock(doc: GxMaterialDoc, original: Uint8Array): Uint8A
     indRefs = (indRefs & ~(0x3f << (i * 6))) | (((stage.texMap & 0x07) | ((stage.texCoordId & 0x07) << 3)) << (i * 6));
   });
 
+  const originalDl = original.length >= TEV_DL_OFFSET + TEV_DL_SIZE
+    ? original.subarray(TEV_DL_OFFSET, TEV_DL_OFFSET + TEV_DL_SIZE)
+    : null;
   const pairCount = Math.ceil(doc.tevStages.length / 2);
   const pairs: Array<[number, number]> = [];
-  for (let k = 0; k < pairCount; k++) pairs.push(encodeTevStagePair(doc.tevStages, k));
+  for (let k = 0; k < pairCount; k++) {
+    const at = TEV_DL.pair + k * 0x30;
+    // Read the stored writes, not the replayed registers: the konst register's low four bits are
+    // masked out of this write and belong to the swap table, so the replayed value is not what
+    // the file has here.
+    const konst = originalDl ? rawBpWriteAt(originalDl, at + TEV_DL.pairKonst, GX.BPRegister.TEV_KSEL_0_ID + k) : null;
+    const order = originalDl ? rawBpWriteAt(originalDl, at + TEV_DL.pairOrder, GX.BPRegister.RAS1_TREF_0_ID + k) : null;
+    pairs.push(encodeTevStagePair(doc.tevStages, k, konst ?? 0, order ?? 0));
+  }
+
+  // An indirect command that says nothing, on a stage whose register already reads that way, is
+  // not written at all: some exporters leave that slot to a different register entirely, and
+  // overwriting it would change bytes without changing what the material does.
+  const indCommands = doc.tevStages.map((stage, i) => {
+    const value = encodeTevStage(stage)[2];
+    if (value !== 0) return value;
+    if (bpValue(originalRegs, GX.BPRegister.IND_CMD0_ID + i) !== 0) return value;
+    const at = TEV_DL.pair + (i >>> 1) * 0x30 + TEV_DL.pairIndCmd + (i & 1) * 0x05;
+    const stored = originalDl ? rawBpWriteAt(originalDl, at, GX.BPRegister.IND_CMD0_ID + i) : null;
+    return stored === null ? null : value;
+  });
 
   tev.set(writeTevDisplayList({
     swap,
     indRefs: indRefs >>> 0,
     pairs,
-    stages: doc.tevStages.map(encodeTevStage),
-  }), TEV_DL_OFFSET);
+    stages: doc.tevStages.map((stage, i) => {
+      const [color, alpha] = encodeTevStage(stage);
+      return [color, alpha, indCommands[i]] as [number, number, number | null];
+    }),
+  }, originalDl ?? undefined), TEV_DL_OFFSET);
   return tev;
 }
 

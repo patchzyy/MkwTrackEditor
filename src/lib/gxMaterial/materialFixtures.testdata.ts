@@ -56,7 +56,7 @@ export function listCourseArchives(limit = 4): ArchiveFixture[] {
   return out;
 }
 
-export function listMaterialArchives(courseLimit = 4, objectLimit = 6): ArchiveFixture[] {
+export function listMaterialArchives(courseLimit = 12, objectLimit = 8): ArchiveFixture[] {
   return [...listCourseArchives(courseLimit), ...listObjectArchives(objectLimit)];
 }
 
