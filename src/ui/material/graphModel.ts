@@ -143,7 +143,9 @@ export function nodeSize(node: EditorGraphNode): { width: number; height: number
   const rows = Math.max(spec.inputs.length, spec.outputs.length);
   return {
     width: NODE_WIDTH,
-    height: NODE_HEADER_HEIGHT + 10 + rows * SOCKET_SPACING + nodeBodyHeight(node) + 10,
+    // The caption under the title is part of the node's box; leaving it out of the height is what
+    // makes a laid-out graph overlap.
+    height: NODE_HEADER_HEIGHT + 10 + rows * SOCKET_SPACING + nodeBodyHeight(node) + (node.label ? 18 : 0) + 10,
   };
 }
 
@@ -527,43 +529,47 @@ const LAYOUT_COLUMN = NODE_WIDTH + 84;
 const LAYOUT_ROW = 24;
 
 /**
- * Left-to-right layered layout: a node sits one column right of its deepest input, and the rows
- * inside a column are stacked in the order they were found. Comments keep their position — they
- * are annotations on a layout, not part of it.
+ * Left-to-right layered layout, "as late as possible": a node's column is set by how far it still
+ * is from the Material node, so a texture feeding the last stage sits next to that stage rather
+ * than back at the far left with every other source. Laying it out the other way round (one column
+ * right of the deepest input) piles every source into column 0, which for a real material is a
+ * single unreadable stack.
+ *
+ * Comments keep their position — they are annotations on a layout, not part of it.
  */
 export function autoLayout(graph: EditorShaderGraph): EditorShaderGraph {
   const laidOut = graph.nodes.filter((node) => !isCommentNode(node));
   if (laidOut.length === 0) return graph;
 
-  const depth = new Map<string, number>();
+  const distance = new Map<string, number>();
   const visiting = new Set<string>();
   const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
 
-  function depthOf(nodeId: string): number {
-    const known = depth.get(nodeId);
+  /** Longest path from this node to a node nothing consumes (the Material node, normally). */
+  function distanceToSink(nodeId: string): number {
+    const known = distance.get(nodeId);
     if (known !== undefined) return known;
     if (visiting.has(nodeId)) return 0; // a cycle: stop rather than recurse for ever
     visiting.add(nodeId);
     let best = 0;
     for (const edge of graph.edges) {
-      if (edge.to.node !== nodeId) continue;
-      const from = nodeById.get(edge.from.node);
-      if (!from || isCommentNode(from)) continue;
-      best = Math.max(best, depthOf(from.id) + 1);
+      if (edge.from.node !== nodeId) continue;
+      const to = nodeById.get(edge.to.node);
+      if (!to || isCommentNode(to)) continue;
+      best = Math.max(best, distanceToSink(to.id) + 1);
     }
     visiting.delete(nodeId);
-    depth.set(nodeId, best);
+    distance.set(nodeId, best);
     return best;
   }
 
-  for (const node of laidOut) depthOf(node.id);
-  // The Material node always sits in the last column, however shallow its chain.
-  const maxDepth = Math.max(0, ...laidOut.map((node) => depth.get(node.id) ?? 0));
-  for (const node of laidOut) if (node.type === 'output') depth.set(node.id, maxDepth);
+  for (const node of laidOut) distanceToSink(node.id);
+  const longest = Math.max(0, ...laidOut.map((node) => distance.get(node.id) ?? 0));
+  const columnOf = (node: EditorGraphNode) => longest - (distance.get(node.id) ?? 0);
 
   const columns = new Map<number, EditorGraphNode[]>();
   for (const node of laidOut) {
-    const column = depth.get(node.id) ?? 0;
+    const column = columnOf(node);
     const list = columns.get(column) ?? [];
     list.push(node);
     columns.set(column, list);

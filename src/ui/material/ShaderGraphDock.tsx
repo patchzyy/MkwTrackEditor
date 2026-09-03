@@ -25,6 +25,12 @@ export interface ShaderGraphDockProps {
   doc: GxMaterialDoc | null;
   graph: EditorShaderGraph | null;
   compiled: CompiledShader | null;
+  /**
+   * True once the graph has been edited, at which point it — not the material's stored stages —
+   * is what gets written. Until then the dock shows the material's own stages, because a freshly
+   * decompiled graph is a view of them and its compile is only a round trip.
+   */
+  graphDrivesMaterial: boolean;
   presets: ShaderGraphPreset[];
   historyState: { undo: number; redo: number };
   textures: readonly GxTextureSummary[];
@@ -61,6 +67,7 @@ export function ShaderGraphDock({
   doc,
   graph,
   compiled,
+  graphDrivesMaterial,
   presets,
   historyState,
   textures,
@@ -81,12 +88,12 @@ export function ShaderGraphDock({
 
   const error = compiled?.diagnostics.find((diagnostic) => diagnostic.severity === 'error') ?? null;
   const warningCount = compiled?.diagnostics.filter((diagnostic) => diagnostic.severity === 'warning').length ?? 0;
-  const status = compiled
-    ? compiled.ok
-      ? describeShader(compiled.tevStages.length, compiled.usage.samplers.length)
-      : `Not compiling — ${error?.message ?? 'the graph is invalid'}`
+  // Which stage list the material actually draws with right now.
+  const stages = graphDrivesMaterial && compiled?.ok ? compiled.tevStages : (doc?.tevStages ?? []);
+  const status = compiled && !compiled.ok && graphDrivesMaterial
+    ? `Not compiling — ${error?.message ?? 'the graph is invalid'}`
     : doc
-      ? describeShader(doc.tevStages.length, doc.samplers.length)
+      ? describeShader(stages.length, doc.samplers.length)
       : '';
 
   return (
@@ -112,7 +119,7 @@ export function ShaderGraphDock({
             value={tab}
             options={[
               { value: 'graph', label: 'Graph' },
-              { value: 'stages', label: 'Stages', badge: compiled?.tevStages.length ?? doc?.tevStages.length ?? 0 },
+              { value: 'stages', label: 'Stages', badge: stages.length },
             ]}
             onChange={(value) => onChangeTab(value as MaterialDockTab)}
           />
@@ -183,8 +190,8 @@ export function ShaderGraphDock({
         )}
 
         <div className="materialDockStatus">
-          {error && <AlertTriangle size={13} className="materialDockStatusIcon" aria-hidden="true" />}
-          <span className={error ? 'materialDockStatusText error' : 'materialDockStatusText'}>{status}</span>
+          {error && graphDrivesMaterial && <AlertTriangle size={13} className="materialDockStatusIcon" aria-hidden="true" />}
+          <span className={error && graphDrivesMaterial ? 'materialDockStatusText error' : 'materialDockStatusText'}>{status}</span>
           {warningCount > 0 && <span className="materialTag">{warningCount} note{warningCount === 1 ? '' : 's'}</span>}
           <IconButton
             size="sm"
@@ -205,7 +212,7 @@ export function ShaderGraphDock({
               description="Pick a material on the left and its shader graph appears here."
             />
           ) : tab === 'stages' ? (
-            <StagesTable stages={compiled?.ok ? compiled.tevStages : doc.tevStages} />
+            <StagesTable stages={stages} />
           ) : graph ? (
             <GraphEditor
               graph={graph}

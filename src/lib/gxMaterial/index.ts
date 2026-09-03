@@ -350,6 +350,12 @@ function readCString(bytes: Uint8Array, offset: number): string {
   return new TextDecoder('utf-8').decode(bytes.subarray(offset, end));
 }
 
+/** A fixed-length magic, which is not NUL terminated in a BRRES header. */
+function readMagic(bytes: Uint8Array, offset: number, length = 4): string {
+  if (offset < 0 || offset + length > bytes.length) return '';
+  return String.fromCharCode(...bytes.subarray(offset, offset + length));
+}
+
 /** The `parseResDic` walk, on plain bytes. Offsets come back absolute. */
 function readResDic(bytes: Uint8Array, view: DataView, tableOffs: number): Array<{ name: string; offs: number }> {
   if (tableOffs === 0) return [];
@@ -368,7 +374,7 @@ function readResDic(bytes: Uint8Array, view: DataView, tableOffs: number): Array
 
 /** Absolute offset of a named material's header inside the archive, or -1. */
 function locateMaterial(bytes: Uint8Array, view: DataView, modelName: string, materialName: string): number {
-  if (bytes.length < 0x10 || readCString(bytes, 0) !== 'bres') return -1;
+  if (bytes.length < 0x10 || readMagic(bytes, 0) !== 'bres') return -1;
   const rootOffs = view.getUint16(0x0c);
   const root = readResDic(bytes, view, rootOffs + 0x08);
   const models = root.find((entry) => entry.name === '3DModels(NW4R)');
@@ -518,7 +524,12 @@ export function decompileShader(material: GxMaterialDoc): ShaderGraph {
 
     const colorNode: GraphNode = { id: id('n'), type: 'lerp', x, y: -ROW, label: `Stage ${index} colour` };
     push(colorNode);
-    const a = colorSource(stage.colorInA);
+    // Most retail stages are `D + lerp(0, B, C)` with A = ZERO, so the previous stage arrives on
+    // D rather than on A. Folding D into A keeps the chain connected in the graph, which is what
+    // this placeholder is for; the real decompiler emits the add explicitly.
+    const a = stage.colorInA === GX.CC.ZERO && stage.colorInD !== GX.CC.ZERO
+      ? colorSource(stage.colorInD)
+      : colorSource(stage.colorInA);
     const b = colorSource(stage.colorInB);
     const t = colorSource(stage.colorInC);
     if (a) connect(a, { node: colorNode.id, socket: 'a' });
@@ -528,7 +539,9 @@ export function decompileShader(material: GxMaterialDoc): ShaderGraph {
 
     const alphaNode: GraphNode = { id: id('n'), type: 'lerp', x, y: ROW, label: `Stage ${index} alpha` };
     push(alphaNode);
-    const aa = alphaSource(stage.alphaInA);
+    const aa = stage.alphaInA === GX.CA.ZERO && stage.alphaInD !== GX.CA.ZERO
+      ? alphaSource(stage.alphaInD)
+      : alphaSource(stage.alphaInA);
     const ab = alphaSource(stage.alphaInB);
     const at = alphaSource(stage.alphaInC);
     if (aa) connect(aa, { node: alphaNode.id, socket: 'a' });

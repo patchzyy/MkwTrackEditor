@@ -21,6 +21,8 @@ current `App.tsx` keeps compiling unchanged. Nothing was removed or renamed.
 either `showKmpEditorOverlay === false` or `mode` is `'model'` / `'visual'`.
 
 Wire it up as `mode={editorMode}` (the app's existing `EditorModeStub` values match exactly).
+`EditorModeStub` also has `'material'`, which the app maps to `'visual'` for the viewport: Material
+mode wants the same "no KMP overlays, plain game look" viewport that Visual mode has.
 
 ### Camera (CAME) mode
 
@@ -134,6 +136,8 @@ All of these are reachable from the viewport as `sceneRef.current`.
 | `getEditorVisualCapabilities()` | `{ bloom, dof, lighting, wireframe }` — which toggles this particular track and device can actually drive. |
 | `reloadEditorTexture(name, texture)` | Swaps an already-uploaded TEX0's pixels in place, reusing the `GfxTexture` handle so every material that samples it picks the new pixels up next frame. Requires the same dimensions and format; returns `false` otherwise. |
 | `listEditorTextureNames()` | Names in the scene's texture holder. |
+| `addEditorTexture(name, texture)` | Uploads a texture the archive did not have before, so an imported PNG is visible immediately. An existing name is routed at `reloadEditorTexture`, which can only replace pixels at the same size and format. |
+| `reloadEditorMaterial(archivePath, modelName, materialName, brres)` | Re-parses one material out of edited BRRES bytes and swaps it into every live `MDL0ModelInstance` of that model, without rebuilding the scene. `false` when the scene has not loaded that archive, model or material, or when the bytes do not parse. |
 | `applyEditorPostEffectFile(path, data)` | Re-applies an edited `posteffect/*` file without reloading the scene: `.bblm` and `.bdof` rebuild their `EggDrawPath`, `.blight` swaps the `EggLightManager`. Returns `false` for files the renderer does not consume — including `posteffect.bfg`, since this renderer has no course-fog draw path. |
 
 ### Mesh picking and editing
@@ -291,3 +295,46 @@ have been deleted.
 `toMeshViewportTransformSelection` produces and what `syncBrresViewportTransformSelectionPreview`
 pushes at `setEditorMeshTransform`. If bone-level editing is ever wanted again, it should come back
 as a mesh-style target rather than as a second parallel path.
+
+
+---
+
+## 8. Material mode: swapping a material without rebuilding the scene
+
+Material mode edits a BRRES material and needs the viewport to show the result immediately. A
+`sceneKey` bump would work but is the wrong shape: it re-parses and re-uploads the whole track and
+throws the camera away. Instead the renderer replaces just that material.
+
+### Vendored renderer additions
+
+`vendor/noclip.website/src/rres/brres.ts`
+
+```ts
+export function parseMaterialEntry(
+  buffer: ArrayBufferSlice, modelName: string, materialName: string,
+): { entry: MDL0_MaterialEntry, index: number } | null
+```
+
+Walks only `root` → `3DModels(NW4R)` → the named MDL0's material resource dictionary and runs the
+same (module-private) `parseMDL0_MaterialEntry` the full parser uses, so the result is what
+`parse()` would have produced. No display list, vertex array or other material is touched.
+
+`vendor/noclip.website/src/rres/render.ts`
+
+| Member | Purpose |
+| --- | --- |
+| `MDL0Model.replaceMaterial(device, cache, index, entry)` | New `MaterialData` for that index, re-bound to whatever texture holder / res file the model was loaded against (both are now remembered by `bindTextureHolder` / `bindResFile`). |
+| `MDL0ModelInstance.replaceMaterial(index)` | Rebuilds the `MaterialInstance`s for that material and repoints the `ShapeInstance`s that used them. Returns how many were replaced. |
+| `MDL0ModelInstance.materialInstanceMatIds` | The MDL0 material index behind `materialInstances[i]`. `materialInstances` is per draw op, not per material, so this is the only exact way to find the instances of one material. |
+| `MaterialInstance.sortKeyLayer` / `getFogSettings()` | The state a replacement instance inherits, since neither is derivable from the material. |
+
+A `MaterialInstance` copies the material's `GXMaterial` at construction, so mutating
+`mdl0.materials[n]` alone changes nothing on screen — the instance must be rebuilt. Nothing on this
+path has a `destroy`: programs and samplers come from the shared `GfxRenderCache`, which owns and
+dedupes them, so discarding the old material objects leaks nothing.
+
+### App side
+
+`MaterialRendererScene` in `src/ui/material/materialScene.ts` declares `reloadEditorMaterial` and
+`addEditorTexture` structurally on top of `VisualRendererScene`, so `src/ui` still imports no
+vendored types. Material mode reuses `onVisualSceneChange` to get hold of the scene.

@@ -309,6 +309,21 @@ describe('pan and zoom', () => {
 });
 
 describe('auto layout', () => {
+  it('puts a source in the column just left of what it feeds, not back at the far left', () => {
+    // `late` feeds the last node in the chain, so it belongs beside it rather than beside `early`.
+    let graph = graphOf([texture('early'), texture('late'), multiply('m1'), multiply('m2'), output('o')]);
+    graph = connectEdge(graph, { node: 'early', socket: 'rgb', side: 'output' }, { node: 'm1', socket: 'a', side: 'input' });
+    graph = connectEdge(graph, { node: 'm1', socket: 'out', side: 'output' }, { node: 'm2', socket: 'a', side: 'input' });
+    graph = connectEdge(graph, { node: 'late', socket: 'rgb', side: 'output' }, { node: 'm2', socket: 'b', side: 'input' });
+    graph = connectEdge(graph, { node: 'm2', socket: 'out', side: 'output' }, { node: 'o', socket: 'color', side: 'input' });
+    const laid = autoLayout(graph);
+    const x = (id: string) => laid.nodes.find((node) => node.id === id)!.x;
+    expect(x('early')).toBeLessThan(x('late'));
+    expect(x('late')).toBe(x('m1'));
+    expect(x('m2')).toBeGreaterThan(x('late'));
+    expect(x('o')).toBeGreaterThan(x('m2'));
+  });
+
   it('puts a node one column right of its deepest input, with the Material node last', () => {
     let graph = graphOf([texture('a', 900, 900), multiply('m', 0, 0), output('o', 10, 10)]);
     graph = connectEdge(graph, { node: 'a', socket: 'rgb', side: 'output' }, { node: 'm', socket: 'a', side: 'input' });

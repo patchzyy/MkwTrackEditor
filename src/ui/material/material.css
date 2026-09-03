@@ -176,8 +176,14 @@
   color: var(--warning-text);
 }
 
-.materialTag.stages {
+.materialTag.stages,
+.materialTag.meshes {
   font-variant-numeric: tabular-nums;
+}
+
+.materialTag.meshes {
+  background: var(--surface-3);
+  color: var(--text-dim);
 }
 
 .materialEmpty,
@@ -324,12 +330,18 @@
 }
 
 .materialLightMask,
-.materialSwapRow,
-.materialMatrixGrid {
+.materialSwapRow {
   display: flex;
   align-items: center;
   gap: var(--space-1);
   flex-wrap: wrap;
+}
+
+/* A swap table is four one-digit channel indices; without this the full-width number fields
+   stack into four rows instead of sitting side by side. */
+.materialSwapRow > * {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .materialMatrixGrid {
@@ -774,6 +786,17 @@
   height: 12px;
   cursor: nwse-resize;
   background: linear-gradient(135deg, transparent 50%, var(--border-strong) 50%);
+}
+
+.graphZoom {
+  position: absolute;
+  right: var(--space-3);
+  bottom: var(--space-2);
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
 
 .graphReject {

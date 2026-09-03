@@ -489,6 +489,9 @@ export function GraphEditor({
       tabIndex={0}
       role="application"
       aria-label="Shader graph"
+      // Read by `scripts/probe-material-ui.js`; also the zoom readout in the corner.
+      data-zoom={view.zoom.toFixed(3)}
+      title={`Zoom ${Math.round(view.zoom * 100)}%`}
       onPointerDown={onSurfacePointerDown}
       onDoubleClick={(event) => openPalette(event.clientX, event.clientY)}
       onContextMenu={(event) => {
@@ -543,12 +546,19 @@ export function GraphEditor({
         ))}
       </div>
 
+      <p className="graphZoom" aria-live="off">{Math.round(view.zoom * 100)}%</p>
+
       {rejectMessage && <p className="graphReject" role="status">{rejectMessage}</p>}
 
       {palette && (
         <div
           className="graphPalette"
-          style={{ left: Math.min(palette.screenX, Math.max(0, (surfaceRef.current?.clientWidth ?? 0) - 260)), top: palette.screenY }}
+          // Kept inside the surface: opened near the bottom or the right edge it would otherwise
+          // hang off the dock, where the shell clips it.
+          style={{
+            left: Math.max(0, Math.min(palette.screenX, (surfaceRef.current?.clientWidth ?? 0) - 268)),
+            top: Math.max(0, Math.min(palette.screenY, (surfaceRef.current?.clientHeight ?? 0) - 292)),
+          }}
           role="dialog"
           aria-label="Add node"
           onPointerDown={(event) => event.stopPropagation()}

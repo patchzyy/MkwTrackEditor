@@ -155,7 +155,14 @@ export function MaterialOutliner({
                                 <span className="materialTag shared">Shared</span>
                               </Tooltip>
                             )}
-                            <span className="materialTag stages">{material.summary.stageCount}</span>
+                            {material.summary.meshes.length > 0 && (
+                              <Tooltip label={`Drawn by ${material.summary.meshes.length} mesh${material.summary.meshes.length === 1 ? '' : 'es'}: ${material.summary.meshes.slice(0, 8).join(', ')}`} side="left">
+                                <span className="materialTag meshes">{material.summary.meshes.length}</span>
+                              </Tooltip>
+                            )}
+                            <Tooltip label={`${material.summary.stageCount} TEV stage${material.summary.stageCount === 1 ? '' : 's'}`} side="left">
+                              <span className="materialTag stages">{material.summary.stageCount}</span>
+                            </Tooltip>
                           </span>
                         </button>
                       );

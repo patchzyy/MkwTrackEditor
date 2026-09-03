@@ -151,6 +151,7 @@ function renderDock(tab: 'graph' | 'stages', open = true, doc: GxMaterialDoc | n
       doc={doc}
       graph={{ version: 1, nodes: [{ id: 'o', type: 'output', x: 0, y: 0 }], edges: [] }}
       compiled={null}
+      graphDrivesMaterial={false}
       presets={[]}
       historyState={{ undo: 0, redo: 0 }}
       textures={[]}

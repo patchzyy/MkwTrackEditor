@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { replaceArchiveFile } from '../../lib/track';
+import { replaceArchiveFile, type TrackDocument } from '../../lib/track';
 import type { CompiledShader, GxArchiveMaterials, GxMaterialDoc, GxMaterialRef } from '../../lib/gxMaterial';
 import { useToast } from '../components';
 import type { EditorModeContext, ModeUi } from '../modes/types';
@@ -79,6 +79,14 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
 
   /** Working documents, keyed by material. Committing an edit updates the entry here too. */
   const [docs, setDocs] = useState<Record<string, GxMaterialDoc>>({});
+  /**
+   * The documents that go with each version of the track. Undo and redo swap the whole
+   * `TrackDocument` out from under this mode, and re-decoding the material from the restored bytes
+   * would mean re-parsing a multi-megabyte BRRES on every Ctrl+Z. Remembering the document that
+   * produced each version instead makes the round trip free and exact. A `WeakMap` because the
+   * history's snapshots are the only thing keeping those track objects alive.
+   */
+  const docsByTrackRef = useRef(new WeakMap<TrackDocument, Record<string, GxMaterialDoc>>());
   const [graphs, setGraphs] = useState<Record<string, EditorShaderGraph>>({});
   const [compiled, setCompiled] = useState<CompiledShader | null>(null);
   const graphHistoryRef = useRef(new Map<string, { undo: EditorShaderGraph[]; redo: EditorShaderGraph[] }>());
@@ -173,8 +181,24 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
     const key = materialRefKey(selectedRef);
     if (docs[key]) return;
     const decoded = decodeSelected(selectedRef);
-    if (decoded) setDocs((current) => ({ ...current, [key]: decoded }));
-  }, [active, decodeSelected, docs, library, selectedRef]);
+    if (!decoded) return;
+    setDocs((current) => {
+      const next = { ...current, [key]: decoded };
+      if (track) docsByTrackRef.current.set(track, next);
+      return next;
+    });
+  }, [active, decodeSelected, docs, library, selectedRef, track]);
+
+  /**
+   * Undo and redo restore an older `TrackDocument`; the working documents have to follow, or the
+   * inspector keeps showing the edit that was just undone.
+   */
+  useEffect(() => {
+    if (!active || !track) return;
+    const stored = docsByTrackRef.current.get(track);
+    if (!stored) return;
+    setDocs((current) => (current === stored ? current : { ...current, ...stored }));
+  }, [active, track]);
 
   // A material's graph starts as the decompiled stages, unless an authored one was stored for
   // exactly these stages in a previous session.
@@ -183,7 +207,10 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
     const key = sessionGraphKey(selectedRef);
     if (graphs[key]) return;
     let cancelled = false;
-    const fallback = toEditorGraph(library.decompileShader(doc));
+    // A freshly decompiled graph is laid out by the editor rather than trusted as it comes: the
+    // decompiler orders nodes by stage but does not know how tall this editor draws them, so
+    // without this the source nodes of one stage sit on top of the next stage's cluster.
+    const fallback = autoLayout(toEditorGraph(library.decompileShader(doc)));
     void loadStoredGraph(selectedRef, doc.tevStages).then((stored) => {
       if (cancelled) return;
       setGraphs((current) => (current[key] ? current : { ...current, [key]: stored ?? fallback }));
@@ -229,15 +256,21 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
       const ref = selectedRef;
       if (!ref) return;
       const key = materialRefKey(ref);
-      setDocs((current) => ({ ...current, [key]: next }));
+      const nextDocs = { ...docs, [key]: next };
+      setDocs(nextDocs);
       if (options.transient || !library || !track) return;
 
       const bytes = findArchiveBytes(track, ref.archivePath);
       if (!bytes) return;
       try {
         const result = library.applyMaterial(bytes, ref.modelName, ref.materialName, next);
+        const nextTrack = replaceArchiveFile(track, ref.archivePath, result.brres);
+        // Both versions of the track remember the documents that go with them, so undo and redo
+        // put the inspector back where it was without re-decoding anything.
+        docsByTrackRef.current.set(track, docs);
+        docsByTrackRef.current.set(nextTrack, nextDocs);
         history.applyEditorChange(
-          replaceArchiveFile(track, ref.archivePath, result.brres),
+          nextTrack,
           selection.selectedIdRef.current,
           true,
           selection.selectedIdsRef.current,
@@ -249,7 +282,7 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
         setStatus(`${ref.materialName} could not be written: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
-    [history, library, pushToRenderer, selectedRef, selection, setStatus, surfaceWarnings, track],
+    [docs, history, library, pushToRenderer, selectedRef, selection, setStatus, surfaceWarnings, track],
   );
 
   // ------------------------------------------------------------------ graph editing
@@ -342,7 +375,7 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
     if (!library || !doc) return;
     // A re-decompile is a view of the stages the material already has, not a new shader, so it
     // does not count as an edit and must not write the compiler's round trip back over them.
-    setGraph(toEditorGraph(library.decompileShader(doc)), { edited: false });
+    setGraph(autoLayout(toEditorGraph(library.decompileShader(doc))), { edited: false });
     setStatus(`Rebuilt the graph from ${doc.name}'s ${doc.tevStages.length} stages.`);
   }, [doc, library, setGraph, setStatus]);
 
@@ -515,6 +548,7 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
         doc={doc}
         graph={graph ?? (selectedRef ? emptyGraph() : null)}
         compiled={compiled}
+        graphDrivesMaterial={selectedRef !== null && editedGraphsRef.current.has(sessionGraphKey(selectedRef))}
         presets={library?.SHADER_GRAPH_PRESETS ?? []}
         historyState={graphHistoryState}
         textures={archiveTextures}
