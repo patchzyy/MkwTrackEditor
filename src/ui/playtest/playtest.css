@@ -136,6 +136,73 @@
   text-shadow: 0 2px 6px rgb(0 0 0 / 80%);
 }
 
+/* Mini-turbo charge: the HUD stand-in for the game's blue / orange sparks. */
+.playtestHudCharge {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 180px;
+  margin-top: 6px;
+}
+
+.playtestHudChargeLabel {
+  color: #8fd3ff;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 75%);
+}
+
+.playtestHudChargeBar {
+  display: block;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: rgb(255 255 255 / 22%);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 60%);
+}
+
+.playtestHudChargeFill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #5fbcff;
+  transition: width 50ms linear;
+}
+
+.playtestHudCharge[data-level='1'] .playtestHudChargeLabel,
+.playtestHudCharge[data-level='2'] .playtestHudChargeLabel {
+  color: #ffb45c;
+}
+
+.playtestHudCharge[data-level='1'] .playtestHudChargeBar {
+  background: #5fbcff;
+}
+
+.playtestHudCharge[data-level='1'] .playtestHudChargeFill,
+.playtestHudCharge[data-level='2'] .playtestHudChargeFill {
+  background: #ff9a2e;
+}
+
+.playtestHudCharge[data-kind='standstill'][data-level='1'] .playtestHudChargeFill {
+  background: #5fbcff;
+  animation: playtestChargePulse 0.5s ease-in-out infinite alternate;
+}
+
+.playtestHudCharge[data-kind='standstill'][data-level='1'] .playtestHudChargeLabel {
+  color: #8fd3ff;
+}
+
+@keyframes playtestChargePulse {
+  from {
+    opacity: 0.55;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
 .playtestHudButton {
   display: inline-flex;
   align-items: center;

@@ -5,7 +5,13 @@
  * when something the user can actually see has changed.
  */
 
-import type { PlaytestKartState, PlaytestRaceState, PlaytestStage } from '../../lib/playtest/types';
+import type {
+  PlaytestKartState,
+  PlaytestMiniTurbo,
+  PlaytestMiniTurboKind,
+  PlaytestRaceState,
+  PlaytestStage,
+} from '../../lib/playtest/types';
 
 /**
  * The frame the flag drops: Mario Kart Wii's 172-frame intro plus its 240-frame countdown.
@@ -25,6 +31,35 @@ export interface PlaytestHudView {
   centerText: string;
   /** Set once the race is over. */
   finalTime: string | null;
+  /** Mini-turbo charge bar under the speed, or `null` when nothing is charging. */
+  charge: PlaytestHudCharge | null;
+}
+
+export interface PlaytestHudCharge {
+  /** `"Stand-still mini-turbo"`, `"Release brake!"`, `"Mini-turbo ready"`, ... */
+  label: string;
+  /** 0..100, whole percent. */
+  percent: number;
+  /** 0 charging towards blue, 1 blue ready (charging towards orange), 2 orange ready. */
+  level: 0 | 1 | 2;
+  kind: PlaytestMiniTurboKind;
+}
+
+/** What the charge bar says for a given mini-turbo state. */
+export function playtestHudCharge(miniTurbo: PlaytestMiniTurbo): PlaytestHudCharge | null {
+  if (miniTurbo.kind === 'none') return null;
+  const percent = Math.round(Math.min(1, Math.max(0, miniTurbo.charge)) * 100);
+  if (miniTurbo.kind === 'standstill') {
+    return {
+      kind: 'standstill',
+      level: miniTurbo.level >= 1 ? 1 : 0,
+      percent: miniTurbo.level >= 1 ? 100 : percent,
+      label: miniTurbo.level >= 1 ? 'Release brake!' : 'Stand-still mini-turbo',
+    };
+  }
+  if (miniTurbo.level >= 2) return { kind: 'drift', level: 2, percent: 100, label: 'Super mini-turbo ready' };
+  if (miniTurbo.level === 1) return { kind: 'drift', level: 1, percent, label: 'Mini-turbo ready' };
+  return { kind: 'drift', level: 0, percent, label: 'Mini-turbo' };
 }
 
 /** `mm:ss.mmm`, the format the game's own timer uses. */
@@ -62,7 +97,7 @@ export function playtestCenterText(
 
 export function buildPlaytestHudView(
   race: PlaytestRaceState,
-  kart: Pick<PlaytestKartState, 'speed'>,
+  kart: Pick<PlaytestKartState, 'speed'> & Partial<Pick<PlaytestKartState, 'miniTurbo'>>,
   raceStartFrame: number = PLAYTEST_RACE_START_FRAME,
 ): PlaytestHudView {
   return {
@@ -72,7 +107,14 @@ export function buildPlaytestHudView(
     speed: formatPlaytestSpeed(kart.speed),
     centerText: playtestCenterText(race, raceStartFrame),
     finalTime: race.stage === 'finished' ? formatPlaytestTime(race.timeMs) : null,
+    charge: kart.miniTurbo ? playtestHudCharge(kart.miniTurbo) : null,
   };
+}
+
+function chargesEqual(a: PlaytestHudCharge | null, b: PlaytestHudCharge | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.label === b.label && a.percent === b.percent && a.level === b.level && a.kind === b.kind;
 }
 
 export function playtestHudViewsEqual(a: PlaytestHudView | null, b: PlaytestHudView | null): boolean {
@@ -84,6 +126,7 @@ export function playtestHudViewsEqual(a: PlaytestHudView | null, b: PlaytestHudV
     a.time === b.time &&
     a.speed === b.speed &&
     a.centerText === b.centerText &&
-    a.finalTime === b.finalTime
+    a.finalTime === b.finalTime &&
+    chargesEqual(a.charge, b.charge)
   );
 }

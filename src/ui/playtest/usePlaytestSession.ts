@@ -20,6 +20,7 @@ import {
   type PlaytestKartState,
   type PlaytestRaceState,
   type PlaytestRuntime,
+  type PlaytestMiniTurbo,
 } from '../../lib/playtest/types';
 import type { ToastApi } from '../components/Toast';
 import {
@@ -46,6 +47,7 @@ export interface PlaytestHudSample {
   lap: number;
   maxLap: number;
   speed: number;
+  miniTurbo: PlaytestMiniTurbo;
 }
 
 /** The imperative handle the viewport drives once per animation frame. */
@@ -91,7 +93,7 @@ export interface PlaytestSession {
 }
 
 function emptyHudSample(): PlaytestHudSample {
-  return { stage: 'intro', frame: 0, timeMs: 0, lap: 1, maxLap: 3, speed: 0 };
+  return { stage: 'intro', frame: 0, timeMs: 0, lap: 1, maxLap: 3, speed: 0, miniTurbo: { kind: 'none', level: 0, charge: 0 } };
 }
 
 function describePlaytestError(error: unknown): string {
@@ -240,6 +242,9 @@ export function usePlaytestSession({
             hud.lap = race.lap;
             hud.maxLap = race.maxLap;
             hud.speed = kart.speed;
+            hud.miniTurbo.kind = kart.miniTurbo.kind;
+            hud.miniTurbo.level = kart.miniTurbo.level;
+            hud.miniTurbo.charge = kart.miniTurbo.charge;
           },
           onError: (error) => failSessionRef.current(error),
         });

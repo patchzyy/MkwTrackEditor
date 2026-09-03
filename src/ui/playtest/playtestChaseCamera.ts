@@ -26,12 +26,16 @@ export interface ChaseCameraParams {
   targetSmoothing: number;
 }
 
-/** Tuned against the bundled dummy kart so it fills roughly as much of the frame as in-game. */
+/**
+ * Tuned against the bundled dummy kart so it fills roughly as much of the frame as in-game. The
+ * look-at point sits well above the kart so the kart lands in the bottom third of the frame and
+ * the road ahead gets the rest.
+ */
 export const DEFAULT_CHASE_CAMERA_PARAMS: Readonly<ChaseCameraParams> = Object.freeze({
   distance: 480,
   height: 185,
   targetAhead: 600,
-  targetHeight: 70,
+  targetHeight: 150,
   speedDistance: 170,
   speedReference: 16,
   positionSmoothing: 0.22,

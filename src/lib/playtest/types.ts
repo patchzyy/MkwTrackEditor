@@ -51,6 +51,23 @@ export interface PlaytestQuat {
   w: number;
 }
 
+export type PlaytestMiniTurboKind = 'none' | 'standstill' | 'drift';
+
+/**
+ * Mini-turbo charge, so the HUD can show what the game shows with sparks. A stand-still
+ * mini-turbo charges while accelerate and brake are held at a standstill and fires when brake is
+ * released; a drift mini-turbo charges while drifting and fires when the drift ends.
+ */
+export interface PlaytestMiniTurbo {
+  kind: PlaytestMiniTurboKind;
+  /** 0 while charging, 1 once a mini-turbo is ready (blue), 2 once a super mini-turbo is ready (orange). */
+  level: 0 | 1 | 2;
+  /** 0..1 progress towards the next level; 1 once fully charged. */
+  charge: number;
+}
+
+export const NO_PLAYTEST_MINI_TURBO: Readonly<PlaytestMiniTurbo> = Object.freeze({ kind: 'none', level: 0, charge: 0 });
+
 /** Pose and motion of the player kart after the most recent `step()`. */
 export interface PlaytestKartState {
   position: PlaytestVec3;
@@ -70,6 +87,8 @@ export interface PlaytestKartState {
   drifting: boolean;
   /** Whether any boost (mini-turbo, mushroom, trick, ...) is active. */
   boosting: boolean;
+  /** Mini-turbo being charged, if any. */
+  miniTurbo: PlaytestMiniTurbo;
 }
 
 export type PlaytestStage = 'intro' | 'countdown' | 'race' | 'finished';

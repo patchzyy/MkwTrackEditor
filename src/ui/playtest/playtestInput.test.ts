@@ -27,11 +27,21 @@ describe('playtestInputFromKeys', () => {
     expect(keys()).toEqual(NEUTRAL_PLAYTEST_INPUT);
   });
 
-  it('maps both accelerate keys and the brake key', () => {
+  it('maps both accelerate keys and the brake keys', () => {
     expect(keys('Space').accelerate).toBe(true);
     expect(keys('KeyX').accelerate).toBe(true);
     expect(keys('KeyZ').brake).toBe(true);
     expect(keys('KeyZ').accelerate).toBe(false);
+    // Down doubles as brake so a stand-still mini-turbo is Space + Down.
+    expect(keys('ArrowDown').brake).toBe(true);
+    expect(keys('KeyS').brake).toBe(true);
+    expect(keys('ArrowUp').brake).toBe(false);
+  });
+
+  it('holds accelerate and brake together for a stand-still mini-turbo', () => {
+    const input = keys('Space', 'KeyZ');
+    expect(input.accelerate).toBe(true);
+    expect(input.brake).toBe(true);
   });
 
   it('steers with the arrows and with A/D, and cancels when both are held', () => {

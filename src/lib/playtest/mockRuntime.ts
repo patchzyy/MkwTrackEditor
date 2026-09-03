@@ -126,6 +126,7 @@ function emptyKartState(): PlaytestKartState {
     airborne: false,
     drifting: false,
     boosting: false,
+    miniTurbo: { kind: 'none', level: 0, charge: 0 },
   };
 }
 
@@ -270,6 +271,9 @@ class MockPlaytestRuntime implements PlaytestRuntime {
     out.airborne = false;
     out.drifting = this.input.drift && this.speed > 0;
     out.boosting = false;
+    out.miniTurbo.kind = 'none';
+    out.miniTurbo.level = 0;
+    out.miniTurbo.charge = 0;
     return out;
   }
 

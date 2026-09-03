@@ -17,7 +17,10 @@
 //     [28]     airborne  (0 or 1)
 //     [29]     drifting  (0 or 1)
 //     [30]     boosting  (0 or 1)
-//     [31]     reserved
+//     [31]     mini-turbo kind: 0 none, 1 stand-still charging, 2 stand-still charged,
+//              3 drift MT charging, 4 drift MT charged (blue), 5 drift SMT charged (orange)
+//     [32]     mini-turbo charge, 0..1 (progress towards the next level; 1 when charged)
+//     [33..35] reserved
 //
 //   kinoko_read_race_state(int32_t outInts[KINOKO_RACE_STATE_INTS],
 //                          float outFloats[KINOKO_RACE_STATE_FLOATS])
@@ -48,7 +51,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KINOKO_KART_STATE_FLOATS 32
+#define KINOKO_KART_STATE_FLOATS 36
 #define KINOKO_RACE_STATE_INTS 8
 #define KINOKO_RACE_STATE_FLOATS 8
 #define KINOKO_CAMERA_STATE_FLOATS 8

@@ -233,6 +233,19 @@ public:
         return m_mtCharge;
     }
 
+    /// Editor patch: expose the super and stand-still mini-turbo charge for the playtest HUD.
+    [[nodiscard]] u16 smtCharge() const {
+        return m_smtCharge;
+    }
+
+    [[nodiscard]] s16 ssmtCharge() const {
+        return m_ssmtCharge;
+    }
+
+    [[nodiscard]] bool isSsmtCharged() const {
+        return m_flags.onBit(eFlags::SsmtCharged);
+    }
+
     [[nodiscard]] f32 kclSpeedFactor() const {
         return m_kclSpeedFactor;
     }

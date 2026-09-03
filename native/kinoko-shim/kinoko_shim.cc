@@ -12,6 +12,7 @@
 #include <egg/core/ExpHeap.hh>
 #include <egg/core/SceneManager.hh>
 
+#include <game/kart/KartMove.hh>
 #include <game/kart/KartObjectManager.hh>
 #include <game/kart/KartParam.hh>
 #include <game/render/KartCamera.hh>
@@ -23,6 +24,7 @@
 
 #include <host/SceneCreatorDynamic.hh>
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 
@@ -282,6 +284,37 @@ extern "C" void kinoko_read_kart_state(float *out) {
                       Kart::eStatus::RampBoost, Kart::eStatus::ZipperBoost) ?
             1.0f :
             0.0f;
+
+    // Mini-turbo charge for the HUD. Stand-still MT: hold accelerate + brake for 75 frames, then
+    // release brake. Drift MT: 270 charge frames to blue, then (karts only) 300 more to orange.
+    const auto *move = kart->move();
+    if (move) {
+        constexpr float SSMT_MAX = 75.0f;
+        constexpr float MT_MAX = 270.0f;
+        constexpr float SMT_MAX = 300.0f;
+        if (status.onBit(Kart::eStatus::ChargingSSMT) || move->isSsmtCharged()) {
+            bool charged = move->isSsmtCharged();
+            out[31] = charged ? 2.0f : 1.0f;
+            out[32] = charged ? 1.0f : std::min(1.0f, static_cast<float>(move->ssmtCharge()) / SSMT_MAX);
+        } else {
+            switch (move->driftState()) {
+            case Kart::KartMove::DriftState::ChargingMt:
+                out[31] = 3.0f;
+                out[32] = std::min(1.0f, static_cast<float>(move->mtCharge()) / MT_MAX);
+                break;
+            case Kart::KartMove::DriftState::ChargedMt: // == ChargingSmt
+                out[31] = 4.0f;
+                out[32] = std::min(1.0f, static_cast<float>(move->smtCharge()) / SMT_MAX);
+                break;
+            case Kart::KartMove::DriftState::ChargedSmt:
+                out[31] = 5.0f;
+                out[32] = 1.0f;
+                break;
+            default:
+                break;
+            }
+        }
+    }
 }
 
 extern "C" void kinoko_read_race_state(int32_t *outInts, float *outFloats) {

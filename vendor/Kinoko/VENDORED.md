@@ -57,6 +57,10 @@ Every patch is marked in-place with a `KINOKO-PATCH(mkw-track-editor)` comment.
    Retro Rewind track set from 195/210 to 200/210 loading successfully. No effect when the file
    is present.
 
+5. **`source/game/kart/KartMove.hh`** — added `smtCharge()`, `ssmtCharge()` and `isSsmtCharged()`
+   getters next to the existing `mtCharge()`. The playtest HUD shows the mini-turbo charge bar
+   (the stand-in for the game's sparks) and the shim reads these to fill kart floats `[31..32]`.
+
 ### Emscripten / libc++ compatibility
 
 Upstream builds with GCC and libstdc++. Emscripten uses Clang and libc++, which is stricter.
@@ -83,7 +87,7 @@ keeps the vendored sources unmodified.
 ## Updating to a newer upstream
 
 1. Clone the new revision, copy `include/`, `source/` and `LICENSE` over the top.
-2. Re-apply the five patches above (search upstream for the same expressions).
+2. Re-apply the patches above (search upstream for the same expressions).
 3. Delete `source/abstract/File.cc` and everything in `source/host/` except the scene creator.
 4. `npm run build:kinoko && npm test`.
 5. Update the commit hash at the top of this file, and note any new patch here.

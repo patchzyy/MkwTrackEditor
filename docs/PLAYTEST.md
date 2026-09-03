@@ -95,9 +95,11 @@ Everything returning `int` returns `0` on success and a small `KINOKO_ERR_*` cod
 readers write into a caller-owned buffer, so the TypeScript side allocates one buffer per struct
 at construction and never allocates per frame.
 
-**Kart state** (`float[32]`): `[0..2]` position, `[3..6]` `fullRot` quaternion (x, y, z, w),
+**Kart state** (`float[36]`): `[0..2]` position, `[3..6]` `fullRot` quaternion (x, y, z, w),
 `[7..10]` `mainRot` quaternion, `[11]` speed, `[12..14]` velocity, `[15]` wheel count,
-`[16..27]` four wheel positions, `[28]` airborne, `[29]` drifting, `[30]` boosting, `[31]` spare.
+`[16..27]` four wheel positions, `[28]` airborne, `[29]` drifting, `[30]` boosting, `[31]` mini-turbo kind (0 none, 1 stand-still charging, 2 stand-still charged, 3 drift
+charging, 4 drift mini-turbo ready, 5 super mini-turbo ready), `[32]` mini-turbo charge 0..1,
+`[33..35]` spare.
 
 **Race state** (`int32[8]` + `float[8]`): ints are stage (Kinoko's raw `RaceManager::Stage`),
 frame, lap, STGI lap count, checkpoint id, respawn id, lap-split count, spare; floats are
@@ -282,9 +284,10 @@ While a session is running the CAME preview clock is skipped entirely; a playtes
 | Action | Keyboard | Gamepad (standard mapping) |
 | --- | --- | --- |
 | Accelerate | Space or X | A (0) |
-| Brake | Z | B (1) |
+| Brake / reverse | Z, ↓ or S | B (1) |
 | Steer | ← → or A / D | left stick X |
 | Stick up/down | ↑ ↓ or W / S | left stick Y (up is positive) |
+| Stand-still mini-turbo | hold accelerate + brake at a standstill, release brake | same |
 | Hop / drift | Shift | RB (5) or RT (7) |
 | Item | C | LB (4) |
 | Trick / wheelie | E (up), Q (down) | d-pad up / down |

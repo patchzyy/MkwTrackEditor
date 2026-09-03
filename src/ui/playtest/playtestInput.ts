@@ -20,7 +20,9 @@ const STEER_RIGHT_CODES = ['ArrowRight', 'KeyD'];
 const STICK_UP_CODES = ['ArrowUp', 'KeyW'];
 const STICK_DOWN_CODES = ['ArrowDown', 'KeyS'];
 const ACCELERATE_CODES = ['Space', 'KeyX'];
-const BRAKE_CODES = ['KeyZ'];
+// Down doubles as brake: on a keyboard "down = brake / reverse" is what everyone reaches for,
+// and it makes the stand-still mini-turbo (accelerate + brake at a standstill) discoverable.
+const BRAKE_CODES = ['KeyZ', 'ArrowDown', 'KeyS'];
 const DRIFT_CODES = ['ShiftLeft', 'ShiftRight'];
 const ITEM_CODES = ['KeyC'];
 const TRICK_UP_CODES = ['KeyE'];
@@ -34,9 +36,10 @@ export interface PlaytestControlHint {
 
 export const PLAYTEST_CONTROL_HINTS: ReadonlyArray<PlaytestControlHint> = [
   { action: 'Accelerate', keys: 'Space / X' },
-  { action: 'Brake', keys: 'Z' },
+  { action: 'Brake / reverse', keys: 'Z  or  ↓ / S' },
   { action: 'Steer', keys: '← →  or  A D' },
   { action: 'Hop / drift', keys: 'Shift' },
+  { action: 'Stand-still mini-turbo', keys: 'Hold accelerate + brake, release brake' },
   { action: 'Trick', keys: 'E / Q' },
   { action: 'Item', keys: 'C' },
   { action: 'Restart', keys: 'R' },

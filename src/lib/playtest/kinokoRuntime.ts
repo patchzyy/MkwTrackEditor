@@ -26,10 +26,53 @@ import {
   type PlaytestStage,
   type PlaytestTrick,
   type PlaytestVec3,
+  type PlaytestMiniTurbo,
 } from './types';
 
 // Buffer layouts; keep in step with native/kinoko-shim/kinoko_shim.h.
-const KART_STATE_FLOATS = 32;
+const KART_STATE_FLOATS = 36;
+
+/**
+ * Decodes the shim's mini-turbo kind (`kinoko_shim.h`, kart floats `[31]`) and charge (`[32]`):
+ * 0 none, 1 stand-still charging, 2 stand-still charged, 3 drift MT charging, 4 drift MT charged
+ * (blue), 5 drift super MT charged (orange).
+ */
+export function readMiniTurbo(kind: number, charge: number, out: PlaytestMiniTurbo): PlaytestMiniTurbo {
+  const clamped = Number.isFinite(charge) ? Math.min(1, Math.max(0, charge)) : 0;
+  switch (kind) {
+    case 1:
+      out.kind = 'standstill';
+      out.level = 0;
+      out.charge = clamped;
+      break;
+    case 2:
+      out.kind = 'standstill';
+      out.level = 1;
+      out.charge = 1;
+      break;
+    case 3:
+      out.kind = 'drift';
+      out.level = 0;
+      out.charge = clamped;
+      break;
+    case 4:
+      out.kind = 'drift';
+      out.level = 1;
+      out.charge = clamped;
+      break;
+    case 5:
+      out.kind = 'drift';
+      out.level = 2;
+      out.charge = 1;
+      break;
+    default:
+      out.kind = 'none';
+      out.level = 0;
+      out.charge = 0;
+      break;
+  }
+  return out;
+}
 const RACE_STATE_INTS = 8;
 const RACE_STATE_FLOATS = 8;
 const CAMERA_STATE_FLOATS = 8;
@@ -284,6 +327,7 @@ class KinokoRuntime implements PlaytestRuntime {
       airborne: false,
       drifting: false,
       boosting: false,
+      miniTurbo: { kind: 'none', level: 0, charge: 0 },
     };
 
     this.#guard('read the kart state', (module) => {
@@ -309,6 +353,7 @@ class KinokoRuntime implements PlaytestRuntime {
       state.airborne = floats[28] !== 0;
       state.drifting = floats[29] !== 0;
       state.boosting = floats[30] !== 0;
+      readMiniTurbo(floats[31] | 0, floats[32], state.miniTurbo);
     });
 
     return state;

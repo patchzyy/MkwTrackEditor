@@ -49,7 +49,7 @@ export function PlaytestHud({
           respawnId: 0,
           lapSplitsMs: [],
         },
-        { speed: sample.speed },
+        { speed: sample.speed, miniTurbo: sample.miniTurbo },
       );
       if (playtestHudViewsEqual(viewRef.current, next)) return;
       viewRef.current = next;
@@ -83,6 +83,14 @@ export function PlaytestHud({
             <span className="playtestHudSpeed" data-testid="playtest-speed">
               {view?.speed ?? '0 km/h'}
             </span>
+            {view?.charge ? (
+              <div className="playtestHudCharge" data-level={view.charge.level} data-kind={view.charge.kind}>
+                <span className="playtestHudChargeLabel">{view.charge.label}</span>
+                <span className="playtestHudChargeBar" aria-hidden="true">
+                  <span className="playtestHudChargeFill" style={{ width: `${view.charge.percent}%` }} />
+                </span>
+              </div>
+            ) : null}
           </div>
           {view?.centerText ? (
             <div className="playtestHudCenter" data-stage={view.stage}>
@@ -92,7 +100,13 @@ export function PlaytestHud({
           ) : null}
         </>
       )}
-      <div hidden data-playtest-stage={view?.stage ?? 'loading'} data-playtest-speed={view?.speed ?? ''} data-playtest-time={view?.time ?? ''} />
+      <div
+        hidden
+        data-playtest-stage={view?.stage ?? 'loading'}
+        data-playtest-speed={view?.speed ?? ''}
+        data-playtest-time={view?.time ?? ''}
+        data-playtest-charge={view?.charge ? `${view.charge.kind}:${view.charge.level}:${view.charge.percent}` : ''}
+      />
     </div>
   );
 }

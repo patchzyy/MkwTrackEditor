@@ -3535,6 +3535,7 @@ function createPlaytestFrameState(): PlaytestFrameState {
       airborne: false,
       drifting: false,
       boosting: false,
+      miniTurbo: { kind: 'none', level: 0, charge: 0 },
     },
     race: {
       stage: 'intro',
