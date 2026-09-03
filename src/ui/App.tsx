@@ -10,8 +10,12 @@ import { useKmpMode } from './kmp/KmpMode';
 import { useModelMode } from './model/ModelMode';
 import type { EditorModeContext, ModeUi } from './modes/types';
 import { useVisualMode } from './visual/VisualMode';
-import { ContentBrowser } from './contentBrowser/ContentBrowser';
+import { ContentBrowser, type ContentBrowserActions } from './contentBrowser/ContentBrowser';
 import { PlaceAssetsRail } from './contentBrowser/PlaceAssetsRail';
+import { downloadBytes } from './downloadFile';
+import { libraryAssetSourcePath } from '../lib/assetLibrary';
+import { extractModelBrres } from '../lib/brres/extractModel';
+import { useAssetLibrary } from './state/useAssetLibrary';
 import { buildFillBetweenPositions, getFillBetweenSelection } from './fillBetween';
 import { FillBetweenPanel } from './inspector/FillBetweenPanel';
 import { InspectorPanel } from './inspector/InspectorPanel';
@@ -155,7 +159,73 @@ export function App() {
     return `${title} #${entity.index}`;
   }
 
-  const browser = useBrowserFolders({ track, objFlow, commonArchive, courseAssetDb });
+  const library = useAssetLibrary({ setStatus, showToast: toasts.showToast });
+  const browser = useBrowserFolders({ track, objFlow, commonArchive, courseAssetDb, libraryAssets: library.assets });
+  const { setBrowserFolder } = browser;
+
+  /** Bytes of one of the loaded track's archives, as loaded (model-mode edits are baked on export). */
+  const findTrackArchive = useCallback(
+    (path: string): Uint8Array | null => {
+      const entries = trackRef.current?.archiveEntries ?? [];
+      const exact = entries.find((entry) => entry.type === 'file' && entry.path === path && entry.data);
+      const loose = exact ?? entries.find((entry) => entry.type === 'file' && entry.path.toLowerCase().endsWith(path.replace(/^\.?\/*/, '').toLowerCase()) && entry.data);
+      return loose?.data ?? null;
+    },
+    [trackRef],
+  );
+
+  /** A track archive, or one model out of it as a standalone `.brres`. */
+  const trackAssetBytes = useCallback(
+    (path: string, modelName: string | null): { fileName: string; bytes: Uint8Array } | null => {
+      const archive = findTrackArchive(path);
+      if (!archive) {
+        toasts.showToast({ tone: 'warning', title: 'Archive not found', detail: `${path} is not in the loaded track.` });
+        return null;
+      }
+      const fileName = path.split('/').pop() ?? path;
+      if (modelName === null) return { fileName, bytes: archive };
+      try {
+        return { fileName: `${modelName}.brres`, bytes: extractModelBrres(archive, modelName).data };
+      } catch (error) {
+        toasts.showToast({ tone: 'error', title: `Could not export ${modelName}`, detail: error instanceof Error ? error.message : String(error) });
+        return null;
+      }
+    },
+    [findTrackArchive, toasts],
+  );
+
+  const browserActions = useMemo<ContentBrowserActions>(
+    () => ({
+      importLibraryFiles: (files) => {
+        void library.importFiles(files).then((added) => {
+          if (added.length > 0) setBrowserFolder('library');
+        });
+      },
+      removeLibraryAsset: (id) => void library.remove(id),
+      renameLibraryAsset: (id, name) => void library.rename(id, name),
+      exportLibraryAsset: (id) => {
+        const asset = library.get(id);
+        if (asset) downloadBytes(asset.fileName, asset.bytes);
+      },
+      exportTrackAsset: (path, modelName) => {
+        const result = trackAssetBytes(path, modelName);
+        if (!result) return;
+        downloadBytes(result.fileName, result.bytes);
+        setStatus(`Exported ${result.fileName} (${result.bytes.length.toLocaleString()} bytes).`);
+      },
+      saveTrackAssetToLibrary: (path, modelName) => {
+        const result = trackAssetBytes(path, modelName);
+        if (!result) return;
+        void library.importBytes(result.fileName, result.bytes).then((record) => {
+          if (!record) return;
+          setBrowserFolder('library');
+          setStatus(`Saved ${record.name} to My Assets.`);
+        });
+      },
+    }),
+    [library, setBrowserFolder, trackAssetBytes],
+  );
+
   const editActions = useKmpEditActions({
     track,
     trackRef,
@@ -471,6 +541,13 @@ export function App() {
             onScaleTransformSelection={(target, scale) => editActions.updateViewportTransformSelection(target, { scale })}
             onMoveCheckpointEndpoint={editActions.moveCheckpointEndpoint}
             onAddObject={editActions.addObject}
+            onPlaceLibraryAsset={(assetId, position) => {
+              const asset = library.get(assetId);
+              if (!asset) return;
+              modelModeUi.placeModelAsset({ sourcePath: libraryAssetSourcePath(asset), label: asset.name, data: asset.bytes }, position);
+              // Placed scenery is edited in Model mode, so go there to show the gizmo on it.
+              if (editorMode !== 'model') setEditorMode('model');
+            }}
             onAddKmpPoint={editActions.addKmpPoint}
             onInsertRoutePoint={editActions.insertRoutePoint}
             onInteractionStart={history.beginEditSession}
@@ -558,6 +635,7 @@ export function App() {
           track={track}
           commonArchive={commonArchive}
           commonBrresSummaries={commonBrresSummaries}
+          actions={browserActions}
         />
       </div>
 

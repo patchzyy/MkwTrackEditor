@@ -1,3 +1,4 @@
+import type { LibraryAsset } from '../../lib/assetLibrary';
 import { mapCourseAssetToPlaceable, type CourseAssetDatabase, type PlaceableCourseAssetRecord } from '../../lib/courseAssets';
 import type { AppendableKmpSection } from '../../lib/kmp';
 import type { CommonResourceArchive } from '../../lib/objflow';
@@ -16,10 +17,10 @@ import {
 import { comparePlaceableCourseAssetPriority, dedupePlaceableCourseAssetsForBrowser } from './browserAssetDedupe';
 
 export type BrowserAssetItem = BrowserObject | PlaceableCourseAssetRecord;
-export type BrowserFolderId = 'featured' | 'kmp' | 'enemies' | 'nature' | 'gameplay' | 'props' | 'common' | 'track';
+export type BrowserFolderId = 'featured' | 'kmp' | 'enemies' | 'nature' | 'gameplay' | 'props' | 'common' | 'track' | 'library';
 
 /** Top level of the folder tree. Folders hang off one of these. */
-export type BrowserGroupId = 'objects' | 'trackData' | 'thisTrack';
+export type BrowserGroupId = 'objects' | 'trackData' | 'thisTrack' | 'library';
 
 export interface BrowserGroup {
   id: BrowserGroupId;
@@ -31,6 +32,7 @@ export const browserGroups: readonly BrowserGroup[] = [
   { id: 'objects', label: 'Game Objects' },
   { id: 'trackData', label: 'Track Data' },
   { id: 'thisTrack', label: 'This Track' },
+  { id: 'library', label: 'My Assets' },
 ];
 
 interface BrowserFolderBase {
@@ -43,7 +45,13 @@ interface BrowserFolderBase {
 export type BrowserFolder =
   | (BrowserFolderBase & { kind: 'kmp'; items: typeof kmpPointCatalog })
   | (BrowserFolderBase & { kind: 'object'; items: BrowserAssetItem[] })
-  | (BrowserFolderBase & { kind: 'brres'; items: string[] });
+  | (BrowserFolderBase & { kind: 'brres'; items: string[] })
+  | (BrowserFolderBase & { kind: 'library'; items: LibraryAsset[] });
+
+/** Search text for a library asset: its name, file name and model names. */
+export function libraryAssetSearchText(asset: LibraryAsset): string {
+  return [asset.name, asset.fileName, ...asset.models].join(' ').toLowerCase();
+}
 
 export const kmpPointCatalog: Array<{ section: AppendableKmpSection; label: string; category: string }> = [
   { section: 'KTPT', label: 'Start Point', category: 'Track Data' },
@@ -97,6 +105,10 @@ export function filterBrowserFolder(folder: BrowserFolder | null, query: string)
     const items = folder.items.filter((item) => browserItemSearchText(item).includes(trimmed));
     return { ...folder, detail: `${items.length} matching objects`, items };
   }
+  if (folder.kind === 'library') {
+    const items = folder.items.filter((item) => libraryAssetSearchText(item).includes(trimmed));
+    return { ...folder, detail: `${items.length} matching custom models`, items };
+  }
   const items = folder.items.filter((item) => item.toLowerCase().includes(trimmed));
   return { ...folder, detail: `${items.length} matching track asset files`, items };
 }
@@ -107,11 +119,14 @@ export function buildBrowserFolders({
   objFlow,
   commonArchive,
   courseAssetDb,
+  libraryAssets = [],
 }: {
   track: TrackDocument | null;
   objFlow: CommonResourceArchive['objFlow'] | null;
   commonArchive: CommonResourceArchive | null;
   courseAssetDb: CourseAssetDatabase | null;
+  /** The user's own `.brres` files from IndexedDB; always shown, even when empty. */
+  libraryAssets?: LibraryAsset[];
 }): BrowserFolder[] {
   const realObjectCatalog = objFlow
     ? objFlow.entries
@@ -145,6 +160,14 @@ export function buildBrowserFolders({
     { id: 'common', group: 'objects', label: 'All objects', detail: `${common.length} placeable game objects`, kind: 'object', items: common },
     { id: 'kmp', group: 'trackData', label: 'Points and routes', detail: `${kmpPointCatalog.length} editable track records`, kind: 'kmp', items: kmpPointCatalog },
     { id: 'track', group: 'thisTrack', label: 'Track meshes', detail: track ? `${trackAssets.length} track asset files` : 'Load a track to list track assets', kind: 'brres', items: trackAssets },
+    {
+      id: 'library',
+      group: 'library',
+      label: 'Custom models',
+      detail: libraryAssets.length > 0 ? `${libraryAssets.length} custom models, kept in this browser` : 'Drop .brres files here to keep them in this browser',
+      kind: 'library',
+      items: libraryAssets,
+    },
   ];
-  return folders.filter((folder) => folder.items.length > 0 || folder.id === 'track');
+  return folders.filter((folder) => folder.items.length > 0 || folder.id === 'track' || folder.id === 'library');
 }

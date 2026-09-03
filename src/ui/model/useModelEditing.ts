@@ -61,7 +61,8 @@ export interface ModelEditing {
   duplicateSelection: () => void;
   resetSelection: () => void;
 
-  placeObject: (asset: { sourcePath: string; label: string; data: Uint8Array }) => void;
+  /** Merges a model into the course geometry at `position`, or near the selection / start line. */
+  placeObject: (asset: { sourcePath: string; label: string; data: Uint8Array }, position?: { x: number; y: number; z: number }) => void;
   updatePlaced: (id: string, patch: Partial<Omit<ImportedMesh, 'id'>>) => void;
   removePlaced: (id: string) => void;
 
@@ -264,11 +265,13 @@ export function useModelEditing(ctx: EditorModeContext, active: boolean): ModelE
   }, [activeTarget, commit, ctx.trackRef, describeTarget, track]);
 
   const placeObject = useCallback(
-    (asset: { sourcePath: string; label: string; data: Uint8Array }) => {
+    (asset: { sourcePath: string; label: string; data: Uint8Array }, position?: { x: number; y: number; z: number }) => {
       const current = ctx.trackRef.current ?? track;
       if (!current) return;
-      // Drop it on whatever is selected, so it lands somewhere the user is looking.
+      // A viewport drop says exactly where; otherwise drop it on whatever is selected, so it
+      // lands somewhere the user is looking.
       const anchor =
+        position ??
         (activeTarget && courseModel ? courseMeshCenter(courseModel, activeTarget.drawOpIndex) : null) ??
         firstStartPosition(current) ?? { x: 0, y: 0, z: 0 };
       const mesh: ImportedMesh = {

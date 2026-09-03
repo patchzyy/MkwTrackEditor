@@ -39,13 +39,14 @@ export function EntryThumbnail({
     );
   }
 
-  if (entry.kind === 'trackAsset') {
-    // The track's own archives are summarised on load, so they already have a real render.
-    const trackSummary = track?.brresSummaries[entry.path];
-    if (trackSummary?.previewDataUrl) {
+  if (entry.kind === 'trackAsset' || entry.kind === 'libraryAsset') {
+    // The track's own archives are summarised on load and library assets are rendered when
+    // they are imported, so both already have a real render when one could be made.
+    const previewDataUrl = entry.kind === 'trackAsset' ? track?.brresSummaries[entry.path]?.previewDataUrl : entry.asset.thumbnail;
+    if (previewDataUrl) {
       return (
         <div className={`${className} objectPreview`} data-state="available" data-preview="image">
-          <img src={trackSummary.previewDataUrl} alt="" loading="lazy" decoding="async" />
+          <img src={previewDataUrl} alt="" loading="lazy" decoding="async" />
         </div>
       );
     }

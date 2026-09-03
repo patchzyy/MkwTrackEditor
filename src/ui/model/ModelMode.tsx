@@ -3,7 +3,7 @@ import type { EditorModeContext, ModeUi } from '../modes/types';
 import { ModelInspector } from './ModelInspector';
 import { ModelOutliner } from './ModelOutliner';
 import { collectPlaceableModels, PlaceObjectPanel } from './PlaceObjectPanel';
-import { useModelEditing } from './useModelEditing';
+import { useModelEditing, type ModelEditing } from './useModelEditing';
 import './model.css';
 
 /**
@@ -14,7 +14,15 @@ import './model.css';
  * viewport's callbacks into document edits, and supplies the outliner and inspector. Edits live
  * on the track document, so undo/redo and export get them for free.
  */
-export function useModelMode(ctx: EditorModeContext): ModeUi {
+export interface ModelModeUi extends ModeUi {
+  /**
+   * Places a model as course scenery. Available in every mode so the content browser can drop
+   * a custom model into the viewport without first switching to Model mode.
+   */
+  placeModelAsset: ModelEditing['placeObject'];
+}
+
+export function useModelMode(ctx: EditorModeContext): ModelModeUi {
   const active = ctx.editorMode === 'model';
   const editing = useModelEditing(ctx, active);
   const [picking, setPicking] = useState(false);
@@ -24,9 +32,10 @@ export function useModelMode(ctx: EditorModeContext): ModeUi {
     [active, ctx.commonArchive, picking],
   );
 
-  if (!active) return {};
+  if (!active) return { placeModelAsset: editing.placeObject };
 
   return {
+    placeModelAsset: editing.placeObject,
     viewportProps: {
       mode: 'model',
       showKmpEditorOverlay: false,

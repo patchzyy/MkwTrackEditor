@@ -27,6 +27,27 @@ const CAMERA_WORLD_UP = vec3.fromValues(0, 1, 0);
 /** The MKWii scene renders at 0.1x game units. */
 const PLAYTEST_SCENE_SCALE = 0.1;
 const DEFAULT_FOV_Y_DEGREES = 60;
+/**
+ * The game's chase camera frames the kart just below centre. The editor viewport is a wider,
+ * shorter window than a TV, so tilt the look-at point up a little and the kart drops into the
+ * bottom third of the frame, leaving the road ahead the rest.
+ */
+export const PLAYTEST_CAMERA_PITCH_UP_DEGREES = 7;
+
+/** Raises `target` so the view pitches up by `degrees` about the eye, at the same distance. */
+export function pitchTargetUp(position: PlaytestVec3, target: PlaytestVec3, degrees: number, out: PlaytestVec3): PlaytestVec3 {
+  const dx = target.x - position.x;
+  const dy = target.y - position.y;
+  const dz = target.z - position.z;
+  const flat = Math.hypot(dx, dz);
+  const distance = Math.hypot(flat, dy);
+  const pitch = Math.atan2(dy, flat) + (degrees * Math.PI) / 180;
+  const flatScale = flat > 1e-6 ? (Math.cos(pitch) * distance) / flat : 0;
+  out.x = position.x + dx * flatScale;
+  out.z = position.z + dz * flatScale;
+  out.y = position.y + Math.sin(pitch) * distance;
+  return out;
+}
 
 export class PlaytestCameraController implements CameraController {
   public camera!: Camera;
@@ -38,6 +59,7 @@ export class PlaytestCameraController implements CameraController {
   private dirty = true;
   private readonly scratchEye = vec3.create();
   private readonly scratchTarget = vec3.create();
+  private readonly tiltedTarget: PlaytestVec3 = { x: 0, y: 0, z: 0 };
 
   /** Follows the kart with the TS chase camera. `frames` is real elapsed time in 60 Hz frames. */
   public followKart(kart: ChaseCameraKart, frames: number): void {
@@ -54,7 +76,7 @@ export class PlaytestCameraController implements CameraController {
     this.chase.target.y = state.target.y;
     this.chase.target.z = state.target.z;
     this.chase.initialized = true;
-    this.look(state.position, state.target, state.fovY);
+    this.look(state.position, pitchTargetUp(state.position, state.target, PLAYTEST_CAMERA_PITCH_UP_DEGREES, this.tiltedTarget), state.fovY);
   }
 
   private look(position: PlaytestVec3, target: PlaytestVec3, fovYDegrees: number): void {
