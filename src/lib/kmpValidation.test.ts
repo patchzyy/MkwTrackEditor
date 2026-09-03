@@ -295,6 +295,16 @@ describe('KMP validation', () => {
     expect(found).toContain('camera.route-out-of-range');
   });
 
+  it('ignores the route field of a camera that does not travel along a route', () => {
+    // Retail Bowser's Castle stores 251 in the route field of a stationary camera. The game
+    // never reads it, so neither should the validator.
+    const file = validTrack();
+    file.cameras.push(camera({ type: 3, routeIndex: 251 }));
+    const found = codes(validateKmpFile(file));
+    expect(found).not.toContain('camera.route-out-of-range');
+    expect(found).not.toContain('camera.route-missing');
+  });
+
   it('reports an opening camera index that does not exist', () => {
     const file = validTrack();
     file.cameras.push(camera());

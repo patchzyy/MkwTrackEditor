@@ -165,15 +165,6 @@ function validateCheckpoints(file: KmpFile): TrackIssue[] {
     return issues;
   }
 
-  const lapCounters = file.checkpoints.filter((checkpoint) => checkpoint.type === 0).length;
-  if (lapCounters > 1) {
-    issues.push({
-      level: 'error',
-      code: 'checkpoint.multiple-lap-counters',
-      message: `${lapCounters} checkpoints are marked as the lap counter. Only one is allowed, or every driver is shown in first place after crossing any of them.`,
-    });
-  }
-
   const validity = computeLapPathValidity(getCheckpointGraph(file));
   issues.push(...validity.issues.map((issue) => fromPathIssue(issue, file, 'CKPT')));
 
@@ -400,7 +391,10 @@ function validateCameras(file: KmpFile): TrackIssue[] {
     if (camera.nextIndex === index) {
       issues.push({ level: 'error', code: 'camera.next-self', message: `Camera #${index + 1} hands over to itself, which locks the opening pan.`, entityId });
     }
-    if (camera.routeIndex !== KMP_NULL_INDEX_8) {
+    // A camera type that does not travel along a route ignores this field, and retail tracks
+    // leave junk in it (Bowser's Castle stores 251 on a stationary camera), so only a camera
+    // that actually follows a route is checked.
+    if (camera.routeIndex !== KMP_NULL_INDEX_8 && cameraUsesRoute(camera.type)) {
       if (camera.routeIndex >= file.routes.length) {
         issues.push({
           level: 'error',
@@ -416,7 +410,7 @@ function validateCameras(file: KmpFile): TrackIssue[] {
           entityId,
         });
       }
-    } else if (cameraUsesRoute(camera.type)) {
+    } else if (cameraUsesRoute(camera.type) && camera.routeIndex === KMP_NULL_INDEX_8) {
       issues.push({
         level: 'warning',
         code: 'camera.route-missing',
@@ -436,7 +430,9 @@ function validateCameras(file: KmpFile): TrackIssue[] {
     }
     if (file.firstSelectionCamera >= file.cameras.length && file.firstSelectionCamera !== KMP_NULL_INDEX_8) {
       issues.push({
-        level: 'error',
+        // Ported tracks routinely leave a stale value in this header byte; the game only reads it
+        // on the character-selection screen, which a course KMP never drives.
+        level: 'warning',
         code: 'camera.selection-out-of-range',
         message: `The character-selection pan starts at camera #${file.firstSelectionCamera + 1}, which does not exist.`,
       });

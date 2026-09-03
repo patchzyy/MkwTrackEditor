@@ -609,17 +609,65 @@ export function computeLapPathValidity(graph: CheckpointGraph): LapPathValidity 
   }
 
   const seen = new Map<number, number>();
+  for (const type of keyCheckpoints) seen.set(type, (seen.get(type) ?? 0) + 1);
+
+  // Repeating a key number is how a track that splits into parallel routes keeps the lap
+  // counting on both branches, so it is only wrong when a driver would cross both copies on
+  // the same run: in the same group, or in two groups one of which leads to the other. Retail
+  // tracks like Bowser's Castle repeat key numbers across their branches on purpose.
+  const groupOfCheckpoint = (checkpointIndex: number) => {
+    let start = 0;
+    for (let groupIndex = 0; groupIndex < graph.groups.length; groupIndex++) {
+      const length = graph.groups[groupIndex].points.length;
+      if (checkpointIndex < start + length) return groupIndex;
+      start += length;
+    }
+    return -1;
+  };
+  // A checkpoint path is a loop, so plain reachability says everything reaches everything.
+  // What matters is one lap: walk the `next` links but stop at the group the lap starts in.
+  const lapStartGroup = Math.max(0, groupOfCheckpoint(keyed.find(({ checkpoint }) => checkpoint.type === 0)?.index ?? 0));
+  const withinLap = new Map<number, Set<number>>();
+  const canReach = (from: number, to: number) => {
+    if (from === to) return true;
+    let set = withinLap.get(from);
+    if (!set) {
+      set = new Set<number>();
+      const stack = [...(graph.groups[from]?.next ?? [])];
+      while (stack.length > 0) {
+        const group = stack.pop()!;
+        if (group === lapStartGroup || set.has(group) || !graph.groups[group]) continue;
+        set.add(group);
+        stack.push(...graph.groups[group].next);
+      }
+      withinLap.set(from, set);
+    }
+    return set.has(to);
+  };
+
   const duplicateKeyCheckpoints: number[] = [];
-  for (const type of keyCheckpoints) {
-    const count = (seen.get(type) ?? 0) + 1;
-    seen.set(type, count);
-    if (count === 2) duplicateKeyCheckpoints.push(type);
+  for (const [type, count] of seen) {
+    if (count < 2) continue;
+    const groups = keyed.filter(({ checkpoint }) => checkpoint.type === type).map(({ index }) => groupOfCheckpoint(index));
+    const onSameRun = groups.some((a, i) => groups.some((b, j) => i !== j && (a === b || canReach(a, b))));
+    if (onSameRun) duplicateKeyCheckpoints.push(type);
   }
+  duplicateKeyCheckpoints.sort((a, b) => a - b);
   for (const type of duplicateKeyCheckpoints) {
+    // Two lap counters on one run means every driver is shown in first place after crossing
+    // either of them, which is worse than any other repeated key.
+    if (type === 0) {
+      issues.push({
+        level: 'error',
+        code: 'checkpoint.multiple-lap-counters',
+        message: 'More than one checkpoint on the same run through the track is the lap counter, so every driver is shown in first place after crossing any of them.',
+      });
+      continue;
+    }
     issues.push({
       level: 'warning',
       code: 'checkpoint.duplicate-key',
-      message: `Key checkpoint ${type} is used by more than one checkpoint. That is correct when the track splits into parallel routes, but a mistake otherwise.`,
+      message: `Key checkpoint ${type} is used by more than one checkpoint on the same run through the track, so a lap can count early. Repeating a key number is only correct across parallel routes a driver picks between.`,
     });
   }
 
@@ -628,9 +676,11 @@ export function computeLapPathValidity(graph: CheckpointGraph): LapPathValidity 
   for (let i = 0; i <= highest; i++) if (!seen.has(i)) missingKeyCheckpoints.push(i);
   for (const missing of missingKeyCheckpoints) {
     issues.push({
-      level: 'error',
+      // Ported and retail-derived tracks ship gaps here and still count laps: the game only
+      // cares that the numbers rise along the path, not that every number exists.
+      level: 'warning',
       code: 'checkpoint.missing-key',
-      message: `Key checkpoint ${missing} is missing, so the lap will never complete.`,
+      message: `Key checkpoint ${missing} is skipped. The numbering is meant to run 0, 1, 2 … with no gaps.`,
     });
   }
 

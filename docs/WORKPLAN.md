@@ -201,3 +201,18 @@ respawn edits over all 338 real tracks on this machine (`src/lib/kmpEditRoundTri
 byte-stable untouched, byte- and model-stable after editing, no new validation errors), and a
 browser pass over `Z0.szs` and `Z13.szs` (`scripts/kmp-ui-probe.mjs` +
 `scripts/probe-kmp-mode-ui.js`). Screenshots: `docs/screenshots/kmp-ui-*.png`.
+
+Validator tuning done at the same time, measured against the 336 real tracks with checkpoints
+that are installed on this machine (316 now report no errors at all):
+
+- "Only one lap counter" and "no repeated key checkpoint" both fired on every track that splits
+  into parallel routes, which is exactly where repeating a key number is correct. Both rules now
+  ask whether a driver would cross the two copies on the *same* run — reachability along `next`
+  links, stopping at the group the lap starts in, because a checkpoint path is a loop and plain
+  reachability says everything reaches everything.
+- A gap in the key numbering is a warning, not an error; ported tracks ship gaps and still count
+  laps.
+- The character-selection camera index in the CAME header is a warning: a course KMP never drives
+  that screen and ports routinely leave a stale value there.
+- A camera type that does not travel along a route no longer has its route field checked. Retail
+  Bowser's Castle stores 251 in that field on a stationary camera, which the game ignores.
