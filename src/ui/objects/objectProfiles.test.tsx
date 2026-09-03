@@ -77,12 +77,6 @@ function renderObjectSetup(objectId: number): string {
       onChangeObjectId={() => {}}
       onChangePresenceFlags={() => {}}
       onChangeObjectSetting={() => {}}
-      onResetObjectBehavior={() => {}}
-      onClearObjectRoute={() => {}}
-      onSelectObjectRoute={() => {}}
-      onApplySafeFallingRockDefaults={() => {}}
-      onCreateCannonPointFromObject={() => {}}
-      onApplyRoulettePlatformDefaults={() => {}}
     />,
   );
 }
@@ -138,15 +132,17 @@ describe('object inspector profiles', () => {
     }
   });
 
-  it('renders the friendly object setup block, including guidance-only notes', () => {
+  it('renders the friendly object setup block in plain language, including guidance-only notes', () => {
     const itemBox = renderObjectSetup(0x65);
-    expect(itemBox).toContain('Object Setup');
-    expect(itemBox).toContain('Quick Setup');
-    expect(itemBox).toContain('Visibility');
+    expect(itemBox).toContain('Appears in');
+    expect(itemBox).toContain('Single player and time trials');
+    // The raw bit mask belongs in the inspector's Advanced disclosure, never here.
+    expect(itemBox).not.toContain('Presence Flags');
+    expect(itemBox).not.toMatch(/0x[0-9A-F]{4}/);
 
     const guidanceOnlyId = knownObjectIds.find((id) => guidanceOnlyObjectProfileNotes[profileFor(id).title]);
     expect(guidanceOnlyId, 'at least one object should use a guidance-only note').toBeDefined();
-    expect(renderObjectSetup(guidanceOnlyId!)).toContain('Setup Surface');
+    expect(renderObjectSetup(guidanceOnlyId!)).toContain(guidanceOnlyObjectProfileNotes[profileFor(guidanceOnlyId!).title].slice(0, 40));
   });
 
   it('offers only known object ids as variant options', () => {

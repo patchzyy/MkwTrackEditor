@@ -1,10 +1,19 @@
 import type { KmpEntity } from '../../../lib/kmp';
 import { setMaskedBits } from '../../../lib/kmpEdit';
+import { Toggle } from '../../components/Toggle';
 import type { ObjectOption } from '../../objects/objectCatalog';
 import { gobjPresenceModeOptions } from '../../objects/objectOptionTables';
-import { describePresenceFlags, guidanceOnlyObjectProfileNotes, type ObjectInspectorProfile } from '../../objects/objectProfiles';
+import { describePresenceModes, guidanceOnlyObjectProfileNotes, type ObjectInspectorProfile } from '../../objects/objectProfiles';
 import { ObjectSettingsFields } from '../objectSettings/ObjectSettingsFields';
 
+/**
+ * What an object actually needs on screen: which variant it is, its own friendly settings, and
+ * the three game modes it appears in.
+ *
+ * The raw object id, the eight raw setting slots and the presence bit mask live in the
+ * inspector's single Advanced disclosure; the preset and route buttons live in the header's
+ * actions menu. Nothing here is a number the game happens to store.
+ */
 export function ObjectSetupSection({
   entity,
   objectProfile,
@@ -12,12 +21,6 @@ export function ObjectSetupSection({
   onChangeObjectId,
   onChangePresenceFlags,
   onChangeObjectSetting,
-  onResetObjectBehavior,
-  onClearObjectRoute,
-  onSelectObjectRoute,
-  onApplySafeFallingRockDefaults,
-  onCreateCannonPointFromObject,
-  onApplyRoulettePlatformDefaults,
 }: {
   entity: KmpEntity;
   objectProfile: ObjectInspectorProfile | null;
@@ -25,156 +28,60 @@ export function ObjectSetupSection({
   onChangeObjectId: (objectId: number) => void;
   onChangePresenceFlags: (value: number) => void;
   onChangeObjectSetting: (settingIndex: number, value: number) => void;
-  onResetObjectBehavior?: () => void;
-  onClearObjectRoute?: () => void;
-  onSelectObjectRoute?: () => void;
-  onApplySafeFallingRockDefaults?: () => void;
-  onCreateCannonPointFromObject?: () => void;
-  onApplyRoulettePlatformDefaults?: () => void;
 }) {
-  const objectSettings = entity.objectSettings;
-  const objectPresenceBaseFlags = entity.presenceFlags !== undefined ? entity.presenceFlags & ~0x0007 : 0;
-  const objectPresencePlayerFlags = entity.presenceFlags !== undefined ? entity.presenceFlags & 0x0007 : 0;
-  const objectHasExtraPresenceBits = entity.presenceFlags !== undefined && objectPresenceBaseFlags !== 0;
+  if (entity.objectId === undefined || !objectProfile) return null;
+  const presenceFlags = entity.presenceFlags;
+  const guidance = guidanceOnlyObjectProfileNotes[objectProfile.title];
+  const behaviourNote = objectBehaviourNote(objectProfile, entity);
   return (
     <>
-      {entity.objectId !== undefined && objectProfile && <div className="detailsSectionHeader">Object Setup</div>}
-      {entity.objectId !== undefined && objectProfile && (
+      {objectVariantOptions.length > 1 && (
+        <div className="propertyGrid">
+          <label>
+            {objectProfile.variantLabel ?? 'Variant'}
+            <select aria-label={objectProfile.variantLabel ?? 'Variant'} value={String(entity.objectId)} onChange={(event) => onChangeObjectId(Number(event.currentTarget.value))}>
+              {objectVariantOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
+      <div className="propertyGrid">
+        <ObjectSettingsFields entity={entity} objectProfile={objectProfile} onChangeObjectSetting={onChangeObjectSetting} />
+      </div>
+      {behaviourNote && <p className="inspectorNote is-warning">{behaviourNote}</p>}
+      {guidance && <p className="inspectorNote">{guidance}</p>}
+      {presenceFlags !== undefined && (
         <>
-          <label>
-            Object Setup
-            <span>{objectProfile.title}</span>
-          </label>
-          <label>
-            Quick Setup
-            <span>{objectProfile.summary}</span>
-          </label>
-          {objectProfile.tips.map((tip, index) => (
-            <label key={`${objectProfile.title}-tip-${index}`}>
-              Tip {index + 1}
-              <span>{tip}</span>
-            </label>
-          ))}
-          {objectProfile.cautions?.map((caution, index) => (
-            <label key={`${objectProfile.title}-caution-${index}`}>
-              Watch out
-              <span>{caution}</span>
-            </label>
-          ))}
-          {guidanceOnlyObjectProfileNotes[objectProfile.title] && (
-            <label>
-              Setup Surface
-              <span>{guidanceOnlyObjectProfileNotes[objectProfile.title]}</span>
-            </label>
-          )}
-          {objectVariantOptions.length > 1 && (
-            <label>
-              {objectProfile.variantLabel ?? 'Variant'}
-              <select value={String(entity.objectId)} onChange={(event) => onChangeObjectId(Number(event.currentTarget.value))}>
-                {objectVariantOptions.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {entity.presenceFlags !== undefined && (
-            <label>
-              Visibility
-              <div className="actionStack">
-                <div className="toggleGrid">
-                  {gobjPresenceModeOptions.map((option) => {
-                    const active = (objectPresencePlayerFlags & option.mask) !== 0;
-                    return (
-                      <button
-                        key={option.mask}
-                        className={`inlineAction toggleButton${active ? ' isActive' : ''}`}
-                        type="button"
-                        aria-pressed={active}
-                        onClick={() => onChangePresenceFlags(setMaskedBits(entity.presenceFlags ?? 0, option.mask, !active))}
-                      >
-                        {option.label}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="actionRow">
-                  <button className="inlineAction" type="button" onClick={() => onChangePresenceFlags(objectPresenceBaseFlags | 0x0007)}>
-                    Show Everywhere
-                  </button>
-                  <button className="inlineAction" type="button" onClick={() => onChangePresenceFlags(objectPresenceBaseFlags | 0x0001)}>
-                    1P Only
-                  </button>
-                  <button className="inlineAction" type="button" onClick={() => onChangePresenceFlags(objectPresenceBaseFlags)}>
-                    Hide
-                  </button>
-                </div>
-                <span>{describePresenceFlags(entity.presenceFlags)}</span>
-                {objectHasExtraPresenceBits && <span>Keeps extra presence bits above 0x0007 for compatibility.</span>}
-              </div>
-            </label>
-          )}
-          <ObjectSettingsFields entity={entity} objectProfile={objectProfile} onChangeObjectSetting={onChangeObjectSetting} />
-          {objectProfile.title === 'Falling Rock' && objectSettings && (
-            <label>
-              Safety Setup
-              <div className="actionRow">
-                <button className="inlineAction" type="button" onClick={onApplySafeFallingRockDefaults} disabled={!onApplySafeFallingRockDefaults}>
-                  Apply Safe Vanilla Defaults
-                </button>
-              </div>
-              <span>{objectSettings[2] === 0 ? 'Setting 3 is currently unsafe for vanilla Mario Kart Wii.' : `Setting 3 is currently ${objectSettings[2]}.`}</span>
-            </label>
-          )}
-          {objectProfile.title === 'Cannon Object' && (
-            <label>
-              Cannon Setup
-              <div className="actionRow">
-                <button className="inlineAction" type="button" onClick={onCreateCannonPointFromObject} disabled={!onCreateCannonPointFromObject}>
-                  Create Cannon Point
-                </button>
-              </div>
-              <span>Creates a cannon point at this prop so you can tune the actual launch logic next.</span>
-            </label>
-          )}
-          {objectProfile.title === 'Roulette Platform' && (
-            <label>
-              Roulette Setup
-              <div className="actionRow">
-                <button className="inlineAction" type="button" onClick={onApplyRoulettePlatformDefaults} disabled={!onApplyRoulettePlatformDefaults}>
-                  Apply Required Defaults
-                </button>
-              </div>
-              <span>Mario Kart Wii expects this object at the world center with zero rotation and a scale of 1 on all axes.</span>
-            </label>
-          )}
-          {objectProfile.routeLabel && entity.routeIndex !== undefined && entity.routeIndex !== 0xffff && (
-            <label>
-              {objectProfile.routeLabel}
-              <div className="actionRow">
-                <button className="inlineAction" type="button" onClick={onSelectObjectRoute} disabled={!onSelectObjectRoute}>
-                  Select Path
-                </button>
-              </div>
-              <span>Jumps straight to the first node of the bound route so you can edit motion without searching the scene.</span>
-            </label>
-          )}
-          {(onResetObjectBehavior || onClearObjectRoute) && (
-            <label>
-              Object Actions
-              <div className="actionRow">
-                <button className="inlineAction" type="button" onClick={onResetObjectBehavior} disabled={!onResetObjectBehavior}>
-                  Reset Defaults
-                </button>
-                <button className="inlineAction" type="button" onClick={onClearObjectRoute} disabled={!onClearObjectRoute || entity.routeIndex === undefined || entity.routeIndex === 0xffff}>
-                  Clear Path
-                </button>
-              </div>
-            </label>
-          )}
+          <div className="inspectorGroupTitle">Appears in</div>
+          <div className="inspectorCheckList">
+            {gobjPresenceModeOptions.map((option) => (
+              <Toggle
+                key={option.mask}
+                variant="checkbox"
+                label={option.friendlyLabel}
+                checked={(presenceFlags & option.mask) !== 0}
+                onChange={(checked) => onChangePresenceFlags(setMaskedBits(presenceFlags, option.mask, checked))}
+              />
+            ))}
+          </div>
+          <p className={`inspectorNote${(presenceFlags & 0x0007) === 0 ? ' is-warning' : ''}`}>{describePresenceModes(presenceFlags)}</p>
         </>
       )}
     </>
   );
+}
+
+/** The one-line warning a few objects need next to their settings, in plain words. */
+function objectBehaviourNote(profile: ObjectInspectorProfile, entity: KmpEntity): string | null {
+  if (profile.title === 'Falling Rock' && entity.objectSettings && entity.objectSettings[2] === 0) {
+    return 'This rock is set up in a way vanilla Mario Kart Wii does not handle. Use "Apply safe defaults" in the actions menu.';
+  }
+  if (profile.title === 'Roulette Platform') {
+    return 'Mario Kart Wii expects this platform at the world centre, unrotated and at scale 1. "Apply required defaults" in the actions menu does that.';
+  }
+  return null;
 }

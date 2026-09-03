@@ -1,0 +1,221 @@
+/*
+ * Inspector chrome: the selection header, the plain-language notes and the two disclosures.
+ * The property rows themselves still use the shared `.propertyGrid` rules in src/styles.css.
+ */
+
+.inspectorSheet {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.inspectorSheet > .propertyGrid {
+  margin-bottom: 0;
+}
+
+/* --- header --------------------------------------------------------------- */
+
+.inspectorHeader {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.inspectorHeader:not(:has(.inspectorHeaderMedia)) {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.inspectorHeaderMedia {
+  width: 46px;
+  height: 46px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.inspectorHeaderMedia .thumbnail {
+  width: 46px;
+  height: 46px;
+  min-height: 0;
+}
+
+.inspectorHeaderCopy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.inspectorHeaderTitle {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--font-size-md, 13px);
+  font-weight: 650;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspectorHeaderMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  min-width: 0;
+}
+
+.inspectorHeaderType {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.inspectorHeaderBadge {
+  padding: 1px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspectorHeaderDescription {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+}
+
+.inspectorHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* --- copy ----------------------------------------------------------------- */
+
+.inspectorLead {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.inspectorNote {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.inspectorNote.is-warning {
+  color: var(--warning-text);
+}
+
+.inspectorGroupTitle {
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.inspectorCheckList {
+  display: grid;
+  gap: var(--space-2);
+  padding: 2px 0;
+}
+
+.inspectorRouteRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.inspectorRouteRow select {
+  flex: 1;
+  min-width: 0;
+}
+
+.inspectorTips {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding-left: 16px;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.inspectorTips li.is-warning {
+  color: var(--warning-text);
+}
+
+/* --- disclosures ---------------------------------------------------------- */
+
+.inspectorDisclosure {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.inspectorDisclosureToggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-3) 0;
+  border: 0;
+  color: var(--text-muted);
+  background: transparent;
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-align: left;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.inspectorDisclosureToggle:hover {
+  color: var(--text);
+}
+
+.inspectorDisclosureHint {
+  margin-left: auto;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  opacity: 0.75;
+}
+
+.inspectorDisclosureBody {
+  display: grid;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+}
+
+.inspectorDisclosureBody .propertyGrid {
+  margin-bottom: 0;
+}
+
+/* --- KMP-mode selection header -------------------------------------------- */
+
+.kmpSelectionHeader .inspectorHeader {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.kmpSelectionHeader h3 {
+  margin: 0 0 var(--space-2);
+}
+
+/* "⋯" at the end of a KMP tool button row. */
+.kmpRowMenu {
+  display: inline-flex;
+  margin-left: auto;
+}
