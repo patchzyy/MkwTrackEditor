@@ -156,8 +156,10 @@ export function listArchiveMaterials(archivePath: string, brres: Uint8Array): Gx
       const textures = samplerNamesOf(editor, entry.offset);
       for (const texture of textures) {
         if (!texture) continue;
+        // Qualified by model: an archive with several models routinely reuses material names.
+        const user = `${subFile.name}/${entry.name}`;
         const list = usedBy.get(texture) ?? [];
-        if (!list.includes(entry.name)) list.push(entry.name);
+        if (!list.includes(user)) list.push(user);
         usedBy.set(texture, list);
       }
       return {
@@ -373,6 +375,23 @@ export function applyMaterial(
 
   // The shader has to sit after the material that points at it: the offset is read unsigned.
   let tevOffset = located.tevOffset;
+  if (!fitsInPlace && !cloneShader && located.tevOffset < materialOffset) {
+    // The material moved to the end, past its shader. Move the shader too, and bring every
+    // material that shares it along, so nobody is left with a negative offset.
+    const moved = editor.append(editor.data.slice(located.tevOffset, located.tevOffset + located.tev.length), 0x20);
+    const tevView = viewOf(editor.data);
+    tevView.setInt32(moved + TEV.mdl0Offset, -moved);
+    for (const entry of materialDic.entries) {
+      if (entry.offset === located.offset) continue;
+      if (entry.offset + tevView.getUint32(entry.offset + MAT.tevOffset) !== located.tevOffset) continue;
+      tevView.setUint32(entry.offset + MAT.tevOffset, moved - entry.offset);
+    }
+    const tevDic = editor.getDic('tev');
+    if (tevDic) {
+      editor.writeDic('tev', tevDic.entries.map((entry) => (entry.offset === located.tevOffset ? { ...entry, offset: moved } : entry)));
+    }
+    tevOffset = moved;
+  }
   if (cloneShader) {
     const tevDic = editor.getDic('tev')!;
     tevOffset = editor.append(encoded.tev, 0x20);
@@ -386,16 +405,16 @@ export function applyMaterial(
     );
   } else if (tevChanged) {
     // Overwrite in place. The block is always 512 bytes, so this never needs to move.
-    const keepIndex = viewOf(editor.data).getUint32(located.tevOffset + TEV.index);
-    editor.data.set(encoded.tev, located.tevOffset);
+    const keepIndex = viewOf(editor.data).getUint32(tevOffset + TEV.index);
+    editor.data.set(encoded.tev, tevOffset);
     const tevView = viewOf(editor.data);
-    tevView.setInt32(located.tevOffset + TEV.mdl0Offset, -located.tevOffset);
-    tevView.setUint32(located.tevOffset + TEV.index, keepIndex);
+    tevView.setInt32(tevOffset + TEV.mdl0Offset, -tevOffset);
+    tevView.setUint32(tevOffset + TEV.index, keepIndex);
     // The stage *count* lives in each material's header, not in the shader, so a material that
     // shares this block would keep running the old number of stages unless it is updated too.
     for (const entry of materialDic.entries) {
       if (entry.offset === located.offset) continue;
-      if (entry.offset + tevView.getUint32(entry.offset + MAT.tevOffset) !== located.tevOffset) continue;
+      if (entry.offset + tevView.getUint32(entry.offset + MAT.tevOffset) !== tevOffset) continue;
       tevView.setUint8(entry.offset + MAT.numTevStages, doc.tevStages.length);
       if (tevView.getUint32(entry.offset + MAT.numLayers) !== doc.samplers.length) {
         warnings.push(

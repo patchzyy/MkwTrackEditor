@@ -7,6 +7,12 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+/**
+ * `MKW_TEST_FIXTURES=bundled` hides the local track folders and the retail Common.szs so a run
+ * sees exactly what CI sees: only the data that ships in `public/`.
+ */
+const BUNDLED_ONLY = process.env.MKW_TEST_FIXTURES === 'bundled';
+
 /** Retro Rewind custom tracks. */
 export const CUSTOM_TRACK_DIR = 'D:/Games/Wii/Dolphin-2/RR/RetroRewind6/CT/Tracks';
 /** Retail Nintendo tracks and arenas. */
@@ -18,16 +24,16 @@ export const COMMON_ARCHIVE_PATHS = [
 ];
 
 export function hasCustomTracks(): boolean {
-  return existsSync(CUSTOM_TRACK_DIR);
+  return !BUNDLED_ONLY && existsSync(CUSTOM_TRACK_DIR);
 }
 
 export function hasNintendoTracks(): boolean {
-  return existsSync(NINTENDO_TRACK_DIR);
+  return !BUNDLED_ONLY && existsSync(NINTENDO_TRACK_DIR);
 }
 
 /** Absolute paths of up to `limit` `.szs` files in a directory, in a stable order. */
 export function listTracks(dir: string, limit = Infinity): string[] {
-  if (!existsSync(dir)) return [];
+  if (BUNDLED_ONLY || !existsSync(dir)) return [];
   return readdirSync(dir)
     .filter((name) => name.toLowerCase().endsWith('.szs'))
     .sort()
@@ -40,5 +46,6 @@ export function readTrackBytes(path: string): Uint8Array {
 }
 
 export function findCommonArchive(): string | null {
-  return COMMON_ARCHIVE_PATHS.find((path) => existsSync(path)) ?? null;
+  const candidates = BUNDLED_ONLY ? COMMON_ARCHIVE_PATHS.filter((path) => path.startsWith('public/')) : COMMON_ARCHIVE_PATHS;
+  return candidates.find((path) => existsSync(path)) ?? null;
 }

@@ -486,9 +486,10 @@ export interface GraphCommentNode extends GraphNodeBase {
  * decompiler emits one of these instead of guessing, and the compiler copies `stage` out
  * verbatim (its binding checks still apply). The editor renders it as a read-only card.
  *
- * The `prev` input carries no value; it only says which stage runs before this one, so a chain of
- * raw stages keeps its order. Both outputs are the stage's result, read back from whichever
- * register it writes.
+ * The `prev` and `prevAlpha` inputs carry no value; they only say which stage runs before this
+ * one in each pipeline, so a chain of raw stages keeps its order and the colour and alpha halves
+ * of the stage before it are both kept. Both outputs are the stage's result, read back from
+ * whichever register it writes.
  */
 export interface GraphRawStageNode extends GraphNodeBase {
   type: 'rawStage';
@@ -554,7 +555,7 @@ export const GRAPH_NODE_SOCKETS: Readonly<Record<GraphNodeType, GraphNodeSpec>> 
   scale: { title: 'Scale', inputs: [{ name: 'x', type: 'rgb', default: 0 }], outputs: [{ name: 'out', type: 'rgb' }] },
   compare: { title: 'Compare', inputs: [{ name: 'a', type: 'rgb', default: 0 }, { name: 'b', type: 'rgb', default: 0 }, { name: 'c', type: 'rgb', default: 1 }, { name: 'd', type: 'rgb', default: 0 }], outputs: [{ name: 'out', type: 'rgb' }] },
   indirectWarp: { title: 'Indirect warp', inputs: [{ name: 'bump', type: 'rgb' }], outputs: [{ name: 'uv', type: 'rgb' }] },
-  rawStage: { title: 'Raw stage', inputs: [{ name: 'prev', type: 'rgb' }], outputs: [{ name: 'out', type: 'rgb' }, { name: 'alpha', type: 'alpha' }] },
+  rawStage: { title: 'Raw stage', inputs: [{ name: 'prev', type: 'rgb' }, { name: 'prevAlpha', type: 'alpha' }], outputs: [{ name: 'out', type: 'rgb' }, { name: 'alpha', type: 'alpha' }] },
   comment: { title: 'Comment', inputs: [], outputs: [] },
 });
 

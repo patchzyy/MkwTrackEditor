@@ -56,7 +56,9 @@ describe.skipIf(archives.length === 0)('listArchiveMaterials', () => {
     expect(listing.textures.length).toBeGreaterThan(0);
     for (const texture of listing.textures) {
       for (const user of texture.usedBy) {
-        expect(materials.find((material) => material.materialName === user)!.textures).toContain(texture.name);
+        const [modelName, materialName] = user.split('/');
+        const material = materials.find((candidate) => candidate.modelName === modelName && candidate.materialName === materialName)!;
+        expect(material.textures).toContain(texture.name);
       }
     }
   });

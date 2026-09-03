@@ -355,10 +355,10 @@ describe('auto layout', () => {
 });
 
 describe('raw stages', () => {
-  it('has an ordering-only input and both outputs', () => {
+  it('has ordering-only inputs, one per pipeline, and both outputs', () => {
     const spec = nodeSpec('rawStage');
     expect(spec.title).toBe('Raw stage');
-    expect(spec.inputs.map((socket) => socket.name)).toEqual(['prev']);
+    expect(spec.inputs.map((socket) => socket.name)).toEqual(['prev', 'prevAlpha']);
     expect(spec.outputs.map((socket) => socket.name)).toEqual(['out', 'alpha']);
   });
 

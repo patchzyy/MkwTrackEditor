@@ -822,8 +822,8 @@ export function encodeMaterialBlock(options: EncodeMaterialOptions): EncodedMate
         | (srt.scaleS === 1 && srt.scaleT === 1 ? 0x02 : 0)
         | (srt.rotation === 0 ? 0x04 : 0)
         | (srt.translateS === 0 && srt.translateT === 0 ? 0x08 : 0)) << (i * 4);
-    } else if (i >= originalLayers) {
-      // Slot past what the source had: leave the identity the copied struct already carries.
+    } else {
+      // No layer here any more (or never was): the identity, so nothing reads a stale transform.
       view.setFloat32(at + 0x00, 1);
       view.setFloat32(at + 0x04, 1);
       view.setFloat32(at + 0x08, 0);
@@ -835,7 +835,9 @@ export function encodeMaterialBlock(options: EncodeMaterialOptions): EncodedMate
       view.setInt8(mtx + 0x00, srt.refCamera);
       view.setInt8(mtx + 0x01, srt.refLight);
       view.setInt8(mtx + 0x02, Math.max(0, MAP_MODES.indexOf(doc.samplers[i].mapMode)));
-    } else if (i >= originalLayers) {
+    } else {
+      // A dropped layer must not keep an environment map mode: readers pair this table with the
+      // texgens, and would reach for one that is no longer there.
       view.setInt8(mtx + 0x00, -1);
       view.setInt8(mtx + 0x01, -1);
       view.setInt8(mtx + 0x02, 0);

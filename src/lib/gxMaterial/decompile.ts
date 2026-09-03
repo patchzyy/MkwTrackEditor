@@ -277,6 +277,7 @@ function buildGraph(material: GxMaterialDoc, forceRaw: ReadonlySet<number>): Sha
     const id = `s${index}r`;
     addNode(builder, { id, type: 'rawStage', stage: { ...stage }, x: index * STAGE_SPACING, y: ROW_COLOR });
     if (lastStage) connect(builder, lastStage, id, 'prev');
+    if (lastAlpha) connect(builder, lastAlpha, id, 'prevAlpha');
     const colorRef: InputRef = { node: id, socket: 'out' };
     const alphaRef: InputRef = { node: id, socket: 'alpha' };
     context.colorWriters.set(stage.colorRegId, colorRef);
@@ -299,10 +300,15 @@ function buildGraph(material: GxMaterialDoc, forceRaw: ReadonlySet<number>): Sha
   return { version: 1, nodes: builder.nodes, edges: builder.edges };
 }
 
-/** A half that failed to build may have left a source node behind; drop anything unwired. */
+/**
+ * A half that failed to build may have left a source node behind; drop anything unwired. Only
+ * the shared source nodes qualify: a stage cluster nobody reads still has wires running into it,
+ * and removing its root would leave those wires pointing at nothing.
+ */
 function pruneUnusedSources(builder: Builder): void {
   const used = new Set(builder.edges.map((edge) => edge.from.node));
-  builder.nodes = builder.nodes.filter((node) => node.type === 'output' || node.type === 'rawStage' || used.has(node.id));
+  const sources = new Set(builder.sources.values());
+  builder.nodes = builder.nodes.filter((node) => !sources.has(node.id) || used.has(node.id));
 }
 
 function stagesEqual(a: GxTevStageDoc, b: GxTevStageDoc): boolean {

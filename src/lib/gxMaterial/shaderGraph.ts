@@ -296,11 +296,17 @@ class Compiler {
       seen.add(id);
       for (const edge of this.graph.edges) {
         if (edge.to.node !== id) continue;
-        counts.set(edge.from.node, (counts.get(edge.from.node) ?? 0) + 1);
+        // A raw stage's ordering wires carry no value, so they are not a use of what they
+        // point at; counting them would spill a result nobody actually reads twice.
+        if (!this.isOrderingEdge(edge)) counts.set(edge.from.node, (counts.get(edge.from.node) ?? 0) + 1);
         stack.push(edge.from.node);
       }
     }
     return counts;
+  }
+
+  private isOrderingEdge(edge: GraphEdge): boolean {
+    return this.nodes.get(edge.to.node)?.type === 'rawStage' && (edge.to.socket === 'prev' || edge.to.socket === 'prevAlpha');
   }
 
   /** Resolves an input socket to an operand, using the socket's default when nothing is wired. */
@@ -506,12 +512,16 @@ class Compiler {
   private rawStageOperand(nodeId: string): Operand {
     const node = this.nodes.get(nodeId) as Extract<GraphNode, { type: 'rawStage' }>;
     const stage = node.stage;
+
+    // Order first: whatever runs before this stage in this pipeline has to be emitted before it.
+    // That holds for both pipelines, so it happens even when the other one already placed the
+    // stage: the alpha half of whatever precedes it still has to be lowered.
+    const orderSocket = this.domain === 'rgb' ? 'prev' : 'prevAlpha';
+    const before = this.incoming(nodeId, orderSocket);
+    if (before) this.lowerEdgeValue(before, nodeId, orderSocket);
+
     const emitted = this.rawSlots.get(nodeId);
     if (emitted) return this.rawStageResult(stage);
-
-    // Order first: whatever runs before this stage has to be emitted before it.
-    const before = this.incoming(nodeId, 'prev');
-    if (before) this.lowerEdgeValue(before, nodeId, 'prev');
 
     const half = (domain: Domain): HalfOp => ({
       inputs: domain === 'rgb'
