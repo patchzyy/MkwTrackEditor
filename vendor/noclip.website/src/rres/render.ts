@@ -1260,7 +1260,8 @@ export class MDL0ModelInstance {
 
             if (op.op === BRRES.ByteCodeOp.NODEMIX) {
                 const dst = jointToWorldMatrixArray[op.dstMtxId];
-                dst.fill(0);
+                for (let k = 0; k < 16; k++)
+                    dst[k] = 0;
 
                 for (let j = 0; j < op.blendMtxIds.length; j++)
                     mat4.multiplyScalarAndAdd(dst, dst, matrixScratchArray[op.blendMtxIds[j]], op.weights[j]);
