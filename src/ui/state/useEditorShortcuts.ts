@@ -43,7 +43,10 @@ export function useEditorShortcuts({
 }) {
   useEffect(() => {
     const isViewportCameraLookActive = () => document.documentElement.dataset.viewportCameraLook === 'active';
+    // While a playtest session is running its keys are the controller, not editor shortcuts.
+    const isPlaytesting = () => document.documentElement.dataset.playtest === 'active';
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (isPlaytesting()) return;
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
       const meta = event.ctrlKey || event.metaKey;

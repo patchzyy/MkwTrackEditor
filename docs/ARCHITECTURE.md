@@ -10,7 +10,8 @@ direction is `vendor/noclip.website/src/MarioKartWii/EditorMeshPicker.ts`, which
 geometry helpers in `src/lib/meshPick.ts` rather than duplicating them in the vendored tree.
 
 Companion documents: `docs/viewport-api.md` (the app ↔ viewport ↔ renderer contract),
-`docs/UI.md` (the design system and panel shell), `docs/WORKPLAN.md` (the shared brief).
+`docs/UI.md` (the design system and panel shell), `docs/PLAYTEST.md` (the in-browser playtest),
+`docs/WORKPLAN.md` (the shared brief).
 
 ## Shell
 
@@ -37,6 +38,23 @@ renders whichever one is active. A mode owns its own outliner, inspector and vie
 | `src/ui/camera/` | CAME editing: `CameraOutliner`, `CameraInspector` + `CameraFields` + `cameraFieldMeta.ts` (friendly labels), `ChainEditor` (opening and character-select pans), `CameraPlaybackControls`, `cameraDocument.ts`. |
 | `src/ui/model/` | Geometry: `ModelOutliner`, `ModelInspector`, `PlaceObjectPanel`, `useModelEditing.ts`. Selection is per-mesh and is baked into `course_model.brres` on export. |
 | `src/ui/visual/` | The track's look: `VisualOutliner` (archive/material/texture/animation browser), `VisualInspector`, `TextureInspector` + `TexturePreview`, `VisualRenderOverlay` (render presets), `visualArchive.ts`, `textureReplace.ts`, `visualScene.ts`, `useVisualArchive.ts`. |
+
+## Playtest (`src/ui/playtest/`, `src/lib/playtest/`)
+
+Driving the loaded track in the viewport with Mario Kart Wii's physics. Documented in
+`docs/PLAYTEST.md`; the contract between the UI and the physics is `src/lib/playtest/types.ts`
+and nothing outside `src/lib/playtest/` touches WebAssembly.
+
+| File | Responsibility |
+| --- | --- |
+| `src/lib/playtest/types.ts` | `PlaytestRuntime` and everything it exchanges: input, kart pose, race state, camera pose, the character/vehicle tables. |
+| `src/lib/playtest/mockRuntime.ts` | A deterministic kinematic stand-in implementing the same interface, so the UI can be built, tested and probed without WASM. |
+| `src/lib/playtest/playtestLoop.ts` | `planFixedSteps`: real elapsed milliseconds → whole 60 Hz steps, with capped catch-up. |
+| `src/ui/playtest/runtimeFactory.ts` | The single place that picks a runtime. One line to swap the mock for Kinoko. |
+| `src/ui/playtest/usePlaytestSession.ts` | Session lifecycle: packing the course, creating the runtime, the controller listeners, the HUD sample, the borrowed dock layout. |
+| `src/ui/playtest/playtestInput.ts` | Pure keyboard/gamepad → `PlaytestInput` mapping and the controls summary. |
+| `src/ui/playtest/playtestChaseCamera.ts`, `playtestCamera.ts` | The chase-camera maths, and the `CameraController` installed for the session. |
+| `src/ui/playtest/PlaytestMenu.tsx`, `PlaytestHud.tsx`, `playtestHudModel.ts`, `playtestOptions.ts`, `playtest.css` | The top-bar start popover, the in-viewport race HUD and its pure formatting, the curated rosters and their persistence, the styles. |
 
 `src/ui/viewport/` holds the mode-agnostic viewport logic that is pure enough to unit test:
 `cameraOverlay.ts` (KMP → camera gizmo overlay), `cameraPlayback.ts` (the playback clock),

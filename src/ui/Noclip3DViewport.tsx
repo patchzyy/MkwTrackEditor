@@ -20,6 +20,10 @@ import {
   type ViewportTransformSelection,
 } from '../lib/brresRenderAdapter';
 import { buildU8 } from '../lib/u8';
+import { PLAYTEST_STEP_MS, planFixedSteps } from '../lib/playtest/playtestLoop';
+import type { PlaytestCameraState, PlaytestKartState, PlaytestRaceState } from '../lib/playtest/types';
+import { PlaytestCameraController } from './playtest/playtestCamera';
+import type { PlaytestViewportSession } from './playtest/usePlaytestSession';
 import type { VisualRendererScene } from './visual/visualScene';
 import type { AppendableKmpSection, KmpDocument, KmpEntity, KmpRouteInsertTarget, Vec3 } from '../lib/kmp';
 import { raycastDown, raycastMesh, snapPointToTriangleFeature } from '../lib/kcl';
@@ -120,6 +124,14 @@ interface Noclip3DViewportProps {
    */
   onVisualSceneChange?: (scene: VisualRendererScene | null) => void;
   fillBetweenPreviewPositions?: Vec3[];
+  /**
+   * A live playtest session. While it is set the viewport drives the physics runtime at a fixed
+   * 60 Hz, renders the player kart, follows it with the race camera, and stops behaving like an
+   * editor: no picking, no gizmos, no drops, no editor chrome.
+   */
+  playtestSession?: PlaytestViewportSession | null;
+  /** Full-viewport overlay layer, used by the playtest HUD. Rendered above the canvas. */
+  overlay?: ReactNode;
   smokeCommonUrl?: string | null;
   commonArchiveUrl?: string | null;
   tool: TransformTool;
@@ -742,6 +754,8 @@ export function Noclip3DViewport({
   onChangeMeshGranularity,
   onVisualSceneChange,
   fillBetweenPreviewPositions = [],
+  playtestSession = null,
+  overlay,
   smokeCommonUrl = null,
   commonArchiveUrl = null,
   tool,
@@ -929,6 +943,8 @@ export function Noclip3DViewport({
   const cameraPreviewMatrixRef = useRef(mat4.create());
   const cameraPreviewDefsRef = useRef<CameraPreviewDef[]>([]);
   const previousCameraControllerRef = useRef<CameraController | null>(null);
+  const playtestSessionRef = useRef<PlaytestViewportSession | null>(playtestSession);
+  const playtestStateRef = useRef<PlaytestFrameState>(createPlaytestFrameState());
   const cameraPreviewLabelRef = useRef<string | null>(null);
   const [cameraPreviewLabel, setCameraPreviewLabel] = useState<string | null>(null);
   const selected = track?.kmp?.entities.find((entity) => entity.id === selectedId) ?? null;
@@ -970,6 +986,8 @@ export function Noclip3DViewport({
   meshSelectionsRef.current = meshSelections;
   cameraPreviewRef.current = devCameraPreviewRef.current !== undefined ? devCameraPreviewRef.current : cameraPreview;
   cameraPreviewDefsRef.current = track?.kmp ? toCameraPreviewDefs(track.kmp) : [];
+  playtestSessionRef.current = playtestSession;
+  const playtestActive = playtestSession !== null && playtestSession !== undefined;
 
   useEffect(() => {
     const canvas: HTMLCanvasElement | null = canvasRef.current;
@@ -994,7 +1012,8 @@ export function Noclip3DViewport({
       resizeToDisplay();
       setViewportCameraLookActive(false);
       const tick = (time: number) => {
-        stepCameraPreview(time);
+        // A playtest owns the camera outright; the CAME preview is stopped while it runs.
+        if (!stepPlaytest(time)) stepCameraPreview(time);
         const restoreSuppressedKeys = withSuppressedCameraMovementKeys(viewer);
         viewer.update({ time, webXRContext: null });
         restoreSuppressedKeys();
@@ -1047,6 +1066,7 @@ export function Noclip3DViewport({
     return () => {
       cancelled = true;
       setViewportCameraLookActive(false);
+      endPlaytest(viewerRef.current);
       flushPendingInteractionCommit();
       cleanupResize?.();
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
@@ -2053,6 +2073,7 @@ export function Noclip3DViewport({
   }
 
   function handleCanvasPointerDown(event: PointerEvent<HTMLCanvasElement>) {
+    if (playtestSessionRef.current) return;
     if (event.button === 2) return;
     if (event.button !== 0 || draggingEntityRef.current) return;
     if (event.altKey) {
@@ -2187,6 +2208,7 @@ export function Noclip3DViewport({
   }
 
   function handleCanvasPointerMove(event: PointerEvent<HTMLCanvasElement>) {
+    if (playtestSessionRef.current) return;
     if (cameraLookDragRef.current && event.pointerId === cameraLookDragRef.current.pointerId) return;
     lastPointerRef.current = {
       x: event.clientX,
@@ -2449,6 +2471,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
 
   function handleDrop(event: DragEvent<HTMLElement>) {
     event.preventDefault();
+    if (playtestSessionRef.current) return;
     const rawObjectId = event.dataTransfer.getData('application/mkw-object-id');
     const rawKmpSection = event.dataTransfer.getData('application/mkw-point-section') as AppendableKmpSection | '';
     if (!rawObjectId && !rawKmpSection) return;
@@ -2463,6 +2486,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
   }
 
   function handleCanvasClick(event: MouseEvent<HTMLCanvasElement>) {
+    if (playtestSessionRef.current) return;
     if (suppressNextClickRef.current) {
       suppressNextClickRef.current = false;
       return;
@@ -2845,6 +2869,116 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
 
   //#endregion
 
+  //#region Playtest
+
+  /**
+   * Runs the session's runtime for this animation frame and points the camera at the kart.
+   * Returns true while a session is active, so the caller can skip the CAME preview clock.
+   */
+  function stepPlaytest(timeMs: number): boolean {
+    const viewer = viewerRef.current;
+    const session = playtestSessionRef.current;
+    const state = playtestStateRef.current;
+    if (!viewer) return false;
+    if (!session) {
+      if (state.active) endPlaytest(viewer);
+      return false;
+    }
+
+    if (!state.active) beginPlaytest(viewer, session);
+    else if (state.resetKey !== session.resetKey) {
+      // A restart: drop the accumulated time and snap the camera back behind the start line.
+      state.resetKey = session.resetKey;
+      state.accumulatorMs = 0;
+      state.lastTimeMs = null;
+      if (state.controller) state.controller.chase.initialized = false;
+    }
+
+    const runtime = session.runtime;
+    if (runtime.disposed) {
+      session.onError(new Error('The playtest physics runtime stopped unexpectedly.'));
+      return true;
+    }
+
+    const elapsedMs = state.lastTimeMs === null ? 0 : timeMs - state.lastTimeMs;
+    state.lastTimeMs = timeMs;
+    const plan = planFixedSteps(state.accumulatorMs, elapsedMs);
+    state.accumulatorMs = plan.carryMs;
+
+    try {
+      runtime.setInput(session.getInput());
+      for (let i = 0; i < plan.steps; i++) runtime.step();
+      runtime.readKartState(state.kart);
+      runtime.readRaceState(state.race);
+      const controller = state.controller;
+      if (controller) {
+        controller.aspect = getViewerAspect(viewer);
+        const runtimeCamera = runtime.readCameraState(state.camera);
+        if (runtimeCamera) controller.applyRuntimeCamera(runtimeCamera);
+        else controller.followKart(state.kart, Math.min(6, Math.max(0, elapsedMs / PLAYTEST_STEP_MS)));
+      }
+    } catch (error) {
+      session.onError(error);
+      return true;
+    }
+
+    session.onFrame(state.kart, state.race);
+    getPlaytestScene()?.setPlaytestKart?.({ position: state.kart.position, rotation: state.kart.rotation });
+    return true;
+  }
+
+  function getPlaytestScene(): (SceneGfx & PlaytestRendererScene) | null {
+    return sceneRef.current as (SceneGfx & PlaytestRendererScene) | null;
+  }
+
+  function beginPlaytest(viewer: Viewer, session: PlaytestViewportSession): void {
+    const state = playtestStateRef.current;
+    if (state.active) return;
+    endCameraPreview(viewer, true);
+    releaseCameraLook();
+    draggingEntityRef.current = null;
+    pendingEntityDragRef.current = null;
+    setViewportCameraLookActive(false);
+    state.active = true;
+    state.accumulatorMs = 0;
+    state.lastTimeMs = null;
+    state.resetKey = session.resetKey;
+    state.savedCameraMatrix = mat4.clone(viewer.camera.worldMatrix);
+    state.savedFovY = viewer.camera.fovY;
+    state.previousController = viewer.cameraController;
+    const controller = new PlaytestCameraController();
+    controller.aspect = getViewerAspect(viewer);
+    state.controller = controller;
+    viewer.setCameraController(controller);
+  }
+
+  /** Puts the kart away, restores the free camera and brings the editor overlays back. */
+  function endPlaytest(viewer: Viewer | null): void {
+    const state = playtestStateRef.current;
+    if (!state.active) return;
+    state.active = false;
+    state.controller = null;
+    state.lastTimeMs = null;
+    state.accumulatorMs = 0;
+    getPlaytestScene()?.setPlaytestKart?.(null);
+    if (viewer) {
+      const previous = state.previousController;
+      viewer.setCameraController(previous ?? new FPSCameraController());
+      if (state.savedCameraMatrix) {
+        mat4.copy(viewer.camera.worldMatrix, state.savedCameraMatrix);
+        if (state.savedFovY !== null) viewer.camera.setPerspective(state.savedFovY, getViewerAspect(viewer), 4, 500000);
+        viewer.camera.worldMatrixUpdated();
+        viewer.cameraController?.cameraUpdateForced();
+      }
+    }
+    state.previousController = null;
+    state.savedCameraMatrix = null;
+    state.savedFovY = null;
+    syncSceneOverlay(trackRef.current, selectedIdRef.current);
+  }
+
+  //#endregion
+
   //#region Camera preview playback
 
   function getCameraPreviewDef(request: CameraPreviewRequest | null): CameraPreviewDef | null {
@@ -3211,8 +3345,14 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
   }
 
   return (
-    <section ref={viewportRef} className="viewport" onDragOver={(event) => event.preventDefault()} onDrop={handleDrop}>
+    <section
+      ref={viewportRef}
+      className={playtestActive ? 'viewport isPlaytesting' : 'viewport'}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={handleDrop}
+    >
       <div ref={uiContainerRef} className="noclipUiHost" />
+      {!playtestActive && (
       <div className="viewportToolbar">
         <div className="segmented viewportToolSegmented" aria-label="Viewport tool">
           <button
@@ -3253,6 +3393,8 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
           </select>
         </label>
       </div>
+      )}
+      {!playtestActive && (
       <div className="viewportTopRightStack">
         <div className="routeVisibilityHud">
           <button
@@ -3323,6 +3465,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
         </div>
         {topRightOverlay}
       </div>
+      )}
       <canvas
         ref={canvasRef}
         className="noclipCanvas"
@@ -3344,10 +3487,72 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
           data-smoke-mouselook={smokeMouseLookWorked}
         />
       )}
-      <div className="rendererStatus">{status}</div>
-      {selectionHudLabel && <div className="selectionHud">{selectionHudLabel}</div>}
+      {!playtestActive && <div className="rendererStatus">{status}</div>}
+      {!playtestActive && selectionHudLabel && <div className="selectionHud">{selectionHudLabel}</div>}
+      {overlay}
     </section>
   );
+}
+
+/** The scene methods a playtest session drives. */
+interface PlaytestRendererScene {
+  setPlaytestKart?: (kart: { position: { x: number; y: number; z: number }; rotation: { x: number; y: number; z: number; w: number } } | null) => void;
+}
+
+interface PlaytestFrameState {
+  active: boolean;
+  /** Timestamp of the previous animation frame, or null when the clock has just been reset. */
+  lastTimeMs: number | null;
+  accumulatorMs: number;
+  resetKey: number;
+  controller: PlaytestCameraController | null;
+  previousController: CameraController | null;
+  savedCameraMatrix: mat4 | null;
+  savedFovY: number | null;
+  /** Reused every frame so reading the runtime allocates nothing. */
+  kart: PlaytestKartState;
+  race: PlaytestRaceState;
+  camera: PlaytestCameraState;
+}
+
+function createPlaytestFrameState(): PlaytestFrameState {
+  return {
+    active: false,
+    lastTimeMs: null,
+    accumulatorMs: 0,
+    resetKey: 0,
+    controller: null,
+    previousController: null,
+    savedCameraMatrix: null,
+    savedFovY: null,
+    kart: {
+      position: { x: 0, y: 0, z: 0 },
+      rotation: { x: 0, y: 0, z: 0, w: 1 },
+      mainRotation: { x: 0, y: 0, z: 0, w: 1 },
+      speed: 0,
+      velocity: { x: 0, y: 0, z: 0 },
+      wheelPositions: [],
+      airborne: false,
+      drifting: false,
+      boosting: false,
+    },
+    race: {
+      stage: 'intro',
+      frame: 0,
+      timeMs: 0,
+      lap: 1,
+      maxLap: 3,
+      lapCompletion: 0,
+      checkpointId: 0,
+      respawnId: 0,
+      lapSplitsMs: [],
+    },
+    camera: {
+      position: { x: 0, y: 0, z: 0 },
+      target: { x: 0, y: 0, z: 0 },
+      fovY: 60,
+    },
+  };
 }
 
 function getSceneKey(track: TrackDocument): string {

@@ -11,7 +11,7 @@ import {
   Undo2,
   Video,
 } from 'lucide-react';
-import type { MutableRefObject } from 'react';
+import type { MutableRefObject, ReactNode } from 'react';
 import { Button, IconButton } from '../components/Button';
 import { SegmentedControl, type SegmentedOption } from '../components/SegmentedControl';
 import { ToolbarSeparator } from '../components/Toolbar';
@@ -54,6 +54,7 @@ export function TopBar({
   onShowShortcuts,
   onExport,
   onChangeEditorMode,
+  playtestControl,
 }: {
   topBarRef: MutableRefObject<HTMLElement | null>;
   historyState: { undo: number; redo: number };
@@ -76,6 +77,8 @@ export function TopBar({
   onShowShortcuts: () => void;
   onExport: () => void;
   onChangeEditorMode: (mode: EditorModeStub) => void;
+  /** The Playtest button and its start popover, rendered next to the editor-mode switch. */
+  playtestControl?: ReactNode;
 }) {
   return (
     <header ref={topBarRef} className="topBar">
@@ -121,6 +124,7 @@ export function TopBar({
 
       <div className="topBarCenter">
         <SegmentedControl label="Editor mode" value={editorMode} options={MODE_OPTIONS} onChange={onChangeEditorMode} />
+        {playtestControl}
       </div>
 
       <div className="topBarRight">
