@@ -85,10 +85,14 @@ function fmtPos(position: { x: number; y: number; z: number }): string {
   return `${Math.round(position.x)}, ${Math.round(position.y)}, ${Math.round(position.z)}`;
 }
 
-function linkSummary(prev: number[], next: number[]): string {
-  const from = prev.length > 0 ? prev.map((index) => index + 1).join(', ') : 'none';
-  const to = next.length > 0 ? next.map((index) => index + 1).join(', ') : 'none';
-  return `from ${from} · to ${to}`;
+/**
+ * "from 1, 3 · to 4". A KMP group record always has six link slots, most of them the 0xFF
+ * "none" marker, so only the ones that name a real group are listed.
+ */
+function linkSummary(prev: number[], next: number[], groupCount: number): string {
+  const real = (links: number[]) => links.filter((index) => Number.isInteger(index) && index >= 0 && index < groupCount);
+  const label = (links: number[]) => (links.length > 0 ? links.map((index) => index + 1).join(', ') : 'none');
+  return `from ${label(real(prev))} · to ${label(real(next))}`;
 }
 
 /** "3 points" / "1 point". */
@@ -132,7 +136,7 @@ function buildPathSection(
       kind: 'group',
       section: meta.key,
       label: `Group ${groupIndex + 1}`,
-      detail: `${plural(group.length, 'point')} · ${linkSummary(group.prev, group.next)}`,
+      detail: `${plural(group.length, 'point')} · ${linkSummary(group.prev, group.next, groups.length)}`,
       entityId: null,
       groupIndex,
       localIndex: null,

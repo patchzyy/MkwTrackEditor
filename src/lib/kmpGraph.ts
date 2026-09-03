@@ -89,7 +89,19 @@ function sanitizeLinks(links: number[], groupCount: number): number[] {
   return out;
 }
 
-/** Flattens the graph back into the `(points, groups)` pair the KMP stores. */
+/** Pads a link list out to the six fixed slots a KMP group record has, with 0xFF for "none". */
+function padLinks(links: number[]): number[] {
+  const out = links.slice(0, MAX_GROUP_LINKS);
+  while (out.length < MAX_GROUP_LINKS) out.push(KMP_NULL_INDEX_8);
+  return out;
+}
+
+/**
+ * Flattens the graph back into the `(points, groups)` pair the KMP stores.
+ *
+ * The link lists are padded back to their six fixed slots, so an edited `KmpFile` looks exactly
+ * like a freshly parsed one and a write/read round trip is an identity.
+ */
 export function writePathGraph<TPoint>(graph: PathGraph<TPoint>): { points: TPoint[]; groups: KmpPathGroup[] } {
   const points: TPoint[] = [];
   const groups: KmpPathGroup[] = [];
@@ -97,8 +109,8 @@ export function writePathGraph<TPoint>(graph: PathGraph<TPoint>): { points: TPoi
     groups.push({
       start: points.length,
       length: group.points.length,
-      prev: group.prev.slice(0, MAX_GROUP_LINKS),
-      next: group.next.slice(0, MAX_GROUP_LINKS),
+      prev: padLinks(group.prev),
+      next: padLinks(group.next),
       linkFlags: group.linkFlags,
     });
     points.push(...group.points);
