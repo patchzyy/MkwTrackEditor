@@ -1,21 +1,10 @@
 import type { Vec3 } from '../../../lib/kmp';
+import { VectorInput } from '../../components/VectorInput';
 
+/**
+ * X/Y/Z triple. Thin wrapper over the shared `VectorInput` primitive so the inspector
+ * sections keep their existing call signature while gaining drag-to-scrub and axis colours.
+ */
 export function VectorInputs({ value, onChange, step = 1 }: { value: Vec3; onChange: (value: Vec3) => void; step?: number }) {
-  return (
-    <div className="vectorInputs">
-      {(['x', 'y', 'z'] as const).map((axis) => (
-        <input
-          key={axis}
-          aria-label={axis.toUpperCase()}
-          type="number"
-          step={step}
-          value={Number.isFinite(value[axis]) ? Number(value[axis].toFixed(4)) : 0}
-          onChange={(event) => {
-            const next = Number(event.currentTarget.value);
-            if (Number.isFinite(next)) onChange({ ...value, [axis]: next });
-          }}
-        />
-      ))}
-    </div>
-  );
+  return <VectorInput value={value} onChange={onChange} step={step} precision={4} />;
 }

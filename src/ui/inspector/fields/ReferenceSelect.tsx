@@ -1,3 +1,10 @@
+import { Select } from '../../components/Select';
+
+/**
+ * Picks another record by index (a route, a camera, a checkpoint …). `noneValue` is the
+ * sentinel the KMP format uses for "not linked"; an out-of-range index is surfaced as a
+ * "Missing" option rather than silently snapping to something valid.
+ */
 export function ReferenceSelect({
   label,
   value,
@@ -13,15 +20,8 @@ export function ReferenceSelect({
   optionLabel: string;
   onChange: (value: number) => void;
 }) {
-  const normalized = value === noneValue || value >= count ? String(value) : String(value);
   return (
-    <select
-      className="referenceSelect"
-      aria-label={label}
-      title={label}
-      value={normalized}
-      onChange={(event) => onChange(Number(event.currentTarget.value))}
-    >
+    <Select label={label} value={value} onChange={(next) => onChange(Number(next))}>
       <option value={noneValue}>None</option>
       {value !== noneValue && value >= count && <option value={value}>Missing #{value}</option>}
       {Array.from({ length: count }, (_, index) => (
@@ -29,6 +29,6 @@ export function ReferenceSelect({
           {optionLabel} #{index}
         </option>
       ))}
-    </select>
+    </Select>
   );
 }

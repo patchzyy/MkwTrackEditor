@@ -1,5 +1,7 @@
 import type { AreaInspectorOption } from '../../areas/areaInspectorConfig';
+import { Select } from '../../components/Select';
 
+/** Dropdown over a fixed table of numeric values, with a fallback entry for unknown ones. */
 export function NumberOptionSelect({
   label,
   value,
@@ -12,19 +14,13 @@ export function NumberOptionSelect({
   onChange: (value: number) => void;
 }) {
   return (
-    <select
-      className="referenceSelect"
-      aria-label={label}
-      title={label}
-      value={String(value)}
-      onChange={(event) => onChange(Number(event.currentTarget.value))}
-    >
+    <Select label={label} value={value} onChange={(next) => onChange(Number(next))}>
       {!options.some((option) => option.value === value) && <option value={value}>Custom #{value}</option>}
       {options.map((option) => (
         <option key={option.value} value={option.value}>
           {option.label}
         </option>
       ))}
-    </select>
+    </Select>
   );
 }

@@ -1,19 +1,19 @@
+import { NumberInput } from '../../components/NumberInput';
+
+/** Row of 16-bit (0-65535) settings, one scrubbable field per key of `values`. */
 export function ShortNumberInputs<T extends Record<string, number>>({ values, onChange }: { values: T; onChange: (field: keyof T, value: number) => void }) {
   return (
     <div className="settingInputs">
       {(Object.entries(values) as Array<[keyof T, number]>).map(([field, value]) => (
-        <input
+        <NumberInput
           key={String(field)}
-          aria-label={String(field)}
-          title={String(field)}
-          type="number"
-          min="0"
-          max="65535"
+          label={String(field)}
           value={value}
-          onChange={(event) => {
-            const next = Number(event.currentTarget.value);
-            if (Number.isFinite(next)) onChange(field, Math.max(0, Math.min(0xffff, Math.trunc(next))));
-          }}
+          min={0}
+          max={0xffff}
+          integer
+          step={1}
+          onChange={(next) => onChange(field, next)}
         />
       ))}
     </div>
