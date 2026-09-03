@@ -331,3 +331,77 @@ their button rows out by hand instead of using `FieldRow`/`Toolbar`.
 `npm run smoke:browser` still cannot pass on this host: it runs headless Edge,
 which only gets SwiftShader, and noclip refuses to start there — its non-WebGL checks
 (`hasInspectorToggle`, `hasContentBrowserToggle`, `hasObjectThumbnailImage`) do pass.
+
+### Agent M — course fog preview and per-component vertex splitting (wave 3)
+
+The two feature gaps the mode agents left open are closed.
+
+**Course fog is previewed**, as real per-material GX fog rather than a screen-space pass.
+`posteffect.bfg` is parsed by the renderer (`parseBFG` / `translateBFGFogType` /
+`getBFGFogSettings` in `MarioKartWii/PostEffect.ts`), turned into an `RRESFogSettings`, and filled
+into the material `FogBlock` in `rres/render.ts` for every material the BRRES marks as fogged
+(`MDL0_MaterialEntry.fogIdx >= 0`, which is how the console decides — on the 338 tracks here 863
+course materials opt in and 603 opt out). Editing a fog preset in the post-effects panel is live:
+`applyEditorPostEffectFile` grew a `.bfg` branch, and Visual mode was already handing it every
+`posteffect/*` file, so no React changes were needed. Fog is also a Visual-mode render toggle
+beside Lighting and Bloom, and the panel's "edited and exported, but not previewed" caveat is gone.
+
+Three things were load-bearing:
+
+- Turning fog on changes the *shader* and the size of `ub_MaterialParams`, so `setFogSettings`
+  has to invalidate the material — the same dance `fillMaterialParamsData` already does when a
+  light set appears. Only a change of fog *type* pays that cost; distances and colour are uniforms.
+- `MaterialInstance` shallow-copied its `GXMaterial`, so `ropInfo` stayed aliased to the MDL0's own
+  material. Per-instance fog would have leaked across every instance of a model; it is copied now.
+- `gx_material.ts`'s `generateFogFunc` masks the fog type with `0x07` and then compared it against
+  the *unmasked* `ORTHO_REVEXP` constants, so both InvExp curves were unreachable and threw
+  `"whoops"`. Mario Kart Wii uses InvExp more than any other type — 38 of the 52 live presets on
+  this machine — so fog could not render at all without fixing it. **This is a two-identifier hunk
+  in a file agent M does not own; see the report.**
+
+`fogBlockSet` asserts a finite far plane, which noclip's viewer does not provide
+(`setClipPlanes(5)` leaves `far === Infinity`), so `render.ts` computes the A/B/C terms itself as
+that function's limit. The `ORTHO_*` types keep their own fog curve but use the perspective depth
+mapping, because the viewport camera is always perspective.
+
+**A component edit no longer moves or re-lights its neighbours.** `splitSharedVertexData`
+(`src/lib/brres/meshBake.ts`) gives the edited connected component private copies of any
+vertex-array entries another component of the same shape also uses, and repoints that component's
+display-list references at the copies (`gxVertex` now reports each display-list vertex's byte
+offset; `mdl0Raw` grows an array and rewrites a single attribute reference).
+
+Measuring first changed what the fix had to be. Across all 338 tracks, 261,154 components:
+
+- **Positions are never shared, and provably cannot be.** Two display-list vertices naming the same
+  position entry read back bit-identical coordinates, so they land in the same weld cell, and
+  `splitTrianglesIntoComponents` unions every vertex inside a cell unconditionally. 0 violations.
+  Agent G's warning was for a case that cannot arise; it is now an asserted invariant instead.
+- **Normals are shared in 95,801 of those components (37%)**, because nothing welds them: any two
+  flat-topped pieces share the "straight up" entry. This is the real bug — rotating one tree
+  re-lit its neighbours — and it is what the split fixes.
+- **One shape drawn by two draw calls** (`Z13.szs`, `white_framed_metal.024`) is the other genuine
+  "moves its neighbours" case. The edited draw call now gets a cloned shape first.
+
+A warning survives only for the two format limits a split cannot beat: an 8-bit attribute
+reference that cannot name entry 256, and the 16-bit vertex-array entry count. Neither occurs in
+any track installed here.
+
+**Texture name collisions rename instead of reusing.** A placed object whose texture name the track
+already uses now has its bytes compared: an identical image is still shared (two placements of one
+object cost one TEX0), a different image is copied in under a fresh name, and the merged material
+samples the renamed copy.
+
+**A pre-existing writer bug came out of that work and is fixed.** `insertGap` shifted material
+blocks without re-relativizing their sampler name pointers, and `collectStringRefs` reads those
+names back through exactly those pointers — so placing *any* object made every material in the
+track export with an empty texture name, i.e. the whole track lost its textures. Appended blocks'
+declared string refs were left at pre-move offsets by the same code path.
+
+Verified with `npx tsc --noEmit -p tsconfig.json` (clean), `npx vitest run` (671 passed / 1
+skipped, up from the 651 baseline), `npx vite build` (ok), and real-browser probes on `Z0.szs`,
+`Z31.szs` and `gpBR.szs` (`scripts/probe-fog.js`, `scripts/probe-component-split.js` via
+`scripts/camera-ui-probe.mjs`). Fog moves 100% of pixels towards the fog colour on `Z31.szs`
+(mean |Δ| 176/255), all ten fog types render, and all four modes stay non-black. A component move
+disturbs 0 of the other 67 components and restores exactly. `probe-kmp-mode-ui.js`,
+`probe-camera-ui.js`, `probe-model-mode-ui.js` and `probe-visual-ui.js` were re-run unmodified and
+are green. Screenshots: `docs/screenshots/fog-*.png`, `docs/screenshots/component-split-*.png`.
