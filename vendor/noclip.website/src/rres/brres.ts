@@ -2811,6 +2811,68 @@ export interface RRES {
     scn0: SCN0[];
 }
 
+/**
+ * Editor extension: parses one named MDL0 material straight out of a whole BRRES, without
+ * decoding a single display list or vertex array.
+ *
+ * `parse()` walks every model, shape and animation in the archive, which is far too expensive to
+ * run on every keystroke in a material editor. This walks only `root` → `3DModels(NW4R)` → the
+ * named MDL0's material resource dictionary, and runs the same `parseMDL0_MaterialEntry` the full
+ * parser uses, so the result is byte-for-byte the material `parse()` would have produced.
+ *
+ * Returns `null` when the archive, the model or the material is not there. `index` is the
+ * material's position in the MDL0's material list, which is the index
+ * `MDL0Model.materialData` uses.
+ */
+export function parseMaterialEntry(buffer: ArrayBufferSlice, modelName: string, materialName: string): { entry: MDL0_MaterialEntry, index: number } | null {
+    const view = buffer.createDataView();
+    if (buffer.byteLength < 0x10 || readString(buffer, 0x00, 0x04) !== 'bres')
+        return null;
+
+    const rootSectionOffs = view.getUint16(0x0C);
+    if (readString(buffer, rootSectionOffs + 0x00, 0x04) !== 'root')
+        return null;
+
+    const rootResDic = parseResDic(buffer, rootSectionOffs + 0x08);
+    const modelsEntry = rootResDic.find((entry) => entry.name === '3DModels(NW4R)');
+    if (modelsEntry === undefined)
+        return null;
+    const modelEntry = parseResDic(buffer, modelsEntry.offs).find((entry) => entry.name === modelName);
+    if (modelEntry === undefined)
+        return null;
+
+    const mdl0Buffer = buffer.subarray(modelEntry.offs);
+    const mdl0View = mdl0Buffer.createDataView();
+    if (readString(mdl0Buffer, 0x00, 0x04) !== 'MDL0')
+        return null;
+    const version = mdl0View.getUint32(0x08);
+
+    // The same res-dic order `parseMDL0` walks; only the material dictionary is needed here.
+    let offs = 0x10;
+    const nextResDicOffs = (): number => {
+        const value = mdl0View.getUint32(offs);
+        offs += 0x04;
+        return value;
+    };
+    nextResDicOffs(); // byte code
+    nextResDicOffs(); // nodes
+    nextResDicOffs(); // vtx pos
+    nextResDicOffs(); // vtx nrm
+    nextResDicOffs(); // vtx clr
+    nextResDicOffs(); // vtx txc
+    if (version >= 0x0A) {
+        nextResDicOffs(); // fur vec
+        nextResDicOffs(); // fur pos
+    }
+    const materialResDic = parseResDic(mdl0Buffer, nextResDicOffs());
+    const index = materialResDic.findIndex((entry) => entry.name === materialName);
+    if (index < 0)
+        return null;
+
+    const entry = parseMDL0_MaterialEntry(mdl0Buffer.subarray(materialResDic[index].offs), version);
+    return { entry, index };
+}
+
 export function parse(buffer: ArrayBufferSlice): RRES {
     const view = buffer.createDataView();
 

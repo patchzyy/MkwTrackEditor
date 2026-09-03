@@ -1,4 +1,4 @@
-import { Boxes, Layers, Route as RouteIcon, Shapes, Video } from 'lucide-react';
+import { Boxes, Layers, Palette, Route as RouteIcon, Shapes, Video } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getKmpCameraHeader, type KmpEntity, type Vec3 } from '../lib/kmp';
 import { getPathInfo, getReferenceCounts } from '../lib/kmpEdit';
@@ -7,6 +7,7 @@ import objectNamesById from '../generated/mkwObjectNames.json';
 import { getAreaInspectorResources } from './areas/areaInspectorConfig';
 import { useCameraMode } from './camera/CameraMode';
 import { useKmpMode } from './kmp/KmpMode';
+import { useMaterialMode } from './material/MaterialMode';
 import { useModelMode } from './model/ModelMode';
 import type { EditorModeContext, ModeUi } from './modes/types';
 import { useVisualMode } from './visual/VisualMode';
@@ -229,8 +230,17 @@ export function App() {
   const cameraModeUi = useCameraMode(modeContext);
   const modelModeUi = useModelMode(modeContext);
   const visualModeUi = useVisualMode(modeContext);
+  const materialModeUi = useMaterialMode(modeContext);
   const modeUi: ModeUi =
-    editorMode === 'camera' ? cameraModeUi : editorMode === 'model' ? modelModeUi : editorMode === 'visual' ? visualModeUi : kmpModeUi;
+    editorMode === 'camera'
+      ? cameraModeUi
+      : editorMode === 'model'
+        ? modelModeUi
+        : editorMode === 'visual'
+          ? visualModeUi
+          : editorMode === 'material'
+            ? materialModeUi
+            : kmpModeUi;
 
   useEffect(() => {
     if (!selected) return;
@@ -350,6 +360,7 @@ export function App() {
     if (editorMode === 'camera') return { title: 'Cameras', icon: <Video size={15} /> };
     if (editorMode === 'model') return { title: 'Outliner', icon: <Boxes size={15} /> };
     if (editorMode === 'visual') return { title: 'Archives', icon: <Layers size={15} /> };
+    if (editorMode === 'material') return { title: 'Materials', icon: <Palette size={15} /> };
     return { title: 'Place Assets', icon: <Shapes size={15} /> };
   }, [editorMode]);
 
@@ -446,7 +457,7 @@ export function App() {
             track={track}
             selectedId={selectedId}
             selectedIds={selectedIds}
-            mode={editorMode}
+            mode={editorMode === 'material' ? 'visual' : editorMode}
             fillBetweenPreviewPositions={fillBetweenPreviewPositions}
             smokeCommonUrl={trackDocument.smokeCommonUrl}
             commonArchiveUrl={commonArchiveUrl}
@@ -541,6 +552,19 @@ export function App() {
           />
         )}
 
+        {/* A mode may take the bottom dock over (Material mode puts the shader graph there); the
+            shell keeps owning its size, so the content browser comes back exactly as it was. */}
+        {modeUi.bottomDock ? (
+          modeUi.bottomDock({
+            open: layout.browserOpen,
+            height: layout.browserHeight,
+            collapsedHeight: CONTENT_BROWSER_COLLAPSED_HEIGHT,
+            resizing: layout.browserResizing,
+            onBeginResize: layout.beginBrowserResize,
+            onResetSize: layout.resetBrowserSize,
+            onToggleOpen: () => layout.setBrowserOpen((value) => !value),
+          })
+        ) : (
         <ContentBrowser
           open={layout.browserOpen}
           height={layout.browserHeight}
@@ -559,6 +583,7 @@ export function App() {
           commonArchive={commonArchive}
           commonBrresSummaries={commonBrresSummaries}
         />
+        )}
       </div>
 
       <StatusBar message={playtest.active ? PLAYTEST_STATUS_MESSAGE : status} stats={statusStats} />

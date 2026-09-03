@@ -4,6 +4,7 @@ import {
   Keyboard,
   Map as MapIcon,
   PanelBottom,
+  Palette,
   PanelLeft,
   PanelRight,
   Redo2,
@@ -23,7 +24,8 @@ const MODE_OPTIONS: ReadonlyArray<SegmentedOption<EditorModeStub>> = [
   { value: 'kmp', label: 'KMP', icon: <Route size={14} />, tooltip: 'Track data: routes, checkpoints, objects, areas' },
   { value: 'camera', label: 'Camera', icon: <Video size={14} />, tooltip: 'Cameras: replay and opening camera setup' },
   { value: 'model', label: 'Model', icon: <Boxes size={14} />, tooltip: 'Course geometry: meshes, bones and imports' },
-  { value: 'visual', label: 'Visual', icon: <MapIcon size={14} />, tooltip: 'Look of the track: materials, effects, lighting' },
+  { value: 'visual', label: 'Visual', icon: <MapIcon size={14} />, tooltip: 'Look of the track: textures, animations, effects, lighting' },
+  { value: 'material', label: 'Material', icon: <Palette size={14} />, tooltip: 'Materials and shaders: layers, colours, blending, the TEV node graph' },
 ];
 
 /**
