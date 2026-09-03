@@ -51,6 +51,8 @@ function importSpecifiers(source) {
 
 /** Resolves a specifier to an on-disk file, honouring noclip's `.js`-means-`.ts` convention. */
 function resolveSpecifier(specifier, fromFile) {
+  // Vite asset-import suffixes (`./kinoko.wasm?url`) are not part of the path.
+  specifier = specifier.replace(/\?(url|raw|inline|worker)$/, '');
   if (specifier === 'noclip-rust-support') return existsSync(RUST_STUB) ? RUST_STUB : null;
 
   let base;
