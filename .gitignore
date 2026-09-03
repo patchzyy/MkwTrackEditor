@@ -11,3 +11,6 @@ image.png
 # Local copies of real MKW tracks for the dev server (see docs/WORKPLAN.md).
 public/dev-tracks/
 .probe-profile/
+
+# Scratch space for BRRES writer experiments (not part of the build).
+.scratch/

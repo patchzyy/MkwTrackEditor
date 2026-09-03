@@ -197,3 +197,52 @@ From <https://wiki.tockdom.com/wiki/KMP_Editing/Cameras>:
 
 Pure implementations live in `src/lib/cameraPreview.ts` (interpolation + chain) and
 `src/ui/viewport/cameraOverlay.ts` (KMP → overlay), both unit tested.
+
+---
+
+## 6. Model mode, as finished (agent G)
+
+### Extra viewport props
+
+| Prop | Type | What it does |
+| --- | --- | --- |
+| `meshSelection` | `EditorMeshTarget[]` | Makes the mesh selection controlled. Pass it and the outliner can drive what the viewport has selected; omit it and the viewport keeps its own. Clicks in the viewport still report through `onSelectMesh` either way. |
+| `importedMeshes` | `ImportedMesh[]` | Objects placed as course geometry. Ones with a `sourceShape` are drawn as duplicates of that mesh; the rest are loaded as extra model instances. |
+| `resolveImportedMeshSource` | `(sourcePath: string) => Uint8Array \| null` | Supplies the BRRES bytes behind an imported mesh. |
+
+`meshEdits` now **resets** as well as applies: an edit that disappears from the array (undo, or the
+inspector's Restore) puts its mesh back where it started, and the selection's stored transform is
+refreshed so the gizmo follows.
+
+### Extra renderer method
+
+| Method | Purpose |
+| --- | --- |
+| `setEditorMeshCopies(target, transforms)` | Replaces the duplicates of a mesh. Each transform is a game-unit TRS pivoting on the target's centre — the same convention as `setEditorMeshTransform` — and draws one more copy of the same geometry. Copies survive the original being hidden, so "duplicate it, then delete the original" works. Costs one draw call and no extra vertex data. |
+
+Underneath, `ShapeInstanceEditorOverride` in `vendor/noclip.website/src/rres/render.ts` gained a
+`copyDraws` array, and `EditorMeshPicker` gained `setCopies`.
+
+### Document model
+
+`TrackDocument` now carries the Model-mode edits, so history and export both see them:
+
+```ts
+meshEdits?: MeshEdit[];
+importedMeshes?: ImportedMesh[];
+/** BRRES bytes per `ImportedMesh.sourcePath`, so export stays synchronous. */
+meshImportSources?: Record<string, Uint8Array>;
+```
+
+`ImportedMesh.sourceShape` is now a full `EditorMeshTarget` (it was a partial one), because both the
+exporter and the renderer need to resolve it back to a draw call.
+
+`exportTrack` bakes them through `bakeMeshEdits` → `bakeCourseModel`. With no edits the entry list
+and its byte arrays come back untouched, so an unedited track still exports byte-for-byte.
+
+### Reading the model without the renderer
+
+`src/lib/brres/courseMeshes.ts` lists a course model's draw calls straight from the BRRES —
+`listCourseMeshes`, `describeCourseMesh`, `courseMeshTarget`, `courseMeshCenter`. The outliner uses
+it so it works before the scene has loaded, and its `drawOpIndex` numbering is asserted to match
+what the picker reports.

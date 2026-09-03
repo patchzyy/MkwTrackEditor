@@ -185,12 +185,26 @@ export interface ShapeInstanceEditorComponentDraw {
     hidden: boolean;
 }
 
+/** An additional copy of a shape, drawn again somewhere else. */
+export interface ShapeInstanceEditorCopyDraw {
+    /** null draws the shape's own index ranges; otherwise just one connected component. */
+    indexBuffer: GfxIndexBufferDescriptor | null;
+    indexCount: number;
+    /** Extra world-space matrix applied on top of the shape's node matrix. */
+    extraWorldMatrix: mat4;
+}
+
 export interface ShapeInstanceEditorOverride {
     hidden: boolean;
     /** Extra world-space matrix applied on top of the shape's node matrix. */
     extraWorldMatrix: mat4 | null;
     /** When set, the shape is drawn as N separate index ranges instead of its own draws. */
     componentDraws: ShapeInstanceEditorComponentDraw[] | null;
+    /**
+     * Extra copies of this shape. Duplicating a mesh in the editor costs one more draw call and
+     * no extra vertex data, and the copies survive the original being hidden or deleted.
+     */
+    copyDraws: ShapeInstanceEditorCopyDraw[] | null;
 }
 
 class ShapeInstance {
@@ -216,7 +230,13 @@ class ShapeInstance {
             return;
 
         const editorOverride = this.editorOverride;
-        if (editorOverride !== null && editorOverride.hidden)
+        const editorHidden = editorOverride !== null && editorOverride.hidden;
+        const editorCopies = editorOverride !== null && editorOverride.copyDraws !== null && editorOverride.copyDraws.length > 0
+            ? editorOverride.copyDraws
+            : null;
+        // A hidden shape still draws its copies: "duplicate it, then delete the original" has to
+        // leave the copy standing.
+        if (editorHidden && editorCopies === null)
             return;
 
         const template = renderInstManager.pushTemplate();
@@ -235,6 +255,14 @@ class ShapeInstance {
 
         // Editor extension: draw the shape as independent connected components so each one
         // can carry its own transform / visibility.
+        if (editorCopies !== null && !usesSkinning)
+            this.drawEditorCopies(renderInstManager, editorCopies, camera, instanceStateData);
+
+        if (editorHidden) {
+            renderInstManager.popTemplate();
+            return;
+        }
+
         if (editorOverride !== null && editorOverride.componentDraws !== null && !usesSkinning) {
             for (let p = 0; p < editorOverride.componentDraws.length; p++) {
                 const componentDraw = editorOverride.componentDraws[p];
@@ -289,6 +317,35 @@ class ShapeInstance {
         }
 
         renderInstManager.popTemplate();
+    }
+
+    /** Editor extension: re-draws the shape once per copy, each with its own world matrix. */
+    private drawEditorCopies(renderInstManager: GfxRenderInstManager, copies: ShapeInstanceEditorCopyDraw[], camera: Camera, instanceStateData: InstanceStateData): void {
+        const materialInstance = this.materialInstance;
+        for (let i = 0; i < copies.length; i++) {
+            const copy = copies[i];
+            drawParams.clear();
+            this.fillEditorPosMtx(drawParams.u_PosMtx[0], copy.extraWorldMatrix, camera, instanceStateData);
+
+            if (copy.indexBuffer !== null) {
+                if (copy.indexCount === 0)
+                    continue;
+                const renderInst = renderInstManager.newRenderInst();
+                renderInst.setVertexInput(this.shapeData.inputLayout, this.shapeData.vertexBuffers, copy.indexBuffer);
+                materialInstance.materialHelper.allocateDrawParamsDataOnInst(renderInst, drawParams);
+                renderInst.setDrawCount(copy.indexCount, 0);
+                renderInstManager.submitRenderInst(renderInst);
+                continue;
+            }
+
+            for (let p = 0; p < this.shape.loadedVertexData.draws.length; p++) {
+                const draw = this.shape.loadedVertexData.draws[p];
+                const renderInst = renderInstManager.newRenderInst();
+                materialInstance.materialHelper.allocateDrawParamsDataOnInst(renderInst, drawParams);
+                renderInst.setDrawCount(draw.indexCount, draw.indexOffset);
+                renderInstManager.submitRenderInst(renderInst);
+            }
+        }
     }
 }
 
