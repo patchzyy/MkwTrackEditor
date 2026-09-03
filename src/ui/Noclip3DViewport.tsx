@@ -32,6 +32,7 @@ import {
   retargetMeshGranularity,
   widenMeshGranularity,
   type EditorMeshTarget,
+  type ImportedMesh,
   type MeshEdit,
   type MeshSelectionGranularity,
   type MeshTransform,
@@ -84,6 +85,15 @@ interface Noclip3DViewportProps {
   meshGranularity?: MeshSelectionGranularity;
   /** Model mode: mesh edits to re-apply to the renderer when the scene (re)loads. */
   meshEdits?: MeshEdit[];
+  /** Model mode: objects placed as course geometry, rendered as extra model instances. */
+  importedMeshes?: ImportedMesh[];
+  /** Resolves the BRRES bytes behind an imported mesh's `sourcePath`. */
+  resolveImportedMeshSource?: (sourcePath: string) => Uint8Array | null;
+  /**
+   * Model mode: the selection, when the app drives it (from the outliner). Leave it undefined and
+   * the viewport keeps its own; clicks in the viewport report through `onSelectMesh` either way.
+   */
+  meshSelection?: EditorMeshTarget[];
   onSelectMesh?: (target: EditorMeshTarget | null, options?: { additive?: boolean; targets?: EditorMeshTarget[] }) => void;
   onTransformMesh?: (target: EditorMeshTarget, transform: MeshTransform) => void;
   onChangeMeshGranularity?: (granularity: MeshSelectionGranularity) => void;
@@ -581,6 +591,9 @@ export function Noclip3DViewport({
   onMoveCameraViewPoint,
   meshGranularity,
   meshEdits,
+  importedMeshes,
+  resolveImportedMeshSource,
+  meshSelection,
   onSelectMesh,
   onTransformMesh,
   onChangeMeshGranularity,
@@ -710,6 +723,13 @@ export function Noclip3DViewport({
   const meshSelectionsRef = useRef<MeshSelectionEntry[]>(meshSelections);
   const [hoveredMeshKey, setHoveredMeshKey] = useState<string | null>(null);
   const hoveredMeshRef = useRef<{ key: string; target: EditorMeshTarget } | null>(null);
+  /** Mesh edits currently pushed into the renderer, so they can be lifted when they go away. */
+  const appliedMeshEditsRef = useRef<Map<string, EditorMeshTarget>>(new Map());
+  /** Meshes that currently have duplicates in the renderer, so they can be cleared. */
+  const appliedMeshCopiesRef = useRef<Map<string, EditorMeshTarget>>(new Map());
+  /** Placed-object id to the renderer instance standing in for it. */
+  const importedMeshInstancesRef = useRef<Map<string, { instanceId: string; signature: string }>>(new Map());
+  const resolveImportedMeshSourceRef = useRef(resolveImportedMeshSource);
   const cameraPreviewRef = useRef<CameraPreviewRequest | null>(cameraPreview);
   /** Dev-hook override so `window.__mkwViewport.previewCamera` survives re-renders. */
   const devCameraPreviewRef = useRef<CameraPreviewRequest | null | undefined>(undefined);
@@ -754,6 +774,7 @@ export function Noclip3DViewport({
   onMoveCheckpointEndpointRef.current = onMoveCheckpointEndpoint;
   onMoveCameraViewPointRef.current = onMoveCameraViewPoint;
   onSelectMeshRef.current = onSelectMesh;
+  resolveImportedMeshSourceRef.current = resolveImportedMeshSource;
   onTransformMeshRef.current = onTransformMesh;
   onChangeMeshGranularityRef.current = onChangeMeshGranularity;
   onCameraPreviewEndRef.current = onCameraPreviewEnd;
@@ -1136,15 +1157,121 @@ export function Noclip3DViewport({
     syncSceneOverlay(trackRef.current, selectedIdRef.current);
   }, [mode, viewerReady, sceneKey]);
 
-  // Re-apply persisted mesh edits after the scene (re)loads.
+  /**
+   * Mirrors the document's mesh edits into the renderer.
+   *
+   * The document is the source of truth, so this both applies the edits that are there and lifts
+   * the ones that are not: an edit removed by undo, or reset from the inspector, has to put its
+   * mesh back where it started. The selection's own copy of the transform is refreshed too, so
+   * the gizmo follows an undo instead of floating where the mesh used to be.
+   */
   useEffect(() => {
     const scene = getMeshScene();
-    if (!scene?.setEditorMeshTransform || !meshEdits) return;
-    for (const edit of meshEdits) {
+    if (!scene?.setEditorMeshTransform) return;
+    const applied = appliedMeshEditsRef.current;
+    const next = new Map<string, EditorMeshTarget>();
+    for (const edit of meshEdits ?? []) {
+      const key = meshTargetKey(edit.target);
+      next.set(key, edit.target);
       scene.setEditorMeshTransform?.(edit.target, { kind: 'trs', ...edit.transform });
-      if (!edit.visible || edit.deleted) scene.setEditorMeshVisible?.(edit.target, false);
+      scene.setEditorMeshVisible?.(edit.target, edit.visible && !edit.deleted);
+    }
+    for (const [key, target] of applied) {
+      if (next.has(key)) continue;
+      scene.setEditorMeshTransform?.(target, null);
+      scene.setEditorMeshVisible?.(target, true);
+    }
+    appliedMeshEditsRef.current = next;
+
+    if (meshSelectionsRef.current.length > 0) {
+      const byKey = new Map((meshEdits ?? []).map((edit) => [meshTargetKey(edit.target), edit.transform]));
+      const refreshed = meshSelectionsRef.current.map((entry) => ({
+        ...entry,
+        transform: byKey.get(entry.key) ?? createIdentityMeshTransform(),
+      }));
+      setMeshSelections(refreshed);
+      meshSelectionsRef.current = refreshed;
+      updateMeshHighlight();
     }
   }, [meshEdits, viewerReady, sceneKey]);
+
+  /**
+   * Mirrors duplicated meshes into the renderer. A duplicate is the same geometry drawn a second
+   * time somewhere else, so it costs one draw call and no extra vertex data — and it keeps
+   * standing when the original is hidden or deleted.
+   */
+  useEffect(() => {
+    const scene = getMeshScene();
+    if (!scene?.setEditorMeshCopies) return;
+    const byTarget = new Map<string, { target: EditorMeshTarget; transforms: MeshTransform[] }>();
+    for (const mesh of importedMeshes ?? []) {
+      if (!mesh.sourceShape || !mesh.visible) continue;
+      const key = meshTargetKey(mesh.sourceShape);
+      const entry = byTarget.get(key) ?? { target: mesh.sourceShape, transforms: [] };
+      entry.transforms.push(mesh.transform);
+      byTarget.set(key, entry);
+    }
+    // Anything that had copies last time and does not now gets cleared.
+    for (const [key, target] of appliedMeshCopiesRef.current) {
+      if (!byTarget.has(key)) scene.setEditorMeshCopies?.(target, []);
+    }
+    const applied = new Map<string, EditorMeshTarget>();
+    for (const [key, entry] of byTarget) {
+      scene.setEditorMeshCopies?.(entry.target, entry.transforms.map((transform) => ({ kind: 'trs' as const, ...transform })));
+      applied.set(key, entry.target);
+    }
+    appliedMeshCopiesRef.current = applied;
+  }, [importedMeshes, viewerReady, sceneKey]);
+
+  /**
+   * Renders the objects placed as course geometry. Each one is an extra model instance; the diff
+   * against what is already in the scene keeps a move from re-parsing the BRRES.
+   */
+  useEffect(() => {
+    const scene = getMeshScene();
+    if (!scene?.addEditorModelInstance) return;
+    const live = importedMeshInstancesRef.current;
+    const wanted = (importedMeshes ?? []).filter((mesh) => !mesh.sourceShape);
+
+    for (const [id, entry] of [...live]) {
+      if (!wanted.some((mesh) => mesh.id === id)) {
+        removeImportedMeshInstance(entry.instanceId);
+        live.delete(id);
+      }
+    }
+    for (const mesh of wanted) {
+      const signature = `${mesh.sourcePath}::${mesh.modelName}`;
+      const existing = live.get(mesh.id);
+      if (existing && existing.signature === signature) {
+        scene.updateEditorModelInstance?.(existing.instanceId, importedMeshMatrix(mesh.transform));
+        scene.setEditorModelInstanceVisible?.(existing.instanceId, mesh.visible);
+        continue;
+      }
+      if (existing) {
+        removeImportedMeshInstance(existing.instanceId);
+        live.delete(mesh.id);
+      }
+      const bytes = resolveImportedMeshSourceRef.current?.(mesh.sourcePath);
+      if (!bytes) continue;
+      const instanceId = addImportedMeshInstance(bytes, mesh.modelName || null, {});
+      if (instanceId === null) continue;
+      scene.updateEditorModelInstance?.(instanceId, importedMeshMatrix(mesh.transform));
+      scene.setEditorModelInstanceVisible?.(instanceId, mesh.visible);
+      live.set(mesh.id, { instanceId, signature });
+    }
+  }, [importedMeshes, viewerReady, sceneKey]);
+
+  // The outliner drives the selection when the app passes one in.
+  useEffect(() => {
+    if (meshSelection === undefined || modeRef.current !== 'model') return;
+    const wanted = meshSelection.map((target) => meshTargetKey(target)).join('|');
+    if (wanted === meshSelectionsRef.current.map((entry) => entry.key).join('|')) return;
+    const editsByKey = new Map((meshEdits ?? []).map((edit) => [meshTargetKey(edit.target), edit.transform]));
+    const entries = meshSelection
+      .map((target) => makeMeshEntryFromTarget(target, describeMeshTarget(target), editsByKey.get(meshTargetKey(target))))
+      .filter((entry): entry is MeshSelectionEntry => entry !== null);
+    applyMeshSelection(entries, false);
+  }, [meshSelection, mode, viewerReady, sceneKey]);
 
   // `]` widens the mesh selection unit, `[` narrows it.
   useEffect(() => {
@@ -2232,6 +2359,36 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     mat4.rotateZ(matrix, matrix, rotation.z * deg);
     mat4.scale(matrix, matrix, [scale.x * MKW_RENDER_SCALE, scale.y * MKW_RENDER_SCALE, scale.z * MKW_RENDER_SCALE]);
     return scene.addEditorModelInstance(viewer.gfxDevice, slice, modelName, matrix);
+  }
+
+  /** Scene-space placement matrix for an imported mesh, in the renderer's units. */
+  function importedMeshMatrix(transform: MeshTransform): mat4 {
+    const matrix = mat4.create();
+    const deg = Math.PI / 180;
+    mat4.fromTranslation(matrix, [
+      transform.translation.x * MKW_RENDER_SCALE,
+      transform.translation.y * MKW_RENDER_SCALE,
+      transform.translation.z * MKW_RENDER_SCALE,
+    ]);
+    mat4.rotateY(matrix, matrix, transform.rotation.y * deg);
+    mat4.rotateX(matrix, matrix, transform.rotation.x * deg);
+    mat4.rotateZ(matrix, matrix, transform.rotation.z * deg);
+    mat4.scale(matrix, matrix, [
+      transform.scale.x * MKW_RENDER_SCALE,
+      transform.scale.y * MKW_RENDER_SCALE,
+      transform.scale.z * MKW_RENDER_SCALE,
+    ]);
+    return matrix;
+  }
+
+  /** Fallback label for a target that came from the outliner rather than from a pick. */
+  function describeMeshTarget(target: EditorMeshTarget): string {
+    const listed = getMeshScene()?.listEditorMeshes?.() ?? [];
+    const match = listed.find(
+      (entry: { drawOpIndex?: number; shapeName?: string; nodeName?: string }) => entry.drawOpIndex === target.drawOpIndex,
+    );
+    if (target.granularity === 'node') return match?.nodeName || `Bone ${target.nodeId}`;
+    return match?.shapeName || `Mesh ${target.drawOpIndex + 1}`;
   }
 
   function removeImportedMeshInstance(id: string): boolean {

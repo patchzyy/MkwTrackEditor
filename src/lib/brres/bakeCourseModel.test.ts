@@ -206,7 +206,7 @@ describe.skipIf(!primary)('bakeCourseModel', () => {
       label: 'Copy of mesh',
       transform: { ...createIdentityMeshTransform(), translation: { x: 1000, y: 0, z: 0 } },
       visible: true,
-      sourceShape: { modelName: openCourseModel(primary.data).modelName, drawOpIndex, componentIndex: null },
+      sourceShape: makeTarget(primary.data, drawOpIndex),
     };
     const result = bakeCourseModel(primary.data, { importedMeshes: [copy] });
     expect(result.changed).toBe(true);
@@ -251,7 +251,7 @@ describe.skipIf(!primary)('bakeCourseModel', () => {
         modelName: openCourseModel(primary.data).modelName,
         transform: { ...createIdentityMeshTransform(), translation: { x: 0, y: 0, z: 800 } },
         visible: true,
-        sourceShape: { modelName: openCourseModel(primary.data).modelName, drawOpIndex: moved.index, componentIndex: null },
+        sourceShape: makeTarget(primary.data, moved.index),
       }],
     });
 

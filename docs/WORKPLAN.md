@@ -92,3 +92,36 @@ A track editor a Mario Kart Wii custom-track author would actually use:
 End your work with a report that lists: what was completed, what was verified and how
 (commands, browser checks), what is not done, files touched, and any wiring the
 orchestrator has to do in files you did not own.
+
+## Progress log
+
+### Model mode — complete (agent G)
+
+Model mode does what section 3 asks for. Clicking track geometry in the viewport selects the
+smallest sensible piece (a connected component of a shape); `]` / `[` widen and narrow that to the
+whole mesh or the whole bone, and the inspector has the same control in words. The selection can be
+moved, rotated, scaled, hidden, deleted, restored and duplicated, from the gizmo or from numeric
+fields, and an object model can be placed into the track as scenery. All of it is baked into
+`course_model.brres` on export.
+
+The interesting part was the writer. Three properties of the format each cost a bug:
+
+- A pointer from one block to another (a resource dictionary to its data, a material to its TEV
+  shader) is read back **unsigned**, so the target has to sit after the pointer. Appending a grown
+  dictionary table past the blocks it indexes produced negative offsets that noclip's parser
+  rejected. Dictionaries are now re-emitted into a gap opened in front of the first block.
+- Readers over-read the tail of a block on purpose — a fixed-size material display list, four bytes
+  past a vertex array — which the next block normally covers. An edited model keeps slack behind
+  the last block it appended.
+- New textures have to be slotted into the layout ahead of the animation sub-files (SRT0/CLR0/PAT0),
+  whose internal name pointers this editor does not model, so those keep their distance to the
+  string pool.
+
+Verified with `npx tsc --noEmit`, `npx vitest run` (401 tests), `npx vite build`, and a scripted
+browser pass over `Z0.szs` and `nintendo_1.szs` (`scripts/probe-model-ui.mjs` +
+`scripts/probe-model-mode-ui.js`, screenshots in `docs/screenshots/model-ui-*.png` and
+`model-nintendo-*.png`). An unedited track still exports byte-for-byte identically.
+
+Known gap: a mesh whose vertices are shared between two connected components moves its neighbours
+too. The exporter detects this and warns rather than silently corrupting the shape; splitting the
+vertex data per component would be the fix.

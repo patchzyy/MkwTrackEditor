@@ -90,7 +90,7 @@ describe.skipIf(trackPaths.length === 0)('Model mode export', () => {
         label: 'Copy',
         transform: { ...createIdentityMeshTransform(), translation: { x: 1200, y: 0, z: 0 } },
         visible: true,
-        sourceShape: { modelName: moved.modelName, drawOpIndex: moved.drawOpIndex, componentIndex: null },
+        sourceShape: moved,
       }];
 
       const edited: TrackDocument = { ...track, meshEdits: edits, importedMeshes: copies };

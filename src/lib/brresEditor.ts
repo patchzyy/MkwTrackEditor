@@ -120,13 +120,9 @@ export interface ImportedMesh {
   /**
    * Set when this mesh is a duplicate of geometry that is already in the course model rather
    * than an import from another file. The exporter clones that draw call instead of merging a
-   * second archive.
+   * second archive, and the viewport re-draws it in place rather than loading another model.
    */
-  sourceShape?: {
-    modelName: string;
-    drawOpIndex: number;
-    componentIndex: number | null;
-  };
+  sourceShape?: EditorMeshTarget;
 }
 
 export const IDENTITY_MESH_TRANSFORM: MeshTransform = {

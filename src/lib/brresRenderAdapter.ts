@@ -43,6 +43,8 @@ export interface EditorMeshRendererScene {
   getEditorMeshComponentCount?: (target: EditorMeshTarget) => number;
   setEditorMeshTransform?: (target: EditorMeshTarget, transform: EditorMeshTransformPayload | null) => boolean;
   setEditorMeshVisible?: (target: EditorMeshTarget, visible: boolean) => boolean;
+  /** Replaces the duplicates of a mesh; each transform draws one more copy of it. */
+  setEditorMeshCopies?: (target: EditorMeshTarget, transforms: EditorMeshTransformPayload[]) => boolean;
   setEditorMeshHighlight?: (targets: Array<{ target: EditorMeshTarget; selected: boolean }>) => void;
   clearEditorMeshEdits?: () => void;
   refreshEditorMeshSources?: () => void;
