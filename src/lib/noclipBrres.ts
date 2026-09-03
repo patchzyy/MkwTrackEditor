@@ -1,5 +1,91 @@
 import { getBrresThumbnail, type BrresThumbnailOptions } from './thumbnail';
 
+/** A GX texture that has been decoded to straight RGBA8, ready for a canvas. */
+export interface DecodedTextureImage {
+  width: number;
+  height: number;
+  /** Straight (non-premultiplied) RGBA8, ready to hand to `ImageData`. */
+  pixels: Uint8ClampedArray<ArrayBuffer>;
+}
+
+/** The subset of a TEX0 needed to decode it; matches `Tex0Location` plus the pixel bytes. */
+export interface DecodableTexture {
+  name?: string;
+  format: number;
+  width: number;
+  height: number;
+  mipCount: number;
+  data: Uint8Array;
+}
+
+/**
+ * Decodes one mip level of a TEX0 to RGBA8 with noclip's GX texture decoder, so previews are
+ * pixel-identical to what the viewport samples. Returns `null` if the level cannot be decoded.
+ */
+export async function decodeTextureImage(texture: DecodableTexture, level = 0): Promise<DecodedTextureImage | null> {
+  const [{ default: ArrayBufferSlice }, GXTexture] = await Promise.all([
+    // @ts-ignore noclip source is vendored outside this app's tsconfig surface.
+    import('../../vendor/noclip.website/src/ArrayBufferSlice.js'),
+    // @ts-ignore noclip source is vendored outside this app's tsconfig surface.
+    import('../../vendor/noclip.website/src/gx/gx_texture.js'),
+  ]);
+  try {
+    const copy = texture.data.slice();
+    const input = {
+      name: texture.name ?? 'texture',
+      format: texture.format,
+      width: texture.width,
+      height: texture.height,
+      mipCount: Math.max(1, texture.mipCount),
+      data: new ArrayBufferSlice(copy.buffer, copy.byteOffset, copy.byteLength),
+      paletteFormat: null,
+      paletteData: null,
+    };
+    const mipChain = GXTexture.calcMipChain(input, input.mipCount);
+    const mip = mipChain.mipLevels[Math.min(level, mipChain.mipLevels.length - 1)];
+    if (!mip) return null;
+    const decoded = await GXTexture.decodeTexture(mip);
+    return { width: mip.width, height: mip.height, pixels: toClamped(decoded.pixels) };
+  } catch {
+    return null;
+  }
+}
+
+/** Human-readable GX texture format name (`RGB5A3`, `CMPR`, ...). */
+export async function getTextureFormatName(format: number): Promise<string> {
+  try {
+    // @ts-ignore noclip source is vendored outside this app's tsconfig surface.
+    const GXTexture = await import('../../vendor/noclip.website/src/gx/gx_texture.js');
+    return GXTexture.getFormatName(format, null);
+  } catch {
+    return `Format ${format}`;
+  }
+}
+
+/** Renders a decoded texture to a PNG data URL at 1:1, for thumbnails and downloads. */
+export function textureImageToDataUrl(image: DecodedTextureImage): string | null {
+  const canvas = textureImageToCanvas(image);
+  return canvas ? canvas.toDataURL('image/png') : null;
+}
+
+export function textureImageToCanvas(image: DecodedTextureImage): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, image.width);
+  canvas.height = Math.max(1, image.height);
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+  context.putImageData(new ImageData(image.pixels, canvas.width, canvas.height), 0, 0);
+  return canvas;
+}
+
+/** Copies into a plain `ArrayBuffer`-backed view so the result can go straight into `ImageData`. */
+function toClamped(pixels: ArrayBufferView): Uint8ClampedArray<ArrayBuffer> {
+  const out = new Uint8ClampedArray(pixels.byteLength);
+  out.set(new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength));
+  return out;
+}
+
 export interface NoclipBrresSummary {
   models: Array<{ name: string; nodes: number; materials: number; shapes: number }>;
   textures: Array<{ name: string; width: number; height: number; format: string }>;

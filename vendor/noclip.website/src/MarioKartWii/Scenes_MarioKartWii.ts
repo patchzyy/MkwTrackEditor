@@ -5,6 +5,7 @@ import * as Viewer from '../viewer.js';
 import * as UI from '../ui.js';
 import * as BRRES from '../rres/brres.js';
 import * as U8 from '../rres/u8.js';
+import * as GX_Texture from '../gx/gx_texture.js';
 import * as Yaz0 from '../Common/Compression/Yaz0.js';
 
 import { assert, readString, hexzero, assertExists } from '../util.js';
@@ -35,6 +36,28 @@ import {
     type EditorMeshTargetRef,
     type EditorMeshTransformInput,
 } from './EditorMeshPicker.js';
+
+/** One BRRES the scene renders as course geometry. Reported to the editor's Visual mode. */
+export interface EditorSceneModelInfo {
+    archivePath: string;
+    modelName: string;
+    kind: 'course' | 'skybox' | 'imported';
+    visible: boolean;
+    materialCount: number;
+    shapeCount: number;
+    nodeCount: number;
+}
+
+/** One animation inside a loaded BRRES, and whether the renderer is currently playing it. */
+export interface EditorAnimationInfo {
+    kind: 'srt0' | 'pat0' | 'clr0' | 'chr0' | 'vis0' | 'scn0';
+    name: string;
+    duration: number;
+    loopMode: number;
+    enabled: boolean;
+    /** False for animation kinds the BRRES renderer cannot play (SCN0). */
+    supported: boolean;
+}
 
 interface ObjFlowObj {
     name: string;
@@ -679,6 +702,341 @@ class MarioKartWiiRenderer {
 
     //#endregion
 
+    //#region Visual mode: models, animations, render toggles, texture replacement
+
+    private editorHiddenModelPaths = new Set<string>();
+    private editorObjectPreviewsVisible = true;
+    private editorVertexColorsEnabled = true;
+    private editorTexturesEnabled = true;
+    private editorLightingEnabled = true;
+    private editorBloomEnabled = true;
+    private editorDisabledAnimations = new Set<string>();
+    private editorAnimationsPlaying = true;
+    private editorLockedSceneTimeFrames: number | null = null;
+    private editorAnimationPausedAtMs: number | null = null;
+    private editorAnimationPauseOffsetMs = 0;
+
+    /**
+     * The clock every bound animation runs on. `viewerInput.time` is a free-running wall clock;
+     * Visual mode needs to pause it and scrub to an exact frame, so the wall time spent paused is
+     * subtracted out instead of stopping the viewer (which would also freeze the camera).
+     */
+    private calcEditorAnimationTimeMs(wallTimeMs: number): number {
+        if (this.editorLockedSceneTimeFrames !== null)
+            return this.editorLockedSceneTimeFrames * (1000 / 60);
+        if (this.editorAnimationsPlaying) {
+            if (this.editorAnimationPausedAtMs !== null) {
+                this.editorAnimationPauseOffsetMs += wallTimeMs - this.editorAnimationPausedAtMs;
+                this.editorAnimationPausedAtMs = null;
+            }
+        } else if (this.editorAnimationPausedAtMs === null) {
+            this.editorAnimationPausedAtMs = wallTimeMs;
+        }
+        return (this.editorAnimationPausedAtMs ?? wallTimeMs) - this.editorAnimationPauseOffsetMs;
+    }
+
+    /** Play/pause every animation bound to the scene's shared animation controller. */
+    public setEditorAnimationsPlaying(playing: boolean): void {
+        this.editorAnimationsPlaying = playing;
+    }
+
+    public getEditorAnimationsPlaying(): boolean {
+        return this.editorAnimationsPlaying;
+    }
+
+    /** Pins the scene clock to an exact frame (60 fps). `null` hands it back to the wall clock. */
+    public setEditorSceneTimeFrames(frames: number | null): void {
+        this.editorLockedSceneTimeFrames = frames;
+        if (frames !== null)
+            this.animationController.setTimeInFrames(frames);
+    }
+
+    public getEditorSceneTimeFrames(): number {
+        return this.animationController.getTimeInFrames();
+    }
+
+    /** Every BRRES the scene renders as course geometry, with its MDL0 stats. */
+    public listEditorSceneModels(): EditorSceneModelInfo[] {
+        const out: EditorSceneModelInfo[] = [];
+        for (const object of this.baseObjects) {
+            if (!(object instanceof CourseBGRenderer) && !(object instanceof EditorImportedModelRenderer))
+                continue;
+            const mdl0 = object.modelInstance.mdl0Model.mdl0;
+            out.push({
+                archivePath: object.archivePath,
+                modelName: mdl0.name,
+                kind: object instanceof EditorImportedModelRenderer ? 'imported' : object.archivePath.toLowerCase().includes('vrcorn') ? 'skybox' : 'course',
+                visible: object.visible,
+                materialCount: mdl0.materials.length,
+                shapeCount: mdl0.shapes.length,
+                nodeCount: mdl0.nodes.length,
+            });
+        }
+        return out;
+    }
+
+    /** Shows/hides one archive's course geometry (`./course_model.brres`, `./vrcorn_model.brres`, ...). */
+    public setEditorSceneModelVisible(archivePath: string, visible: boolean): boolean {
+        const key = archivePath.toLowerCase();
+        if (visible)
+            this.editorHiddenModelPaths.delete(key);
+        else
+            this.editorHiddenModelPaths.add(key);
+        let matched = false;
+        for (const object of this.baseObjects) {
+            if (!(object instanceof CourseBGRenderer) && !(object instanceof EditorImportedModelRenderer))
+                continue;
+            if (object.archivePath.toLowerCase() !== key)
+                continue;
+            object.visible = visible;
+            matched = true;
+        }
+        return matched;
+    }
+
+    public getEditorSceneModelVisible(archivePath: string): boolean {
+        return !this.editorHiddenModelPaths.has(archivePath.toLowerCase());
+    }
+
+    /** Shows/hides every KMP object preview (the models spawned from GOBJ entries). */
+    public setEditorObjectPreviewsVisible(visible: boolean): void {
+        this.editorObjectPreviewsVisible = visible;
+        for (const object of this.baseObjects)
+            if (object instanceof GobjPreviewRenderer)
+                object.visible = visible;
+    }
+
+    public getEditorObjectPreviewsVisible(): boolean {
+        return this.editorObjectPreviewsVisible;
+    }
+
+    public setEditorVertexColorsEnabled(enabled: boolean): void {
+        this.editorVertexColorsEnabled = enabled;
+        for (const object of this.baseObjects)
+            object.setVertexColorsEnabled(enabled);
+    }
+
+    public setEditorTexturesEnabled(enabled: boolean): void {
+        this.editorTexturesEnabled = enabled;
+        for (const object of this.baseObjects)
+            object.setTexturesEnabled(enabled);
+    }
+
+    /** Flat / unlit look: forces every colour channel to its material colour. */
+    public setEditorLightingEnabled(enabled: boolean): void {
+        this.editorLightingEnabled = enabled;
+        for (const object of this.baseObjects)
+            for (const modelInstance of getModelInstances(object))
+                for (const materialInstance of modelInstance.materialInstances)
+                    materialInstance.setMaterialHacks({ disableLighting: !enabled });
+    }
+
+    public isEditorWireframeSupported(): boolean {
+        return this.renderHelper.device.queryLimits().wireframeSupported;
+    }
+
+    public setEditorWireframe(enabled: boolean): boolean {
+        if (enabled && !this.isEditorWireframeSupported())
+            return false;
+        this.wireframe = enabled;
+        return true;
+    }
+
+    public setEditorBloomEnabled(enabled: boolean): void {
+        this.editorBloomEnabled = enabled;
+    }
+
+    public setEditorPostProcessingEnabled(enabled: boolean): void {
+        this.enablePostProcessing = enabled;
+    }
+
+    /** Which of the visual toggles this particular track can actually drive. */
+    public getEditorVisualCapabilities(): { bloom: boolean; dof: boolean; lighting: boolean; wireframe: boolean } {
+        return {
+            bloom: this.eggBloom !== null,
+            dof: this.eggDOF !== null,
+            lighting: this.eggLightManager !== null,
+            wireframe: this.isEditorWireframeSupported(),
+        };
+    }
+
+    private editorAnimationKey(archivePath: string, kind: string, name: string): string {
+        return `${archivePath.toLowerCase()}|${kind}|${name}`;
+    }
+
+    /** Every SRT0/PAT0/CLR0/CHR0/VIS0/SCN0 in a loaded archive, with its length and enabled state. */
+    public listEditorAnimations(archivePath: string): EditorAnimationInfo[] {
+        const rres = this.modelCache.rresCache.get(archivePath);
+        if (rres === undefined)
+            return [];
+        const out: EditorAnimationInfo[] = [];
+        const push = (kind: EditorAnimationInfo['kind'], animations: ReadonlyArray<{ name: string; duration: number; loopMode: number }>, supported: boolean) => {
+            for (const animation of animations)
+                out.push({
+                    kind,
+                    name: animation.name,
+                    duration: animation.duration,
+                    loopMode: animation.loopMode,
+                    enabled: !this.editorDisabledAnimations.has(this.editorAnimationKey(archivePath, kind, animation.name)),
+                    supported,
+                });
+        };
+        push('srt0', rres.srt0, true);
+        push('pat0', rres.pat0, true);
+        push('clr0', rres.clr0, true);
+        push('chr0', rres.chr0, true);
+        push('vis0', rres.vis0, true);
+        // noclip's BRRES renderer has no SCN0 (scene light/camera animation) playback, so these are
+        // listed for reference only and cannot be toggled.
+        push('scn0', rres.scn0, false);
+        return out;
+    }
+
+    /**
+     * Enables/disables one named animation. `MDL0ModelInstance` has no public unbind for CHR0 and
+     * VIS0, so the instance is rebuilt from the same (already uploaded) `MDL0Model` with only the
+     * still-enabled animations bound to it.
+     */
+    public setEditorAnimationEnabled(archivePath: string, kind: string, name: string, enabled: boolean): boolean {
+        const key = this.editorAnimationKey(archivePath, kind, name);
+        if (enabled)
+            this.editorDisabledAnimations.delete(key);
+        else
+            this.editorDisabledAnimations.add(key);
+        return this.rebuildEditorSceneModelAnimations(archivePath);
+    }
+
+    private bindEditorAnimations(modelInstance: MDL0ModelInstance, rres: BRRES.RRES, archivePath: string): void {
+        const isEnabled = (kind: string, name: string) => !this.editorDisabledAnimations.has(this.editorAnimationKey(archivePath, kind, name));
+        for (const chr0 of rres.chr0)
+            if (isEnabled('chr0', chr0.name))
+                modelInstance.bindCHR0(this.animationController, chr0);
+        for (const srt0 of rres.srt0)
+            if (isEnabled('srt0', srt0.name))
+                modelInstance.bindSRT0(this.animationController, srt0);
+        for (const clr0 of rres.clr0)
+            if (isEnabled('clr0', clr0.name))
+                modelInstance.bindCLR0(this.animationController, clr0);
+        for (const pat0 of rres.pat0)
+            if (isEnabled('pat0', pat0.name))
+                modelInstance.bindPAT0(this.animationController, pat0);
+        for (const vis0 of rres.vis0)
+            if (isEnabled('vis0', vis0.name))
+                modelInstance.bindVIS0(this.animationController, vis0);
+    }
+
+    private rebuildEditorSceneModelAnimations(archivePath: string): boolean {
+        const rres = this.modelCache.rresCache.get(archivePath);
+        if (rres === undefined)
+            return false;
+        const key = archivePath.toLowerCase();
+        let rebuilt = false;
+        for (const object of this.baseObjects) {
+            if (!(object instanceof CourseBGRenderer) || object.archivePath.toLowerCase() !== key)
+                continue;
+            const previous = object.modelInstance;
+            const next = new MDL0ModelInstance(this.textureHolder, previous.mdl0Model, previous.namePrefix);
+            next.setSortKeyLayer(GfxRendererLayer.OPAQUE);
+            next.isSkybox = previous.isSkybox;
+            next.passMask = previous.passMask;
+            mat4.copy(next.modelMatrix, previous.modelMatrix);
+            this.bindEditorAnimations(next, rres, archivePath);
+            next.setVertexColorsEnabled(this.editorVertexColorsEnabled);
+            next.setTexturesEnabled(this.editorTexturesEnabled);
+            for (const materialInstance of next.materialInstances)
+                materialInstance.setMaterialHacks({ disableLighting: !this.editorLightingEnabled });
+            object.modelInstance = next;
+            rebuilt = true;
+        }
+        if (rebuilt)
+            this.refreshEditorMeshSources();
+        return rebuilt;
+    }
+
+    /**
+     * Swaps the pixels of an already-loaded TEX0 in place. The `GfxTexture` handle is reused so
+     * every material that already sampled it picks up the new pixels on the next frame; that means
+     * the replacement has to keep the original dimensions and format.
+     */
+    public reloadEditorTexture(name: string, texture: { format: number; width: number; height: number; mipCount: number; data: Uint8Array }): boolean {
+        const device = this.renderHelper.device;
+        const holder = this.textureHolder;
+        const index = holder.findTextureEntryIndex(name);
+        if (index < 0)
+            return false;
+        const existing = holder.textureEntries[index];
+        if (existing.width !== texture.width || existing.height !== texture.height || existing.format !== texture.format)
+            return false;
+        const gfxTexture = holder.gfxTextures[index];
+        const copy = texture.data.slice();
+        const input: GX_Texture.TextureInputGX = {
+            name,
+            format: texture.format,
+            width: texture.width,
+            height: texture.height,
+            mipCount: texture.mipCount,
+            data: new ArrayBufferSlice(copy.buffer, copy.byteOffset, copy.byteLength),
+            paletteFormat: existing.paletteFormat ?? null,
+            paletteData: existing.paletteData ?? null,
+        };
+        const mipChain = GX_Texture.calcMipChain(input, texture.mipCount);
+        for (let level = 0; level < mipChain.mipLevels.length; level++) {
+            void GX_Texture.decodeTexture(mipChain.mipLevels[level]).then((decoded) => {
+                device.uploadTextureData(gfxTexture, level, [decoded.pixels]);
+            });
+        }
+        holder.textureEntries[index] = input;
+        return true;
+    }
+
+    public listEditorTextureNames(): string[] {
+        return this.textureHolder.textureNames;
+    }
+
+    /**
+     * Re-applies one edited `posteffect/*` file without reloading the scene, so the post-effect
+     * editor previews live. Bloom and DOF bake their parameters into GfxPrograms at construction,
+     * so those two draw paths are rebuilt; every program and sampler they allocate comes from the
+     * shared `GfxRenderCache`, which dedupes and owns them, so the old instance needs no destroy.
+     *
+     * Returns false when the file is not one this renderer consumes.
+     */
+    public applyEditorPostEffectFile(path: string, data: Uint8Array): boolean {
+        const device = this.renderHelper.device;
+        const cache = this.renderHelper.renderCache;
+        const copy = data.slice();
+        const buffer = new ArrayBufferSlice(copy.buffer, copy.byteOffset, copy.byteLength);
+        const name = (path.split('/').pop() ?? path).toLowerCase();
+
+        // Only `posteffect.bblm` (index 0) is the one the renderer draws; the numbered variants are
+        // area-driven presets the game swaps in at runtime, which this renderer does not simulate.
+        if (name === 'posteffect.bblm') {
+            this.eggBloom = new EggDrawPathBloom(device, cache, parseBBLM(buffer));
+            return true;
+        }
+
+        if (name === 'posteffect.bdof') {
+            const previous = this.eggDOF;
+            const next = new EggDrawPathDOF(device, cache, parseBDOF(buffer));
+            // The indirect warp texture is uploaded once at scene load; carry its mapping across.
+            if (previous !== null)
+                next.getIndTextureMapping().copy(previous.getIndTextureMapping());
+            this.eggDOF = next;
+            return true;
+        }
+
+        if (name.endsWith('.blight')) {
+            // `bindLightSetting` runs every frame in prepareToRender, so swapping the manager is
+            // enough for every model instance to pick the new lights up on the next frame.
+            this.eggLightManager = new EggLightManager(parseBLIGHT(buffer));
+            return true;
+        }
+
+        return false;
+    }
+
+    //#endregion
+
     //#region Model mode: mesh picking and per-mesh editing
 
     private getEditorMeshPicker(): EditorMeshPicker {
@@ -1089,7 +1447,7 @@ class MarioKartWiiRenderer {
     }
 
     protected prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
-        this.animationController.setTimeInMilliseconds(viewerInput.time);
+        this.animationController.setTimeInMilliseconds(this.calcEditorAnimationTimeMs(viewerInput.time));
         mat4.copy(this.editorOverlayClipFromWorldMatrix, viewerInput.camera.clipFromWorldMatrix);
         mat4.invert(this.editorWorldFromClipMatrix, this.editorOverlayClipFromWorldMatrix);
         vec3.set(this.editorCameraWorldPosition, viewerInput.camera.worldMatrix[12], viewerInput.camera.worldMatrix[13], viewerInput.camera.worldMatrix[14]);
@@ -1138,12 +1496,13 @@ class MarioKartWiiRenderer {
         });
 
         const allowDOF = this.editorDOFMode !== 'off';
-        if (this.enablePostProcessing && ((allowDOF && this.eggDOF !== null) || this.eggBloom !== null)) {
+        const allowBloom = this.editorBloomEnabled;
+        if (this.enablePostProcessing && ((allowDOF && this.eggDOF !== null) || (allowBloom && this.eggBloom !== null))) {
             const mainResolveTextureID = builder.resolveRenderTarget(mainColorTargetID);
 
             if (allowDOF && this.eggDOF !== null)
                 this.eggDOF.pushPassesDOF(builder, renderInstManager, viewerInput.camera, mainColorTargetID, mainDepthTargetID, mainResolveTextureID);
-            if (this.eggBloom !== null)
+            if (allowBloom && this.eggBloom !== null)
                 this.eggBloom.pushPassesBloom(builder, renderInstManager, mainColorTargetID, mainResolveTextureID);
         }
 

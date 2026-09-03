@@ -164,6 +164,47 @@ Known gap: a mesh whose vertices are shared between two connected components mov
 too. The exporter detects this and warns rather than silently corrupting the shape; splitting the
 vertex data per component would be the fix.
 
+### Agent H — Visual mode (wave 2)
+
+Visual mode is no longer a placeholder: it is the non-KMP *look* of the track, with every KMP
+overlay hidden (`showKmpEditorOverlay: false`). Shipped:
+
+- **Archive browser** (`src/ui/visual/VisualOutliner.tsx`, `visualArchive.ts`): every `.brres` in
+  the track, course first, then skybox, minimap and object archives. For the selected archive:
+  its MDL0 models (with per-archive show/hide), its materials, its TEX0 textures and its
+  animations, all parsed with the vendored noclip parser so the numbers match what is rendered.
+- **Texture previews and replacement** (`TexturePreview.tsx`, `TextureInspector.tsx`,
+  `textureReplace.ts`, `src/lib/tex0Codec.ts`, `src/lib/tex0Brres.ts`): every TEX0 is decoded with
+  noclip's own GX decoder onto an alpha checkerboard. Importing a PNG/JPG re-encodes it to the
+  texture's own GX format (I4/I8/IA4/IA8/RGB565/RGB5A3/RGBA8/CMPR) with a generated mip chain,
+  patches it into the BRRES in place, pushes it at the live renderer and exports with the track.
+  Textures can also be exported back out as PNG.
+- **Material inspector**: blend mode, cull mode, alpha test, depth write, TEV/texgen/indirect
+  stage counts, light set and fog index, plus the textures the material samples (click-through
+  both ways between materials and textures).
+- **Animations**: every SRT0/PAT0/CLR0/CHR0/VIS0 (and SCN0, listed but unplayable) with a
+  per-animation play/stop toggle and a transport that pauses and scrubs the shared animation clock
+  to an exact frame without freezing the free camera.
+- **Render toggles and presets** (`VisualRenderOverlay.tsx`): Game look / Flat / Wireframe, and
+  the individual textures / vertex colours / lighting / bloom / DOF / skybox / objects / wireframe
+  toggles behind them, greyed out when the track has no such resource.
+- **Post effects**: the existing `PostEffectsPanel` is now reachable from Visual mode, and edits to
+  `posteffect.bblm`, `posteffect.bdof` and `posteffect.blight` are re-applied to the live scene
+  without a reload (`applyEditorPostEffectFile`).
+
+**Not done, deliberately:** course fog is *editable and exported* but not *previewed*. A
+screen-space `EggDrawPathFog` was written and then removed: its render-graph pass wiped the main
+colour target to black in every mode, and rendering GX fog properly means filling the material
+`FogBlock` inside `vendor/.../rres/render.ts`, which another mode owns. The post-effects panel says
+so in the UI.
+
+Verified with `npx tsc --noEmit -p tsconfig.json` (clean), `npx vitest run` (429 passed, up from
+359 on main), `npx vite build` (ok), and a browser probe against `nintendo_1.szs`
+(`scripts/camera-ui-probe.mjs` with `scripts/probe-visual-ui.js`). Export correctness is proved by
+`src/ui/visual/visualExport.test.ts`, which replaces a texture and edits the fog table on four real
+tracks, exports the `.szs`, re-reads it and re-parses the BRRES.
+Screenshots: `docs/screenshots/visual-mode-*.png`.
+
 ### KMP mode — complete (agent J)
 
 KMP mode is now a real track-data editor rather than a property sheet bolted to a picker.
