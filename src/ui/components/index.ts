@@ -27,6 +27,7 @@ export {
   type ScrubOptions,
 } from './numberScrub';
 export { Panel, PanelBody, PanelHeader, PanelRail, PanelSection } from './Panel';
+export { REFRESH_TRACK_SHORTCUT, RefreshTrackButton, type RefreshTrackButtonProps } from './RefreshTrackButton';
 export { Popover } from './Popover';
 export { Select, type SelectOption } from './Select';
 export { SegmentedControl, type SegmentedOption } from './SegmentedControl';

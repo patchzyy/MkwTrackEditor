@@ -277,6 +277,16 @@ became a typed, presentable thing without rewriting every `setStatus` call site.
 bare grey paragraph** — every "nothing here" in the editor should say what to do next.
 `Skeleton` is the shimmer shown while a thumbnail or list resolves.
 
+### WelcomeOverlay
+
+The first-run panel over an empty viewport: what the editor is, three numbered steps and the
+buttons that start them. Rendered by `App.tsx` through the viewport's `overlay` slot.
+
+### RefreshTrackButton
+
+"Refresh track", shared by the top bar and Material mode's viewport overlay.
+`REFRESH_TRACK_SHORTCUT` is the single place its key binding is written down.
+
 ### ShortcutOverlay
 
 The `?` sheet. `EDITOR_SHORTCUTS` is the single list of the editor's key bindings; add new
@@ -317,8 +327,28 @@ rail and the resize handle, which is why every mode's left panel gets both for f
 only supplies `leftPanel` (an `<aside className="placeAssetsPanel …">`) and `inspector`.
 
 **Top bar.** Brand, the File menu, undo/redo, then the loaded track's name; the mode switch in
-the centre; dock visibility toggles, the shortcuts button and Export on the right. The status
-line used to live here and is now the bottom status bar.
+the centre; dock visibility toggles, **Refresh**, the shortcuts button and Export on the right.
+The status line used to live here and is now the bottom status bar.
+
+Each mode button carries a one-sentence tooltip saying what that mode is for, because "KMP" and
+"Visual" mean nothing to somebody opening the editor for the first time.
+
+**Refresh track** (`src/ui/components/RefreshTrackButton.tsx`, `REFRESH_TRACK_SHORTCUT` =
+`Ctrl+Alt+R` — `Ctrl+R` belongs to the browser) rebuilds the 3D viewport from the track as it is
+in memory. It is the fallback for edits the renderer cannot swap in live; `docs/MATERIALS.md`
+covers what it rebuilds and what it preserves, and `docs/viewport-api.md` §9 covers the props.
+The same component is used in the top bar with a label and inside Material mode's viewport
+overlay. It disables itself and spins while a rebuild runs.
+
+**Unsaved changes.** The track has edits that have not been exported whenever the undo stack is
+non-empty and the current document is not the one the last export wrote. That state puts an amber
+dot beside the track name and on the Export button, and an "Edits · Not exported" entry in the
+status bar. `useTrackExport`'s `downloadExport` returns whether a file was actually written, so a
+cancelled export does not clear the marker.
+
+**First run.** With no track loaded the viewport is covered by `WelcomeOverlay`: what the editor
+is, the three steps to get started, an "Open a track" button and the most recent re-openable
+track. `Ctrl+O` opens the same picker as the File menu.
 
 **File menu** (`src/ui/topbar/FileMenu.tsx`): Open track, Import Common.szs, Export, and a
 recent-tracks section. Recents are in `src/ui/topbar/recentFiles.ts` under

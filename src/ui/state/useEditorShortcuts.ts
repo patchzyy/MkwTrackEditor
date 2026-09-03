@@ -7,7 +7,10 @@ import { browserObjectTitle } from '../objects/objectCatalog';
 import type { TransformTool } from '../Noclip3DViewport';
 import type { EditorSelection } from './useSelection';
 
-/** Global editor keyboard shortcuts (undo/redo, clipboard, tools, fill between, delete, export). */
+/**
+ * Global editor keyboard shortcuts (undo/redo, clipboard, tools, fill between, delete, export,
+ * refresh). `Ctrl+Alt+R` rather than `Ctrl+R` because the browser keeps that one for itself.
+ */
 export function useEditorShortcuts({
   selection,
   selected,
@@ -24,6 +27,8 @@ export function useEditorShortcuts({
   duplicateSelectedEntity,
   deleteSelectedEntity,
   downloadExport,
+  refreshTrack,
+  openTrackPicker,
 }: {
   selection: EditorSelection;
   selected: KmpEntity | null;
@@ -40,6 +45,10 @@ export function useEditorShortcuts({
   duplicateSelectedEntity: () => void;
   deleteSelectedEntity: () => void;
   downloadExport: () => void;
+  /** Rebuilds the viewport from the edited track. */
+  refreshTrack: () => void;
+  /** Opens the "open a track" file picker, the same one the File menu uses. */
+  openTrackPicker: () => void;
 }) {
   useEffect(() => {
     const isViewportCameraLookActive = () => document.documentElement.dataset.viewportCameraLook === 'active';
@@ -50,6 +59,11 @@ export function useEditorShortcuts({
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
       const meta = event.ctrlKey || event.metaKey;
+      if (meta && event.altKey && event.key.toLowerCase() === 'r') {
+        event.preventDefault();
+        refreshTrack();
+        return;
+      }
       if (meta) {
         if (event.key.toLowerCase() === 'z') {
           event.preventDefault();
@@ -85,6 +99,11 @@ export function useEditorShortcuts({
           }
           setFillBetweenPanelOpen(true);
           setStatus(`Fill Between ready for ${browserObjectTitle({ objectId: fillBetweenSelection.objectId, name: objFlow?.byId.get(fillBetweenSelection.objectId)?.name ?? '', resources: objFlow?.byId.get(fillBetweenSelection.objectId)?.resources ?? '' })}.`);
+          return;
+        }
+        if (event.key.toLowerCase() === 'o') {
+          event.preventDefault();
+          openTrackPicker();
           return;
         }
         if (event.key.toLowerCase() === 's') {

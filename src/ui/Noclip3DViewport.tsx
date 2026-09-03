@@ -77,6 +77,13 @@ import {
   type MeshSelectionEntry,
 } from './viewport/meshSelection';
 
+/** One step of a "Refresh track" scene rebuild, reported to the shell. */
+export interface SceneReloadEvent {
+  phase: 'start' | 'done' | 'failed';
+  /** A sentence for the status bar. Never a byte count or an internal name. */
+  message: string;
+}
+
 interface Noclip3DViewportProps {
   track: TrackDocument | null;
   selectedId: string | null;
@@ -124,6 +131,19 @@ interface Noclip3DViewportProps {
    * animation methods through it; see `src/ui/visual/visualScene.ts`.
    */
   onVisualSceneChange?: (scene: VisualRendererScene | null) => void;
+  /**
+   * "Refresh track": bump this number to build the scene again from the track document as it is
+   * right now, without changing which track is loaded.
+   *
+   * Material, texture and archive edits are normally hot-swapped into the running scene, but a
+   * hot swap cannot always apply (a model the scene never loaded, a texture that changed size, a
+   * whole archive that was replaced). Rebuilding is the honest fallback: it packs the edited
+   * archives exactly as the initial load does, so whatever the user changed is on screen. The
+   * camera, the camera controller and the editor's own scene state are carried across.
+   */
+  sceneRevision?: number;
+  /** Progress of a `sceneRevision` rebuild, so the shell can show it and re-enable its button. */
+  onSceneReload?: (event: SceneReloadEvent) => void;
   fillBetweenPreviewPositions?: Vec3[];
   /**
    * A live playtest session. While it is set the viewport drives the physics runtime at a fixed
@@ -756,6 +776,8 @@ export function Noclip3DViewport({
   onTransformMesh,
   onChangeMeshGranularity,
   onVisualSceneChange,
+  sceneRevision = 0,
+  onSceneReload,
   fillBetweenPreviewPositions = [],
   playtestSession = null,
   overlay,
@@ -825,6 +847,20 @@ export function Noclip3DViewport({
   const visualSceneChangeRef = useRef(onVisualSceneChange);
   visualSceneChangeRef.current = onVisualSceneChange;
   const deliveredVisualSceneRef = useRef<(SceneGfx & VisualRendererScene) | null>(null);
+  const onSceneReloadRef = useRef(onSceneReload);
+  onSceneReloadRef.current = onSceneReload;
+  /**
+   * The scene key the current scene was built from, so the load effect can tell a "Refresh track"
+   * rebuild (same track, keep the camera) from a genuinely new track (frame it from the start).
+   * `undefined` until the first load runs.
+   */
+  const loadedSceneKeyRef = useRef<string | null | undefined>(undefined);
+  /**
+   * Incremented every time a scene finishes loading. Effects that push editor state into the
+   * renderer (mesh edits, placed objects, depth of field, the editor mode) watch it, so a rebuilt
+   * scene gets everything re-applied even though the track itself did not change.
+   */
+  const [sceneEpoch, setSceneEpoch] = useState(0);
   /** Hands the scene to Visual mode at most once per scene, from wherever it becomes available. */
   const deliverVisualScene = (scene: (SceneGfx & VisualRendererScene) | null) => {
     const notify = visualSceneChangeRef.current;
@@ -1205,8 +1241,13 @@ export function Noclip3DViewport({
     const viewer = viewerRef.current;
     const uiContainer = uiContainerRef.current;
     if (!viewerReady || !viewer || !uiContainer) return;
+    // Same track, new run: this is a "Refresh track" rebuild rather than opening a track, so the
+    // user's viewpoint is kept instead of being framed from the start line again.
+    const isRebuild = loadedSceneKeyRef.current !== undefined && loadedSceneKeyRef.current === sceneKey;
+    loadedSceneKeyRef.current = sceneKey;
     const sceneTrack = trackRef.current;
     if (!sceneTrack) {
+      if (isRebuild) onSceneReloadRef.current?.({ phase: 'failed', message: 'There is no track loaded to refresh.' });
       setStatus('Drop a Mario Kart Wii .szs track anywhere in the editor');
       viewer.setScene(null);
       deliverVisualScene(null);
@@ -1218,8 +1259,14 @@ export function Noclip3DViewport({
     const sceneUiContainer: HTMLElement = uiContainer;
     const loadingTrack: TrackDocument = sceneTrack;
     async function loadScene() {
+      // `Viewer.setScene` drops the camera controller, so a rebuild has to put the same one back
+      // together with the exact view matrix; otherwise Refresh would throw the user's viewpoint
+      // away, which is the reason the material editor never rebuilt in the first place.
+      const savedController = isRebuild ? sceneViewer.cameraController : null;
+      const savedCameraMatrix = isRebuild ? mat4.clone(sceneViewer.camera.worldMatrix) : null;
       try {
-        setStatus('Loading track in noclip Mario Kart Wii renderer...');
+        if (isRebuild) onSceneReloadRef.current?.({ phase: 'start', message: 'Rebuilding the track with your edits...' });
+        setStatus(isRebuild ? 'Rebuilding the track with your edits...' : 'Loading track in noclip Mario Kart Wii renderer...');
         sceneRef.current?.destroy(sceneViewer.gfxDevice);
         for (const item of destroyablePoolRef.current) item.destroy(sceneViewer.gfxDevice);
         destroyablePoolRef.current = [];
@@ -1240,17 +1287,39 @@ export function Noclip3DViewport({
         const scene = await createSceneFromU8Buffer(context, new ArrayBufferSlice(archiveBytes.buffer, archiveBytes.byteOffset, archiveBytes.byteLength));
         if (cancelled) {
           scene.destroy(sceneViewer.gfxDevice);
+          if (isRebuild) onSceneReloadRef.current?.({ phase: 'failed', message: 'The refresh stopped because another track started loading.' });
           return;
         }
         sceneRef.current = scene;
+        // Everything the editor had pushed into the old scene went away with it; these maps say
+        // what is applied *to the scene*, so they have to start empty or the effects below will
+        // think a placed object or a moved mesh is already there and skip re-applying it.
+        appliedMeshEditsRef.current = new Map();
+        appliedMeshCopiesRef.current = new Map();
+        importedMeshInstancesRef.current = new Map();
         sceneViewer.setScene(scene);
         (scene as SceneGfx & EditorMeshRendererScene).setEditorMode?.(modeRef.current);
         deliverVisualScene(scene as SceneGfx & VisualRendererScene);
         syncSceneOverlay(loadingTrack, selectedIdRef.current);
-        applyViewMode(loadingTrack, true);
-        setStatus(`${loadingTrack.fileName} Sigma`);
+        if (isRebuild && savedController && savedCameraMatrix) {
+          sceneViewer.setCameraController(savedController);
+          mat4.copy(sceneViewer.camera.worldMatrix, savedCameraMatrix);
+          sceneViewer.camera.worldMatrixUpdated();
+          savedController.cameraUpdateForced();
+          (scene as SceneGfx & { setEditorViewMode?: (mode: ViewMode) => void }).setEditorViewMode?.(viewModeRef.current);
+        } else {
+          applyViewMode(loadingTrack, true);
+        }
+        // Re-runs every effect that mirrors editor state into the renderer against the new scene.
+        setSceneEpoch((value) => value + 1);
+        setStatus(isRebuild ? `${loadingTrack.fileName} refreshed` : `${loadingTrack.fileName} Sigma`);
+        if (isRebuild) {
+          onSceneReloadRef.current?.({ phase: 'done', message: 'Track refreshed. The viewport is drawing the track as it would export.' });
+        }
       } catch (error) {
-        setStatus(error instanceof Error ? error.message : String(error));
+        const message = error instanceof Error ? error.message : String(error);
+        setStatus(message);
+        if (isRebuild) onSceneReloadRef.current?.({ phase: 'failed', message: `The track could not be refreshed: ${message}` });
       }
     }
 
@@ -1258,7 +1327,7 @@ export function Noclip3DViewport({
     return () => {
       cancelled = true;
     };
-  }, [sceneKey, viewerReady]);
+  }, [sceneKey, viewerReady, sceneRevision]);
 
   // Visual mode is usually switched on long after the scene finished loading, so the scene has to
   // be handed over when its callback appears rather than only at load time. `deliverVisualScene`
@@ -1357,7 +1426,7 @@ export function Noclip3DViewport({
       setEditorDOFMode?: (mode: DofMode) => void;
     } | null;
     scene?.setEditorDOFMode?.(dofMode);
-  }, [dofMode, viewerReady, sceneKey]);
+  }, [dofMode, viewerReady, sceneKey, sceneEpoch]);
 
   // Push the editor mode into the renderer and reset mode-specific state.
   useEffect(() => {
@@ -1376,7 +1445,7 @@ export function Noclip3DViewport({
       endCameraPreview(viewerRef.current, true);
     }
     syncSceneOverlay(trackRef.current, selectedIdRef.current);
-  }, [mode, viewerReady, sceneKey]);
+  }, [mode, viewerReady, sceneKey, sceneEpoch]);
 
   // Camera mode is about cameras, so it starts with the racing-line overlays (enemy/item routes,
   // checkpoints, respawns, object routes) switched off; camera markers, the routes they fly and
@@ -1425,7 +1494,7 @@ export function Noclip3DViewport({
       meshSelectionsRef.current = refreshed;
       updateMeshHighlight();
     }
-  }, [meshEdits, viewerReady, sceneKey]);
+  }, [meshEdits, viewerReady, sceneKey, sceneEpoch]);
 
   /**
    * Mirrors duplicated meshes into the renderer. A duplicate is the same geometry drawn a second
@@ -1453,7 +1522,7 @@ export function Noclip3DViewport({
       applied.set(key, entry.target);
     }
     appliedMeshCopiesRef.current = applied;
-  }, [importedMeshes, viewerReady, sceneKey]);
+  }, [importedMeshes, viewerReady, sceneKey, sceneEpoch]);
 
   /**
    * Renders the objects placed as course geometry. Each one is an extra model instance; the diff
@@ -1491,7 +1560,7 @@ export function Noclip3DViewport({
       scene.setEditorModelInstanceVisible?.(instanceId, mesh.visible);
       live.set(mesh.id, { instanceId, signature });
     }
-  }, [importedMeshes, viewerReady, sceneKey]);
+  }, [importedMeshes, viewerReady, sceneKey, sceneEpoch]);
 
   // The outliner drives the selection when the app passes one in.
   useEffect(() => {
@@ -1503,7 +1572,7 @@ export function Noclip3DViewport({
       .map((target) => makeMeshEntryFromTarget(target, describeMeshTarget(target), editsByKey.get(meshTargetKey(target))))
       .filter((entry): entry is MeshSelectionEntry => entry !== null);
     applyMeshSelection(entries, false);
-  }, [meshSelection, mode, viewerReady, sceneKey]);
+  }, [meshSelection, mode, viewerReady, sceneKey, sceneEpoch]);
 
   // `]` widens the mesh selection unit, `[` narrows it.
   useEffect(() => {
@@ -1668,7 +1737,7 @@ export function Noclip3DViewport({
     return () => {
       delete (window as unknown as { __mkwViewport?: typeof api }).__mkwViewport;
     };
-  }, [viewerReady, sceneKey]);
+  }, [viewerReady, sceneKey, sceneEpoch]);
 
   // Uncontrolled mode only: forget toggles for layers the loaded track does not have.
   useEffect(() => {

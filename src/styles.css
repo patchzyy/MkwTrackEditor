@@ -322,6 +322,21 @@ h4 {
   white-space: nowrap;
 }
 
+/* "Edited, not exported yet": a small amber dot beside the track name and on Export. */
+.topBarUnsavedDot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--warning);
+  vertical-align: middle;
+}
+
+.topBarTrackName.hasUnsavedChanges {
+  color: var(--text-secondary);
+}
+
 /* Legacy status slot: the message now lives in the bottom status bar. */
 /* ------------------------------------------------------------ docks */
 
@@ -647,6 +662,37 @@ h4 {
   line-height: 1.45;
 }
 
+/* The "Refresh track" card under a mode's viewport overlay. */
+.viewportRefreshPanel {
+  gap: var(--space-2);
+  justify-items: start;
+}
+
+.viewportRefreshPanel .uiRefreshButton {
+  width: 100%;
+  justify-content: center;
+}
+
+.viewportRefreshPanel .viewportOverlayHint {
+  font-size: var(--font-size-xs);
+}
+
+@keyframes uiRefreshSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.uiRefreshSpin {
+  animation: uiRefreshSpin 900ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .uiRefreshSpin {
+    animation-duration: 3s;
+  }
+}
+
 .viewportOverlayField {
   display: grid;
   gap: var(--space-2);
@@ -793,6 +839,124 @@ h4 {
   right: var(--space-4);
   bottom: var(--space-4);
   pointer-events: none;
+}
+
+/* ---------------------------------------------- first-run welcome panel */
+
+.uiWelcomeScrim {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  background: radial-gradient(120% 120% at 50% 0%, rgb(12 16 24 / 60%), rgb(5 7 10 / 88%));
+  pointer-events: auto;
+}
+
+.uiWelcomePanel {
+  display: grid;
+  gap: var(--space-4);
+  width: min(520px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: var(--space-6);
+  border: 1px solid var(--border-overlay);
+  border-radius: var(--radius-xl);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-3);
+  backdrop-filter: blur(14px);
+}
+
+.uiWelcomeMark {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-lg);
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
+.uiWelcomeTitle {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--font-size-lg);
+  font-weight: 650;
+}
+
+.uiWelcomeLead {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.uiWelcomeSteps {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.uiWelcomeStep {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.uiWelcomeStepIcon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  background: var(--surface-input);
+}
+
+.uiWelcomeStepText {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.uiWelcomeStepText strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.uiWelcomeStepText code {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--surface-input);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.95em;
+}
+
+.uiWelcomeActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.uiWelcomeHint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+}
+
+.uiWelcomeHint kbd {
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-input);
 }
 
 .marqueeSelection {

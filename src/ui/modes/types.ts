@@ -46,6 +46,14 @@ export interface EditorModeContext {
   tool: TransformTool;
   viewMode: ViewMode;
   setEditorMode: (mode: EditorModeStub) => void;
+  /**
+   * "Refresh track": rebuilds the viewport from the track as it is now. Modes that edit archive
+   * bytes (materials, textures) offer it where the edit happens, because a live hot swap cannot
+   * always apply. Does nothing while a rebuild is already running or no track is loaded.
+   */
+  refreshScene: () => void;
+  /** True while a `refreshScene` rebuild is in flight, so buttons can disable themselves. */
+  sceneRefreshing: boolean;
 }
 
 /**

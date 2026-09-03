@@ -338,3 +338,37 @@ dedupes them, so discarding the old material objects leaks nothing.
 `MaterialRendererScene` in `src/ui/material/materialScene.ts` declares `reloadEditorMaterial` and
 `addEditorTexture` structurally on top of `VisualRendererScene`, so `src/ui` still imports no
 vendored types. Material mode reuses `onVisualSceneChange` to get hold of the scene.
+
+## 9. Rebuilding the scene from the edited track (`sceneRevision`)
+
+Two additive props on `Noclip3DViewport` implement the **Refresh track** button:
+
+```ts
+sceneRevision?: number;                              // bump to rebuild the scene
+onSceneReload?: (event: SceneReloadEvent) => void;   // { phase: 'start'|'done'|'failed', message }
+```
+
+The scene-load effect's dependency list is `[sceneKey, viewerReady, sceneRevision]`. It rebuilds
+from `buildU8(track.archiveEntries)` — the same bytes the initial load uses and the same bytes
+Export packs — so every archive the editor rewrote is in the scene. When the scene key is the one
+the current scene was already built from, the run is treated as a *rebuild* rather than a new
+track:
+
+- the camera controller and `viewer.camera.worldMatrix` are saved and restored around
+  `Viewer.setScene`, which drops the controller, so the viewpoint (and the orthographic modes'
+  orbit) survive;
+- `applyViewMode(track, true)` is skipped — it would frame the track from the start line again —
+  and only `setEditorViewMode` is re-applied;
+- `onSceneReload` reports `start` / `done` / `failed`, so the shell can show progress and
+  re-enable its button.
+
+Either way the viewport bumps an internal `sceneEpoch`, which is in the dependency list of every
+effect that mirrors editor state into the renderer (mesh transforms, mesh copies, placed model
+instances, depth of field, the editor mode, the dev hook). The three "what is applied to the
+scene" maps — `appliedMeshEditsRef`, `appliedMeshCopiesRef`, `importedMeshInstancesRef` — are
+cleared whenever a new scene is set, because their contents belonged to the scene that was just
+destroyed. `deliverVisualScene` hands the new scene to Visual and Material mode, which re-apply
+their render toggles, hidden models, post-effect files and animation state.
+
+The one thing a rebuild does not preserve is the scene's animation clock: a scene is created with
+`initialSceneTime: 0`.

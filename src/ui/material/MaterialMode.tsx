@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { replaceArchiveFile, type TrackDocument } from '../../lib/track';
 import type { CompiledShader, GxArchiveMaterials, GxMaterialDoc, GxMaterialRef } from '../../lib/gxMaterial';
-import { useToast } from '../components';
+import { REFRESH_TRACK_SHORTCUT, RefreshTrackButton, useToast } from '../components';
 import type { EditorModeContext, ModeUi } from '../modes/types';
 import { MaterialInspector } from './MaterialInspector';
 import { MaterialOutliner } from './MaterialOutliner';
@@ -35,6 +35,17 @@ import './material.css';
 const COMPILE_DEBOUNCE_MS = 50;
 /** Undo steps kept per material's graph. */
 const GRAPH_HISTORY_LIMIT = 64;
+/**
+ * What the status line says when an edit is saved into the track but the running viewport could
+ * not be updated in place — the model is not one the scene draws, or the archive changed too much
+ * to patch. The edit is not lost; the picture just needs a rebuild.
+ */
+const HOT_SWAP_FAILED_HINT = `The viewport cannot show this one live, so press Refresh (${REFRESH_TRACK_SHORTCUT}) to rebuild it.`;
+
+/** The file name of an archive, for a sentence that should not read like a path. */
+function archiveFileName(path: string): string {
+  return path.split('/').pop() ?? path;
+}
 
 export type MaterialDockTab = 'graph' | 'stages';
 
@@ -50,7 +61,7 @@ export type MaterialDockTab = 'graph' | 'stages';
  */
 export function useMaterialMode(ctx: EditorModeContext): ModeUi {
   const active = ctx.editorMode === 'material';
-  const { track, history, selection, setStatus } = ctx;
+  const { track, history, selection, setStatus, refreshScene, sceneRefreshing } = ctx;
   const toast = useToast();
 
   const sceneRef = useRef<MaterialRendererScene | null>(null);
@@ -95,6 +106,12 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
    * stages — otherwise merely selecting a material would rewrite it.
    */
   const editedGraphsRef = useRef(new Set<string>());
+  /**
+   * The sentence the next automatic "compiled graph becomes the stages" write should use. Set by
+   * the actions that change the graph and the material together, so the generic line does not
+   * replace theirs.
+   */
+  const pendingGraphStatusRef = useRef<string | null>(null);
 
   const archiveEntries = useMemo(() => listMaterialArchives(track), [track]);
   const selectedKey = selectedRef ? materialRefKey(selectedRef) : null;
@@ -144,12 +161,17 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
         next[path] = library.listArchiveMaterials(path, bytes);
         pinnedBytesRef.current.set(path, bytes);
       } catch (error) {
-        setStatus(`${path} could not be read: ${error instanceof Error ? error.message : String(error)}`);
+        setStatus(`The ${archiveFileName(path)} archive could not be read, so its materials are not listed.`);
+        toast.showToast({
+          tone: 'warning',
+          title: `${archiveFileName(path)} could not be read`,
+          detail: error instanceof Error ? error.message : String(error),
+        });
         next[path] = { archivePath: path, models: [], textures: [] };
       }
     }
     if (Object.keys(next).length > 0) setArchives((current) => ({ ...current, ...next }));
-  }, [active, archives, expanded, library, setStatus, track]);
+  }, [active, archives, expanded, library, setStatus, toast, track]);
 
   const tree = useMemo(
     () => buildMaterialTree(archiveEntries, new Map(Object.entries(archives)), query),
@@ -167,7 +189,7 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
       try {
         return library.decodeMaterial(bytes, ref.modelName, ref.materialName);
       } catch (error) {
-        setStatus(`${ref.materialName} could not be read: ${error instanceof Error ? error.message : String(error)}`);
+        setStatus(`${ref.materialName} could not be read, so it cannot be edited.`);
         return null;
       }
     },
@@ -275,9 +297,14 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
         );
         surfaceWarnings(result.warnings);
         const live = pushToRenderer(ref, result.brres);
-        if (options.status) setStatus(live ? options.status : `${options.status} The viewport keeps the old look until the track is reloaded.`);
+        if (options.status) setStatus(live ? options.status : `${options.status} ${HOT_SWAP_FAILED_HINT}`);
       } catch (error) {
-        setStatus(`${ref.materialName} could not be written: ${error instanceof Error ? error.message : String(error)}`);
+        setStatus(`${ref.materialName} could not be saved into the track, so nothing was changed.`);
+        toast.showToast({
+          tone: 'error',
+          title: `${ref.materialName} could not be saved`,
+          detail: error instanceof Error ? error.message : String(error),
+        });
       }
     },
     [docs, history, library, pushToRenderer, selectedRef, selection, setStatus, surfaceWarnings, track],
@@ -328,7 +355,7 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
       }
       graphHistoryRef.current.set(key, entry);
       setGraphs((currentGraphs) => ({ ...currentGraphs, [key]: snapshot }));
-      setStatus(direction === 'undo' ? 'Undid the last shader-graph change.' : 'Redid the last shader-graph change.');
+      setStatus(direction === 'undo' ? 'Undid the last change to the shader graph.' : 'Redid the last change to the shader graph.');
     },
     [graphs, selectedRef, setStatus],
   );
@@ -343,7 +370,11 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
     if (!doc || !compiled || !compiled.ok) return;
     const next = { ...doc, tevStages: compiled.tevStages.map((stage) => ({ ...stage })) };
     if (materialDocEquals(next, doc)) return;
-    updateDoc(next, { status: `Rebuilt ${doc.name} from the shader graph.` });
+    // A preset changes the graph and the material in one action, so the write the compiler
+    // triggers a moment later has to keep the preset's own sentence instead of the generic one.
+    const status = pendingGraphStatusRef.current ?? `Updated ${doc.name} to match the shader graph.`;
+    pendingGraphStatusRef.current = null;
+    updateDoc(next, { status });
   }, [compiled, doc, updateDoc]);
 
   // Writing the compiled stages back is what makes the graph the thing that draws. It only runs
@@ -374,7 +405,7 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
     // A re-decompile is a view of the stages the material already has, not a new shader, so it
     // does not count as an edit and must not write the compiler's round trip back over them.
     setGraph(autoLayout(library.decompileShader(doc)), { edited: false });
-    setStatus(`Rebuilt the graph from ${doc.name}'s ${doc.tevStages.length} stages.`);
+    setStatus(`Rebuilt the graph from ${doc.name} as it is now.`);
   }, [doc, library, setGraph, setStatus]);
 
   const applyPreset = useCallback(
@@ -382,6 +413,7 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
       if (!library || !doc) return;
       const preset = library.SHADER_GRAPH_PRESETS.find((entry) => entry.id === presetId);
       if (!preset) return;
+      pendingGraphStatusRef.current = `Applied the "${preset.title}" shader.`;
       setGraph(preset.graph);
 
       // A preset can need more than a graph: extra layers to sample, and — for the lit ones —
@@ -456,7 +488,7 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
   const selectMaterial = useCallback(
     (ref: GxMaterialRef | null) => {
       setSelectedRef(ref);
-      if (ref) setStatus(`Selected ${ref.materialName} in ${ref.modelName}.`);
+      if (ref) setStatus(`Selected ${ref.materialName}.`);
     },
     [setStatus],
   );
@@ -487,7 +519,7 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
       if (next === bytes) {
         surfaceWarnings(['The texture writer is not wired up yet, so an imported texture previews in the viewport but is not stored in the archive.']);
       }
-      setStatus(live ? `Imported ${options.name}.` : `Imported ${options.name}. The viewport shows it after the track is reloaded.`);
+      setStatus(live ? `Imported ${options.name}.` : `Imported ${options.name}. ${HOT_SWAP_FAILED_HINT}`);
       return true;
     },
     [history, library, selectedRef, selection, setStatus, surfaceWarnings, track],
@@ -536,13 +568,23 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
       />
     ),
     topRightOverlay: (
-      <MaterialViewOverlay
-        materialRef={selectedRef}
-        meshCount={selectedMeshes.length}
-        solo={solo}
-        onToggleSolo={() => setSolo((value) => !value)}
-        onFrame={frameSelection}
-      />
+      <>
+        <MaterialViewOverlay
+          materialRef={selectedRef}
+          meshCount={selectedMeshes.length}
+          solo={solo}
+          onToggleSolo={() => setSolo((value) => !value)}
+          onFrame={frameSelection}
+        />
+        <div className="viewportOverlayPanel viewportRefreshPanel">
+          <RefreshTrackButton onRefresh={refreshScene} refreshing={sceneRefreshing} hasTrack={track !== null} />
+          <p className="viewportOverlayHint">
+            {sceneRefreshing
+              ? 'Building the track again with your edits...'
+              : 'Rebuilds the track so every edited material and texture is on screen.'}
+          </p>
+        </div>
+      </>
     ),
     bottomDock: (dock) => (
       <ShaderGraphDock

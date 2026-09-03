@@ -558,14 +558,54 @@ which can only replace pixels at the same size and format.
 - It covers every `MDL0ModelInstance` the scene draws — course models, the skybox, imported
   models, object previews — because it walks `baseObjects` through `getModelInstances`, the same
   walk the fog and lighting toggles use.
-- It returns `false`, and the status line says the viewport keeps the old look until the track is
-  reloaded, when the scene has not loaded that archive (`map_model.brres` is never rendered), when
-  the model or material name is not in the edited bytes, or when the bytes do not parse.
-- It does **not** fall back to a scene rebuild. A `sceneKey` bump would be a second, much slower
-  path for the same job and would throw away the camera; a `false` return and an honest status
-  line is better.
+- It returns `false` when the scene has not loaded that archive (`map_model.brres` is never
+  rendered), when the model or material name is not in the edited bytes, or when the bytes do not
+  parse. The edit is still written into the track; only the picture is behind. The status line
+  says exactly that and names the way out: *"… The viewport cannot show this one live, so press
+  Refresh (Ctrl+Alt+R) to rebuild it."*
+- It does not itself fall back to a scene rebuild, because a rebuild is much slower and should be
+  the user's decision rather than a hidden cost of moving a slider. **Refresh track** below is
+  that fallback, made explicit.
 - The `Solo` toggle and the mesh highlight use the per-draw visibility overrides Model mode
   introduced (`setEditorMeshVisible` / `setEditorMeshHighlight`). Leaving the mode clears both.
+
+### Refresh track
+
+The button that always works. It is in the top bar (so it is reachable from every mode), under the
+material overlay in the viewport, and on `Ctrl+Alt+R` — `Ctrl+R` belongs to the browser.
+
+It rebuilds the noclip scene from the **track document as it is in memory**: the same
+`buildU8(track.archiveEntries)` the initial load uses, so every archive the editor has rewritten —
+a material, an imported texture, a replaced `posteffect` file, an edited `course.kmp` — is in the
+bytes the renderer parses. It is the picture of what Export would write, not of the file on disk.
+
+The wiring is a `sceneRevision` prop on `Noclip3DViewport` plus an `onSceneReload` callback:
+
+```
+App:      refreshTrack()  ->  sceneRevision + 1, status "Rebuilding the track with your edits..."
+Viewport: scene-load effect re-runs, notices the scene key did not change -> rebuild, not reopen
+App:      onSceneReload({ phase: 'done' })  ->  status "Track refreshed.", button re-enabled
+```
+
+**What survives the rebuild.** `Viewer.setScene` drops the camera controller, so the rebuild saves
+it together with the camera's world matrix and puts both back — the viewpoint, and for the
+orthographic view modes the orbit, are exactly where they were. The editor mode, the selection, the
+material highlight, the `Solo` state, the visibility layers, the render toggles and the enabled
+animations all come back because they live in React state and are re-applied to the new scene:
+`deliverVisualScene` hands it to Visual and Material mode, and a new `sceneEpoch` re-runs the
+effects that mirror mesh edits, placed objects, depth of field and the editor mode into the
+renderer. The undo history is untouched — Refresh never edits the track — so `Ctrl+Z` after a
+refresh undoes the material edit, not the refresh.
+
+**What does not.** The scene's animation clock restarts at frame 0, because a scene is created with
+`initialSceneTime: 0`. Anything mid-animation (a texture SRT, the water) jumps back to its start.
+
+Measured on `Z0.szs` by `scripts/probe-refresh-track.js` (see "Tests and the browser probe"):
+two rebuilds of the same document produce frames that differ by 0.02/255 mean (0.01% of pixels),
+so the rebuild is deterministic; a rebuild with one material's culling set to *Draw nothing*
+differs from a clean rebuild in 5–6% of pixels (how much depends on how much of that material the
+starting view shows), and matches the live hot-swapped frame to within 0.03/255. The camera ray
+through the same screen point is bit-identical before and after.
 
 ![A constant colour edited live](screenshots/material-10-constant-colour.png)
 
@@ -584,6 +624,21 @@ Pure logic is unit tested with no DOM (`npm test`):
 | `src/ui/material/materialOutlinerModel.test.ts` | Archive naming and ordering, the tree, the search, the shared-shader badge, reference keys. |
 | `src/ui/material/graphStore.test.ts` | The stage hash and both storage keys. |
 | `src/ui/material/MaterialInspector.test.tsx` | The inspector, the outliner, the dock's tab state and the stage table, rendered with `renderToStaticMarkup`; includes the assertion that no raw GX enum identifier reaches the user. |
+
+`scripts/probe-refresh-track.js` covers Refresh on its own: it rebuilds twice to measure the noise
+floor, edits a material, rebuilds again and compares the frames, checks the camera ray, the mode,
+the selection and the mesh highlight are unchanged, that `Ctrl+Z` still undoes the edit afterwards,
+that the keyboard shortcut disables the button while it runs, and that editing a material in
+`map_model.brres` — which the scene never draws — produces the "press Refresh" status line.
+
+```bash
+PROBE_PREFIX=refresh PROBE_PORT=9355 PROBE_SIZE=1600x1000 node scripts/ui-shell-probe.mjs \
+  "http://127.0.0.1:5183/?track=/dev-tracks/Z0.szs" scripts/probe-refresh-track.js
+```
+
+![Material mode with Refresh under the material overlay](screenshots/refresh-01-material-mode.png)
+
+![The same view after Refresh, with the edited material](screenshots/refresh-02-after-refresh.png)
 
 The end-to-end walkthrough is `scripts/probe-material-ui.js`, driven by `scripts/ui-shell-probe.mjs`
 against a real Edge window:
@@ -606,5 +661,5 @@ document.
 A run on `Z0.szs` at the time of writing: 40 materials in 11 archives, 35 of them sharing a shader
 block; the selected material decompiles to 13 nodes and 22 wires including one raw stage, compiles
 back to its own 3 stages, and its `Draw nothing` culling edit reaches the viewport through
-`reloadEditorMaterial` (the status line says nothing about reloading the track) and comes back on
-`Ctrl+Z`.
+`reloadEditorMaterial` (the status line says nothing about refreshing, because it did not have to)
+and comes back on `Ctrl+Z`.
