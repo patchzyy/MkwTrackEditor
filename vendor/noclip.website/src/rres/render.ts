@@ -140,6 +140,10 @@ export class MDL0Model {
     public shapeData: ShapeData[] = [];
     public materialData: MaterialData[] = [];
     private bufferCoalescer: GfxBufferCoalescerCombo;
+    // Editor extension: remembered so a material replaced later can be re-bound to the same
+    // texture source the model was originally loaded against.
+    private boundResFile: ResFileData | null = null;
+    private boundTextureHolder: GXTextureHolder | null = null;
 
     constructor(device: GfxDevice, cache: GfxRenderCache, public mdl0: BRRES.MDL0, private materialHacks?: GX_Material.GXMaterialHacks) {
         this.bufferCoalescer = loadedDataCoalescerComboGfx(device, this.mdl0.shapes.map((shape) => shape.loadedVertexData));
@@ -157,13 +161,38 @@ export class MDL0Model {
     }
 
     public bindResFile(resFile: ResFileData): void {
+        this.boundResFile = resFile;
         for (let i = 0; i < this.materialData.length; i++)
             this.materialData[i].bindResFile(resFile);
     }
 
     public bindTextureHolder(textureHolder: GXTextureHolder): void {
+        this.boundTextureHolder = textureHolder;
         for (let i = 0; i < this.materialData.length; i++)
             this.materialData[i].bindTextureHolder(textureHolder);
+    }
+
+    /**
+     * Editor extension: swaps one material's uploaded state for a freshly parsed MDL0 material
+     * entry, without touching the vertex buffers or the rest of the model.
+     *
+     * Only the `MaterialData` is replaced here — the per-instance `MaterialInstance`s that already
+     * reference the old one keep their copy of the old `GXMaterial` until
+     * `MDL0ModelInstance.replaceMaterial` is called for the same index. Samplers and programs come
+     * from the shared `GfxRenderCache`, which owns and dedupes them, so the discarded
+     * `MaterialData` needs no destroy.
+     */
+    public replaceMaterial(device: GfxDevice, cache: GfxRenderCache, index: number, entry: BRRES.MDL0_MaterialEntry): boolean {
+        if (index < 0 || index >= this.materialData.length)
+            return false;
+        const materialData = new MaterialData(cache, entry, this.materialHacks);
+        if (this.boundResFile !== null)
+            materialData.bindResFile(this.boundResFile);
+        if (this.boundTextureHolder !== null)
+            materialData.bindTextureHolder(this.boundTextureHolder);
+        this.materialData[index] = materialData;
+        this.mdl0.materials[index] = entry;
+        return true;
     }
 
     public destroy(device: GfxDevice): void {
@@ -438,9 +467,16 @@ class MaterialInstance {
     private clr0Animators: (BRRES.CLR0ColorAnimator | null)[] = [];
     public materialHelper: GXMaterialHelperGfx;
     public sortKey: number = 0;
+    /** Editor extension: the last layer `setSortKeyLayer` was given, before the translucent bit. */
+    public sortKeyLayer: number = GfxRendererLayer.OPAQUE;
     public visible = true;
     public usesSkinning = false;
     private fogSettings: RRESFogSettings | null = null;
+
+    /** Editor extension: the fog this instance was last given, so a replacement can inherit it. */
+    public getFogSettings(): RRESFogSettings | null {
+        return this.fogSettings;
+    }
 
     constructor(private modelInstance: MDL0ModelInstance, public materialData: MaterialData) {
         const material = this.materialData.material;
@@ -477,6 +513,8 @@ class MaterialInstance {
     }
 
     public setSortKeyLayer(layer: number): void {
+        // Editor extension: remembered so a replacement instance can be put on the same layer.
+        this.sortKeyLayer = layer;
         if (this.materialData.material.translucent)
             layer |= GfxRendererLayer.TRANSLUCENT;
         this.sortKey = makeSortKey(layer);
@@ -826,6 +864,8 @@ function getRequiredViewMatrixCount(mdl0: BRRES.MDL0): number {
 export class MDL0ModelInstance {
     public shapeInstances: ShapeInstance[] = [];
     public materialInstances: MaterialInstance[] = [];
+    /** Editor extension: the MDL0 material index behind `materialInstances[i]`. */
+    public materialInstanceMatIds: number[] = [];
 
     private chr0NodeAnimator: BRRES.CHR0NodesAnimator | null = null;
     private vis0NodeAnimator: BRRES.VIS0NodesAnimator | null = null;
@@ -867,6 +907,49 @@ export class MDL0ModelInstance {
     public setSortKeyLayer(layer: number): void {
         for (let i = 0; i < this.materialInstances.length; i++)
             this.materialInstances[i].setSortKeyLayer(layer);
+    }
+
+    /**
+     * Editor extension: rebuilds the `MaterialInstance`s for one MDL0 material index against
+     * whatever `MDL0Model.replaceMaterial` most recently uploaded, and repoints the shapes that
+     * drew with the old one.
+     *
+     * A `MaterialInstance` copies the material's `GXMaterial` at construction, so editing the MDL0
+     * entry alone changes nothing on screen — the instance has to be rebuilt. Everything the
+     * instance carries that is not derived from the material (draw layer, visibility, skinning,
+     * fog) is copied across; animations are re-bound by the caller, because the SRT0/PAT0/CLR0
+     * animators live on the instance and only the scene knows which ones are enabled.
+     *
+     * Returns the number of instances that were replaced.
+     */
+    public replaceMaterial(index: number): number {
+        const materialData = this.mdl0Model.materialData[index];
+        if (materialData === undefined)
+            return 0;
+        let replaced = 0;
+        for (let i = 0; i < this.materialInstances.length; i++) {
+            if (this.materialInstanceMatIds[i] !== index)
+                continue;
+            const previous = this.materialInstances[i];
+            if (previous.materialData === materialData)
+                continue;
+            const next = new MaterialInstance(this, materialData);
+            next.visible = previous.visible;
+            next.setSortKeyLayer(previous.sortKeyLayer);
+            for (let j = 0; j < this.shapeInstances.length; j++) {
+                const shapeInstance = this.shapeInstances[j];
+                if (shapeInstance.materialInstance !== previous)
+                    continue;
+                shapeInstance.materialInstance = next;
+                next.setUsesSkinning(shapeInstance.shape.mtxIdx < 0);
+            }
+            const fog = previous.getFogSettings();
+            if (fog !== null)
+                next.setFogSettings(materialData.material.fogIdx >= 0 ? fog : null);
+            this.materialInstances[i] = next;
+            replaced++;
+        }
+        return replaced;
     }
 
     public setVertexColorsEnabled(v: boolean): void {
@@ -1093,6 +1176,9 @@ export class MDL0ModelInstance {
             const materialData = this.mdl0Model.materialData[op.matId];
             const materialInstance = new MaterialInstance(this, materialData);
             this.materialInstances.push(materialInstance);
+            // Editor extension: `materialInstances` is per draw op, not per material, so the MDL0
+            // material index each one came from is recorded for `replaceMaterial`.
+            this.materialInstanceMatIds.push(op.matId);
 
             const node = mdl0.nodes[op.nodeId];
             const shape = this.mdl0Model.mdl0.shapes[op.shpId];

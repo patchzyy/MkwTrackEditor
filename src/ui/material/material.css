@@ -1,0 +1,899 @@
+/*
+ * Material mode: the archive/model/material outliner, the material inspector, and the shader
+ * graph dock with its node editor.
+ *
+ * Tokens only — every colour and size comes from `:root` in `src/styles.css` (see `docs/UI.md`).
+ * The two node-type accents below are the one exception: they are derived from the existing
+ * accent/axis tokens so a node's category is readable at a glance without inventing new hues.
+ */
+
+.materialPanel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.materialPanelBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* ---------------------------------------------------------------- outliner */
+
+.materialSearch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  height: var(--control-height-sm);
+  background: var(--surface-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+
+.materialSearch input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  outline: none;
+}
+
+.materialArchive {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.materialArchiveHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--control-height-sm);
+  padding: 0 var(--space-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.materialArchiveHeader:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.materialArchiveName {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.materialArchiveCount {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.materialModel {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: var(--space-3);
+}
+
+.materialModelHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.materialRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.materialRow:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.materialRow.selected {
+  background: var(--selection);
+  border-color: var(--selection-border);
+  color: var(--text);
+}
+
+.materialRowMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.materialRowMain strong {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.materialRowMeta {
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.materialRowTags {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.materialTag {
+  padding: 0 var(--space-2);
+  background: var(--surface-4);
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.materialTag.shared {
+  background: var(--warning-soft);
+  color: var(--warning-text);
+}
+
+.materialTag.stages,
+.materialTag.meshes {
+  font-variant-numeric: tabular-nums;
+}
+
+.materialTag.meshes {
+  background: var(--surface-3);
+  color: var(--text-dim);
+}
+
+.materialEmpty,
+.materialNote {
+  margin: 0;
+  padding: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+
+.materialNote {
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+
+.materialNote.error {
+  background: var(--danger-soft);
+  color: var(--danger-text);
+}
+
+/* ---------------------------------------------------------------- inspector */
+
+.materialInspector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.materialInspectorHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+
+.materialInspectorHeader strong {
+  font-size: var(--font-size-md);
+}
+
+.materialInspectorHeader span {
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+}
+
+.materialTextInput {
+  width: 100%;
+  height: var(--control-height-sm);
+  padding: 0 var(--space-2);
+  background: var(--surface-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.materialLayers,
+.materialChannels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.materialLayerCard,
+.materialChannelCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.materialLayerCard.isDragTarget {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.materialLayerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.materialLayerIndex {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.materialLayerActions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.materialLayerTop {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.materialLayerTopFields {
+  flex: 1;
+  min-width: 0;
+}
+
+.materialLayerFacts {
+  margin: var(--space-1) 0 0;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+}
+
+.materialLayerImport {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.materialLayerImportRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.materialLayerHint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+}
+
+.materialFileInput {
+  display: none;
+}
+
+.materialLightMask,
+.materialSwapRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+/* A swap table is four one-digit channel indices; without this the full-width number fields
+   stack into four rows instead of sitting side by side. */
+.materialSwapRow > * {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.materialMatrixGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-1);
+}
+
+.materialIndStage,
+.materialIndMatrix {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+
+/* ---------------------------------------------------------------- viewport overlay */
+
+.materialOverlayPanel {
+  min-width: 190px;
+}
+
+.materialOverlayName {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.materialOverlayMeta {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.materialOverlayActions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.materialInlineButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-height-sm);
+  padding: 0 var(--space-2);
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.materialInlineButton:hover:not(:disabled) {
+  background: var(--surface-4);
+  color: var(--text);
+}
+
+.materialInlineButton.active {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+}
+
+.materialInlineButton:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------------- shader dock */
+
+.materialDock {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.materialDockHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.materialDockTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.materialDockTitle h2 {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.materialDockTools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 1;
+  min-width: 0;
+}
+
+.materialDockStatus {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.materialDockStatusText {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  max-width: 44ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.materialDockStatusText.error {
+  color: var(--danger-text);
+}
+
+.materialDockStatusIcon {
+  color: var(--danger-text);
+}
+
+.materialDockBody {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ---------------------------------------------------------------- stages table */
+
+.materialStagesScroll {
+  height: 100%;
+  overflow: auto;
+}
+
+.materialStagesTable {
+  border-collapse: collapse;
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.materialStagesTable th,
+.materialStagesTable td {
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+  color: var(--text-secondary);
+}
+
+.materialStagesTable thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-weight: 600;
+  z-index: 1;
+}
+
+.materialStagesTable tbody tr:hover td,
+.materialStagesTable tbody tr:hover th {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.materialStagesTable .materialStagesGroup {
+  border-left: 1px solid var(--border);
+}
+
+/* ---------------------------------------------------------------- node editor */
+
+.graphSurface {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0) 0 0 / 24px 24px,
+    var(--surface-0);
+  outline: none;
+  touch-action: none;
+  cursor: default;
+}
+
+.graphSurface:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--focus-ring-color);
+}
+
+.graphViewport {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
+.graphWires {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.graphWire {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 2;
+}
+
+.graphWire.selected {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+.graphWire.invalid {
+  stroke: var(--danger);
+  stroke-dasharray: 5 4;
+}
+
+.graphWire.dragging {
+  stroke: var(--accent);
+  stroke-dasharray: 5 4;
+}
+
+.graphMarquee {
+  position: absolute;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+}
+
+.graphNode {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: grab;
+  user-select: none;
+}
+
+.graphNode.selected {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-2);
+}
+
+.graphNode.shake {
+  animation: graphShake 0.32s var(--ease);
+}
+
+@keyframes graphShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-5px); }
+  50% { transform: translateX(5px); }
+  80% { transform: translateX(-3px); }
+}
+
+.graphNodeHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  height: 24px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-3);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.graphNode--source .graphNodeHeader { background: color-mix(in srgb, var(--axis-z) 26%, var(--surface-3)); }
+.graphNode--math .graphNodeHeader { background: color-mix(in srgb, var(--axis-y) 22%, var(--surface-3)); }
+.graphNode--output .graphNodeHeader { background: color-mix(in srgb, var(--axis-x) 26%, var(--surface-3)); }
+.graphNode--note .graphNodeHeader { background: var(--surface-3); }
+
+.graphNodeTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graphNodeBadge {
+  display: inline-flex;
+  align-items: center;
+  color: var(--warning-text);
+}
+
+.graphNodeBadge.error {
+  color: var(--danger-text);
+}
+
+.graphSocket {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 10px;
+  cursor: crosshair;
+}
+
+.graphSocket--in {
+  left: -5px;
+  flex-direction: row;
+}
+
+.graphSocket--out {
+  right: -5px;
+  flex-direction: row;
+}
+
+.graphSocket i {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid var(--surface-0);
+  background: var(--axis-z);
+}
+
+.graphSocket--alpha i {
+  background: var(--text-muted);
+}
+
+.graphSocket label {
+  color: var(--text-dim);
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.graphNodeBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  cursor: default;
+}
+
+.graphNodeBody .visualCheckerboard {
+  width: 100%;
+  height: 52px;
+}
+
+.graphNodeColorRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.graphNodeLabel {
+  margin: 0;
+  padding: 0 var(--space-2) var(--space-2);
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.graphSegmented {
+  display: flex;
+  gap: 1px;
+}
+
+.graphSegmented button {
+  flex: 1;
+  height: 20px;
+  background: var(--surface-input);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.graphSegmented button.active {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+}
+
+.graphRawStage {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.graphRawStage div {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.graphRawStage dt {
+  color: var(--text-dim);
+  min-width: 46px;
+}
+
+.graphRawStage dd {
+  margin: 0;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graphComment {
+  background: var(--surface-1);
+  border-style: dashed;
+}
+
+.graphCommentText {
+  flex: 1;
+  width: 100%;
+  padding: var(--space-2);
+  background: none;
+  border: none;
+  resize: none;
+  color: var(--text-muted);
+  font-family: var(--font-family);
+  font-size: var(--font-size-xs);
+  outline: none;
+}
+
+.graphCommentResize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, var(--border-strong) 50%);
+}
+
+.graphZoom {
+  position: absolute;
+  right: var(--space-3);
+  bottom: var(--space-2);
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.graphReject {
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-4);
+  transform: translateX(-50%);
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-pill);
+  color: var(--danger-text);
+  font-size: var(--font-size-xs);
+}
+
+.graphPalette {
+  position: absolute;
+  width: 260px;
+  max-height: 280px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-menu);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+  overflow: hidden;
+  z-index: 3;
+}
+
+.graphPaletteSearch {
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  background: var(--surface-input);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  outline: none;
+}
+
+.graphPaletteList {
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  overflow-y: auto;
+}
+
+.graphPaletteList button {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  padding: var(--space-2);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.graphPaletteList button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.graphPaletteList strong {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.graphPaletteList span {
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+}
+
+.graphPaletteEmpty {
+  padding: var(--space-3);
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+}
+
+.materialIssues {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--warning-soft);
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-sm);
+  color: var(--warning-text);
+}
+
+.materialIssues ul {
+  margin: 0;
+  padding-left: var(--space-4);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}

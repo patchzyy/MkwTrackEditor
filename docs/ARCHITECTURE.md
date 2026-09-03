@@ -11,7 +11,7 @@ geometry helpers in `src/lib/meshPick.ts` rather than duplicating them in the ve
 
 Companion documents: `docs/viewport-api.md` (the app ↔ viewport ↔ renderer contract),
 `docs/UI.md` (the design system and panel shell), `docs/PLAYTEST.md` (the in-browser playtest),
-`docs/WORKPLAN.md` (the shared brief).
+`docs/MATERIALS.md` (the material and shader editor), `docs/WORKPLAN.md` (the shared brief).
 
 ## Shell
 
@@ -27,10 +27,12 @@ Companion documents: `docs/viewport-api.md` (the app ↔ viewport ↔ renderer c
 can support drag-to-scrub. Anything that looks for numeric fields (the UI probes, for instance) has
 to match that role as well as `input[type=number]`.
 
-## Editor modes (`src/ui/{kmp,camera,model,visual}/`)
+## Editor modes (`src/ui/{kmp,camera,model,visual,material}/`)
 
 Each mode is a hook that returns a `ModeUi` (`src/ui/modes/types.ts`); `App.tsx` composes them and
-renders whichever one is active. A mode owns its own outliner, inspector and viewport overlay.
+renders whichever one is active. A mode owns its own outliner, inspector and viewport overlay, and
+may also take over the bottom dock (`ModeUi.bottomDock`, which Material mode uses for the shader
+graph in place of the content browser).
 
 | Directory | Mode |
 | --- | --- |
@@ -38,6 +40,7 @@ renders whichever one is active. A mode owns its own outliner, inspector and vie
 | `src/ui/camera/` | CAME editing: `CameraOutliner`, `CameraInspector` + `CameraFields` + `cameraFieldMeta.ts` (friendly labels), `ChainEditor` (opening and character-select pans), `CameraPlaybackControls`, `cameraDocument.ts`. |
 | `src/ui/model/` | Geometry: `ModelOutliner`, `ModelInspector`, `PlaceObjectPanel`, `useModelEditing.ts`. Selection is per-mesh and is baked into `course_model.brres` on export. |
 | `src/ui/visual/` | The track's look: `VisualOutliner` (archive/material/texture/animation browser), `VisualInspector`, `TextureInspector` + `TexturePreview`, `VisualRenderOverlay` (render presets), `visualArchive.ts`, `textureReplace.ts`, `visualScene.ts`, `useVisualArchive.ts`. |
+| `src/ui/material/` | One material at a time: `MaterialOutliner`, `MaterialInspector` + `sections/`, `ShaderGraphDock` (Graph / Stages), `GraphEditor` + `GraphNodeCard` + `graphModel.ts` (the node editor and its pure model), `StagesTable`, `graphStore.ts` (IndexedDB), `materialDoc.ts`, `materialOutlinerModel.ts`, `gxOptions.ts`, `materialScene.ts`. Documented in `docs/MATERIALS.md`. |
 
 ## Playtest (`src/ui/playtest/`, `src/lib/playtest/`)
 
@@ -172,6 +175,7 @@ given. Nothing outside the smoke path reads any of the `smoke*` parameters.
 | `brresRenderAdapter.ts` | The app-side shape of the renderer's mesh API (`EditorMeshRendererScene`) and the gizmo ↔ mesh transform conversions. Nothing here imports vendored types. |
 | `meshPick.ts` | Ray/triangle and ray/AABB intersection, bounds maths, and the connected-component split. Shared with the vendored `EditorMeshPicker`. |
 | `mdl0ModelDomain.ts` | The model/mesh naming and grouping domain the outliner presents. |
+| `gxMaterial/types.ts` | The material editor's contract: `GxMaterialDoc` and everything around it, the shader-graph node model, and the signatures `src/lib/gxMaterial/` implements. Plain JSON-serialisable data, so a material document can go in the editor history and in IndexedDB. |
 | `tex0Brres.ts`, `tex0Codec.ts` | Locating and patching TEX0s in place, and encoding/decoding every GX format the editor can write (I4/I8/IA4/IA8/RGB565/RGB5A3/RGBA8/CMPR) with mip generation. |
 | `noclipBrres.ts` | The BRRES summary the content browser and Visual mode read. Never throws: an unreadable archive comes back with an `error` string so one bad file cannot stop a track opening. |
 | `thumbnail/` | Real-renderer asset thumbnails: `index.ts` (the service and its cache), `webglThumbnailRenderer.ts`, `framing.ts`, `cache.ts`, `modelSelection.ts`. |
@@ -191,7 +195,7 @@ given. Nothing outside the smoke path reads any of the `smoke*` parameters.
 | `vendor-reachability.mjs` | Recomputes the transitive import closure of `vendor/noclip.website/` from `src/**` and `scripts/**` and reports (or `--delete`s) anything outside it, so the trimmed fork does not re-accumulate dead weight. Also flags relative imports that do not resolve. |
 | `browser-smoke.mjs`, `browser-smoke-real-tracks.mjs` | The `?smokeTrack=` end-to-end browser checks. |
 | `camera-ui-probe.mjs`, `kmp-ui-probe.mjs`, `probe-model-ui.mjs`, `viewport-dev-probe.mjs` | Harnesses that drive a real off-screen Edge window and run a probe body against it. Headless Edge cannot run noclip, so these are not `--headless`. |
-| `probe-*.js` | The probe bodies those harnesses execute (`probe-kmp-mode-ui.js`, `probe-camera-ui.js`, `probe-model-mode-ui.js`, `probe-visual-ui.js`, and the older single-feature ones). |
+| `probe-*.js` | The probe bodies those harnesses execute (`probe-kmp-mode-ui.js`, `probe-camera-ui.js`, `probe-model-mode-ui.js`, `probe-visual-ui.js`, `probe-material-ui.js`, and the older single-feature ones). |
 | `build-*.mjs` | The asset-database builders that generate what lives under `public/data/`. |
 
 ## Tests

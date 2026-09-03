@@ -1035,6 +1035,85 @@ class MarioKartWiiRenderer {
         return this.textureHolder.textureNames;
     }
 
+    /**
+     * Uploads a texture the archive did not have before, so a freshly imported PNG shows up
+     * without reloading the scene. An existing name is routed at `reloadEditorTexture`, which can
+     * only replace pixels at the same size and format; `false` comes back when that fails.
+     */
+    public addEditorTexture(name: string, texture: { format: number; width: number; height: number; mipCount: number; data: Uint8Array; paletteFormat?: number | null; paletteData?: ArrayBufferSlice | null }): boolean {
+        if (this.textureHolder.hasTexture(name))
+            return this.reloadEditorTexture(name, texture);
+        const copy = texture.data.slice();
+        const input: GX_Texture.TextureInputGX = {
+            name,
+            format: texture.format,
+            width: texture.width,
+            height: texture.height,
+            mipCount: texture.mipCount,
+            data: new ArrayBufferSlice(copy.buffer, copy.byteOffset, copy.byteLength),
+            paletteFormat: texture.paletteFormat ?? null,
+            paletteData: texture.paletteData ?? null,
+        };
+        this.textureHolder.addTexture(this.renderHelper.device, input);
+        return this.textureHolder.hasTexture(name);
+    }
+
+    /**
+     * Re-parses one material out of edited BRRES bytes and swaps it into every live model instance
+     * of that model, without rebuilding the scene.
+     *
+     * Only the named MDL0 material is parsed (`BRRES.parseMaterialEntry`), so this is cheap enough
+     * to run on every committed edit. `MDL0Model.replaceMaterial` uploads the new samplers and
+     * `MDL0ModelInstance.replaceMaterial` rebuilds the per-draw-call `MaterialInstance`s and
+     * repoints the shapes; the editor's render toggles, the enabled animations and the mesh picker
+     * are re-applied afterwards because all three live on the instance.
+     *
+     * Returns false when the archive, model or material is not one this scene has loaded.
+     */
+    public reloadEditorMaterial(archivePath: string, modelName: string, materialName: string, brres: ArrayBufferSlice | Uint8Array): boolean {
+        const model = this.modelCache.modelCache.get(modelName);
+        if (model === undefined)
+            return false;
+
+        const buffer = brres instanceof ArrayBufferSlice
+            ? brres
+            : (() => { const copy = brres.slice(); return new ArrayBufferSlice(copy.buffer, copy.byteOffset, copy.byteLength); })();
+
+        let parsed: { entry: BRRES.MDL0_MaterialEntry, index: number } | null = null;
+        try {
+            parsed = BRRES.parseMaterialEntry(buffer, modelName, materialName);
+        } catch {
+            return false;
+        }
+        if (parsed === null)
+            return false;
+
+        if (!model.replaceMaterial(this.renderHelper.device, this.renderHelper.renderCache, parsed.index, parsed.entry))
+            return false;
+
+        const rres = this.modelCache.rresCache.get(archivePath) ?? null;
+        let swapped = false;
+        for (const object of this.baseObjects) {
+            for (const modelInstance of getModelInstances(object)) {
+                if (modelInstance.mdl0Model !== model)
+                    continue;
+                if (modelInstance.replaceMaterial(parsed.index) === 0)
+                    continue;
+                swapped = true;
+                modelInstance.setVertexColorsEnabled(this.editorVertexColorsEnabled);
+                modelInstance.setTexturesEnabled(this.editorTexturesEnabled);
+                for (const materialInstance of modelInstance.materialInstances)
+                    materialInstance.setMaterialHacks({ disableLighting: !this.editorLightingEnabled });
+                if (rres !== null)
+                    this.bindEditorAnimations(modelInstance, rres, archivePath);
+            }
+        }
+
+        if (swapped)
+            this.refreshEditorMeshSources();
+        return swapped;
+    }
+
     //#region Course fog
 
     /**

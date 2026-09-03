@@ -56,6 +56,25 @@ export const EDITOR_SHORTCUTS: ShortcutGroup[] = [
     ],
   },
   {
+    title: 'Shader graph',
+    entries: [
+      { keys: 'Double-click', description: 'Open the add-node palette on empty space' },
+      { keys: 'Right-click', description: 'Open the add-node palette' },
+      { keys: 'Middle-drag', description: 'Pan the graph' },
+      { keys: 'Space+Drag', description: 'Pan the graph' },
+      { keys: 'Wheel', description: 'Zoom about the cursor' },
+      { keys: 'Shift+Click', description: 'Add a node to the selection' },
+      { keys: 'Ctrl+Drag', description: 'Snap moved nodes to the grid' },
+      { keys: 'Ctrl+A', description: 'Select every node' },
+      { keys: 'Ctrl+D', description: 'Duplicate the selected nodes' },
+      { keys: 'Ctrl+C', description: 'Copy the selected nodes as JSON' },
+      { keys: 'Ctrl+V', description: 'Paste nodes' },
+      { keys: 'Ctrl+Z', description: 'Undo a graph change' },
+      { keys: 'Ctrl+Y', description: 'Redo a graph change' },
+      { keys: 'Delete', description: 'Delete the selected nodes or wire' },
+    ],
+  },
+  {
     title: 'Interface',
     entries: [
       { keys: '?', description: 'Show or hide this sheet' },

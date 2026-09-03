@@ -396,7 +396,29 @@ depends on and that any rewrite has to preserve (or update in the probe):
    with its `<span class="uiFieldLabel">`, but `Field asGroup` renders a `<div role="group">`
    and is invisible to that check.
 
-## 6. What is left
+## 6. Material mode
+
+Material mode (`src/ui/material/**`, `material.css`) is on the same system: tokens only, the shared
+primitives for every control, and the same dock/rail/status-bar/toast shell. Two things about it
+are new to the design system and are worth knowing before adding a mode of your own.
+
+**A mode can take the bottom dock.** `ModeUi.bottomDock` is a function the shell calls with the
+dock's size, collapse flag and resize handlers (`ModeBottomDock` in `src/ui/modes/types.ts`); the
+returned node replaces `ContentBrowser` while the mode is active. The shell keeps owning that
+state, so a mode panel resizes and collapses exactly like the browser, and the browser comes back
+untouched. A mode panel that does this should keep the browser's `contentBrowser` /
+`contentBrowser collapsed` / `resizing` classes and its `contentBrowserResizeHandle`, which is what
+makes the two interchangeable.
+
+**The node editor is not built from primitives.** `GraphEditor.tsx` is SVG wires plus absolutely
+positioned DOM inside one transformed pan/zoom layer, and its nodes are hand-built cards — a
+property row would be the wrong shape for a socket. Everything *inside* a node is still a
+primitive (`Select`, `Toggle`, `ColorField`), and all the geometry, hit testing, selection and
+layout maths is pure and separately tested in `graphModel.ts`, following house rule 5.
+
+Documented in full in `docs/MATERIALS.md`.
+
+## 7. What is left
 
 Nothing in the shell. Two smaller things a later pass could pick up:
 

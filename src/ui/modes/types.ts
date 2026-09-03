@@ -1,4 +1,4 @@
-import type { ComponentProps, Dispatch, MutableRefObject, ReactNode, SetStateAction } from 'react';
+import type { ComponentProps, Dispatch, MutableRefObject, PointerEvent as ReactPointerEvent, ReactNode, SetStateAction } from 'react';
 import type { EditorProjectState } from '../../lib/brresEditor';
 import type { KmpEntity } from '../../lib/kmp';
 import type { TrackIssue } from '../../lib/kmpValidation';
@@ -48,6 +48,20 @@ export interface EditorModeContext {
   setEditorMode: (mode: EditorModeStub) => void;
 }
 
+/**
+ * The bottom dock's size and collapse state, handed to a mode that replaces the content browser
+ * with a panel of its own. Exactly the props `ContentBrowser` takes, so the two are interchangeable.
+ */
+export interface ModeBottomDock {
+  open: boolean;
+  height: number;
+  collapsedHeight: number;
+  resizing: boolean;
+  onBeginResize: (event: ReactPointerEvent<HTMLElement>) => void;
+  onResetSize: () => void;
+  onToggleOpen: () => void;
+}
+
 /** What a mode contributes to the shell layout. Every field is optional. */
 export interface ModeUi {
   /** Replaces the left "Place Assets" rail while the mode is active. */
@@ -58,4 +72,10 @@ export interface ModeUi {
   viewportProps?: Partial<ViewportProps>;
   /** Overlay rendered in the viewport's top-right stack. */
   topRightOverlay?: ReactNode;
+  /**
+   * Replaces the content browser in the bottom dock while the mode is active. The shell keeps
+   * owning the dock's size and collapse state and passes them in, so a mode panel resizes exactly
+   * like the browser and the browser comes back untouched when the mode is left.
+   */
+  bottomDock?: (dock: ModeBottomDock) => ReactNode;
 }
