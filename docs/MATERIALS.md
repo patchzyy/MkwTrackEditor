@@ -335,18 +335,42 @@ more strongly and fills the inspector and the graph.
 
 ### The inspector
 
-Every control writes a whole new `GxMaterialDoc`; nothing in the inspector knows what a byte is.
-Sections, in the order an author works in:
+**Simple by default, hardware on demand.** A GX material is a pile of fixed-function state, and
+the first version of this panel showed all of it: blend factors, depth comparisons, konst
+selectors, wrap enums, texgen matrix modes. Almost none of that is what an author is deciding. So
+every section now leads with the handful of real choices, in words, and keeps the machinery behind
+an `AdvancedBlock` — a disclosure that starts closed and remembers, per section, whether it was
+opened (`useRemembered`, `localStorage`). Nothing was removed: every raw field is one disclosure
+away from where it used to be, and the panel is about 45% shorter by default.
 
-| Section | Fields |
-| --- | --- |
-| **Material** | Name, draw pass (opaque / translucent), which sides are drawn, SCN0 light set and fog index, texture-matrix style. |
-| **Layers** | One card per sampler: texture picker with a thumbnail, palette (and its TLUT slot, for a paletted texture only), wrap S/T, min/mag filter, detail (LOD) bias, sharpening (anisotropy), bias clamp, edge mips, map mode; the SRT (scale / rotation / shift, and the reference camera and light for env modes); the texgen (type, source, matrix, normalize). Add, remove and reorder. |
-| **Lighting** | Per channel: material and ambient colour, then for the colour and alpha halves — lit by scene lights, where the base and ambient colour come from, falloff, attenuation, and which of the eight lights the half sees. |
-| **Colours** | The three colour registers C0..C2 (s10) and the four constants K0..K3, plus the four swap tables. |
-| **Blend & alpha** | Blend mode, source and destination factors, logic operation, the constant-alpha register, and the two-part alpha test. |
-| **Depth** | Test, comparison, write, and whether the depth test runs before or after texturing. |
-| **Advanced** | Indirect stages and the three indirect matrices, as raw fields. |
+Header: the material's name as an editable heading, its model and archive, how many meshes draw
+with it, a one-line summary (`describeMaterial`, e.g. "See-through · vertex-coloured · 2 textures ·
+two-sided.") and a strip of its layer thumbnails.
+
+| Section | Simple | Behind **Advanced** |
+| --- | --- | --- |
+| **Textures** | Per layer: thumbnail, image picker, **Repeat / Mirror / Clamp**, **Smooth / Pixelated**, tiling scale (U/V), offset (U/V), rotation, an **Environment map** switch, and Replace / Save PNG. Add, remove, reorder. | Palette (and its TLUT slot, for a paletted texture), per-axis wrap, the exact min/mag filters, detail (LOD) bias, sharpening, bias clamp, edge mips, map mode, the reference camera and light, the texgen, and the import encoding — plus, for the section, the indirect stages and matrices. |
+| **Transparency** | One **Opaque / Cutout / Transparent** choice, the cut-off slider when it is cutting, and **hides what is behind** (depth write). | Blend mode, source and destination factors, logic operation, the constant-alpha register, the two-part alpha test, and the depth test / comparison / compare-before-texturing. |
+| **Lighting** | **Lit / Vertex colours / Unlit**, the base colour when the material supplies it, the ambient colour when it is lit. | Both channels in full: material and ambient colour, and for each of the colour and alpha halves the lighting switch, the two sources, falloff, attenuation and the eight light bits. |
+| **Colours** | Only the constants and registers the stages actually read, named **Colour 1..4** and **Start colour 1..3**, each captioned with which stages read it. | All four constants and all three registers, including the ones nothing reads, plus the four swap tables. |
+| **Surface** | **Two-sided**, and the shared-shader note. | Draw pass, the four-way culling choice, SCN0 light set and fog index, texture-matrix style. |
+
+The mapping from each simple control to the fields underneath is `src/ui/material/materialSimple.ts`
+— pure, and held to two laws by `materialSimple.test.ts`:
+
+1. **Writing back what was just read is the identity**, by reference. That is what lets a retail
+   material be opened in the friendly inspector and closed again without a byte changing;
+   `materialSimple.byteExact.test.ts` takes the same round trip through `applyMaterial` into real
+   MDL0 bytes to prove it.
+2. **A setter touches only the fields its choice is about.** Picking "Cutout" rewrites the alpha
+   test, the blend mode and the draw pass, and nothing else.
+
+Two of those mappings are worth spelling out. "Is this material cutting holes?" is answered by
+*evaluating* the two-part alpha test over all 256 alphas rather than by pattern-matching it,
+because there are far too many spellings of "always passes" to list. And "which colours does the
+shader read?" only counts a stage with a `KONST` input (every stage names a konst selection whether
+it reads it or not) and only counts a register read *before* anything writes to it (a register a
+stage overwrites on its way past is scratch space, and its start colour is dead).
 
 Numbers scrub (drag the field, Shift for fine, Ctrl for coarse). A drag is one history entry: the
 values during the drag are transient and only its release commits.
@@ -357,9 +381,13 @@ materials whose stage samples a texture slot the material has no layer for, and 
 material back unchanged has to keep working. `applyMaterial` only refuses the defects an edit
 *introduced*, and returns the rest as warnings.
 
-![The material and layer sections](screenshots/material-08-inspector.png)
+![The simple view](screenshots/material-after-01-inspector.png)
 
-![The colour registers and constants](screenshots/material-08b-inspector-colours.png)
+![Transparency, lighting, colours and surface](screenshots/material-after-02-inspector-bottom.png)
+
+![The same material with every Advanced block open](screenshots/material-after-03-advanced.png)
+
+![What it looked like before](screenshots/material-before-01-inspector.png)
 
 #### Importing a texture
 
@@ -381,7 +409,15 @@ pointed at it. **Export PNG** writes the layer's current texture back out throug
 The graph is the authoring model; TEV stages are the target. Every node maps onto something one
 TEV stage can do, so compiling is a lowering pass rather than a search.
 
-![The node editor](screenshots/material-03-graph.png)
+A node's card says what it *is*, not what the hardware calls it: `nodeTitle` folds the slot into
+the title and `nodeCaption` supplies the dimmed half after the dot, so a card reads
+**Texture 1 · road_tex** and **Colour 3** rather than "Texture" over a dropdown holding
+`TEXMAP0`. Socket labels go through `socketLabel`, so a lerp's inputs read **A / B / Mix** and a
+texture's outputs read **Colour / Alpha**. The names are shared with the inspector
+(`konstColorName`, `colorRegisterName`, `channelName` in `gxOptions.ts`), so a konst slot is
+"Colour 1" everywhere it is mentioned, including in status messages.
+
+![The node editor](screenshots/material-after-05-graph.png)
 
 #### The node palette
 
@@ -400,7 +436,7 @@ TEV stage can do, so compiling is a lowering pass rather than a search.
 | **Compare** | The TEV compare ops: `(a op b) ? c : 0`, plus `d`. |
 | **Indirect warp** | Routes an indirect stage into the texture sampled after it. |
 | **Comment** | A resizable note. Never compiles to anything. |
-| **Raw stage** | A stage the graph cannot express — a raster alpha read, a non-default swap table, a compare op the `compare` node does not cover. The decompiler emits one instead of guessing and the compiler copies it out verbatim. Read-only, and never in the palette. Its `prev` input carries no value; it only says which stage runs before it, so a chain of raw stages keeps its order. |
+| **Special step** (`rawStage`) | A stage the graph cannot express — a raster alpha read, a non-default swap table, a compare op the `compare` node does not cover. The decompiler emits one instead of guessing and the compiler copies it out verbatim. Read-only, and never in the palette. Its `prev` input carries no value; it only says which stage runs before it, so a chain of raw stages keeps its order. |
 
 Sockets carry either `rgb` or `alpha`; there is no `rgba` wire, because the colour and alpha
 pipelines are compiled separately and zipped onto the same stages. The maths nodes are
@@ -441,8 +477,11 @@ The same list is in the `?` shortcut sheet (`EDITOR_SHORTCUTS`, "Shader graph").
 
 ![The add-node palette](screenshots/material-06-add-node-palette.png)
 
-The toolbar has a **Presets** menu (`SHADER_GRAPH_PRESETS`), **Reset from stages** (re-runs
-`decompileShader`), **Auto layout**, fit, and the graph's own undo/redo.
+The toolbar has **Reset from stages** (re-runs `decompileShader`), **Auto layout**, fit, and the
+graph's own undo/redo. The presets (`SHADER_GRAPH_PRESETS`) are not in it: they used to be a
+dropdown, which is where a one-click "make this look like a normal road" goes to die, so they are
+a row of chips across the top of the graph instead — the fastest way out of a graph an author does
+not understand should not be three clicks deep. Each chip's tooltip is the preset's description.
 
 Applying a preset does more than swap the graph. It also tops the material's layers up to the
 preset's `samplerCount`, and — for the presets in `PRESET_WANTS_LIGHTING` — turns lighting on for
@@ -581,9 +620,11 @@ Pure logic is unit tested with no DOM (`npm test`):
 | --- | --- |
 | `src/ui/material/graphModel.test.ts` | Node geometry and hit testing, marquee, socket typing and the polymorphic maths nodes, every connection rule (side, self, cycle, type), edge replacement, delete / move / snap / duplicate / copy / paste (including `stageTemplate` surviving both), pan-zoom-fit maths, auto layout, and the raw-stage node's shape. |
 | `src/ui/material/materialDoc.test.ts` | Every inspector field → document mapping, colour conversion in both directions, the layer list's add / remove / reorder, the light mask, and the preset's channel-0 lighting. |
+| `src/ui/material/materialSimple.test.ts` | Every simple control → GX fields mapping: the three transparency modes and the alpha-test evaluator behind them, wrap and filter choices, environment mapping, the three shading modes, two-sidedness and depth write, which konst colours and registers a stage list really reads — and the identity law, that writing back what was just read returns the same document by reference. |
+| `src/ui/material/materialSimple.byteExact.test.ts` | The same round trip through `applyMaterial` into real MDL0 bytes: touching every simple control without changing a choice leaves the archive byte-for-byte identical. Runs on the object archives inside the bundled `Common.szs`, so it has teeth under `MKW_TEST_FIXTURES=bundled` too. |
 | `src/ui/material/materialOutlinerModel.test.ts` | Archive naming and ordering, the tree, the search, the shared-shader badge, reference keys. |
 | `src/ui/material/graphStore.test.ts` | The stage hash and both storage keys. |
-| `src/ui/material/MaterialInspector.test.tsx` | The inspector, the outliner, the dock's tab state and the stage table, rendered with `renderToStaticMarkup`; includes the assertion that no raw GX enum identifier reaches the user. |
+| `src/ui/material/MaterialInspector.test.tsx` | The inspector, the outliner, the dock's tab state and the stage table, rendered with `renderToStaticMarkup`: the five simple sections, that the hardware controls really are behind closed disclosures, that only the colours the shader reads are shown, that the preset chips are on the graph tab, that node titles name the thing rather than the register — and the assertion that no raw GX enum identifier reaches the user. |
 
 The end-to-end walkthrough is `scripts/probe-material-ui.js`, driven by `scripts/ui-shell-probe.mjs`
 against a real Edge window:
@@ -608,3 +649,24 @@ block; the selected material decompiles to 13 nodes and 22 wires including one r
 back to its own 3 stages, and its `Draw nothing` culling edit reaches the viewport through
 `reloadEditorMaterial` (the status line says nothing about reloading the track) and comes back on
 `Ctrl+Z`.
+
+`scripts/probe-material-simple.js` is the second body, for the simple/advanced split:
+
+```bash
+PROBE_PREFIX=matafter PROBE_PORT=9358 node scripts/ui-shell-probe.mjs   "http://127.0.0.1:5182/?smokeTrack=/dev-tracks/Z0.szs" scripts/probe-material-simple.js
+```
+
+It shoots the inspector as it opens and again with every disclosure expanded (1987px against
+8779px on a two-layer retail material, where the old panel was 3652px with three of its seven
+sections open), reads back every field label and every node title, checks no GX identifier is on
+screen, and drives the live preview: it switches the skybox material's shading to Unlit and
+measures how far the rendered frame moves, against a baseline of how far two frames of the
+unchanged scene move on their own. A run gives 2.91 against 0.01 — the simple controls reach the
+renderer.
+
+**A gap that pass found, and did not fix.** `Ctrl+Z` restores the document — the control snaps
+back and the status bar says "Undid last edit" — but the viewport keeps the undone look: the
+frame stays 2.91 away from where it started. This is not new and is not about the simple
+controls; driving the raw `Sides drawn` select in **Surface → Advanced** behaves identically.
+`MaterialMode.tsx`'s undo path restores the decoded document out of its `WeakMap` but does not
+push the restored bytes at `reloadEditorMaterial`, which is where the fix belongs.
