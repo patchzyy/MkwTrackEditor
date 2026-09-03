@@ -841,6 +841,14 @@ export function Noclip3DViewport({
     if (onChangeSectionVisibility) onChangeSectionVisibility(key, visible);
     else setInternalRouteVisibility((current) => ({ ...current, [key]: visible }));
   }
+  /** Same, for the mode presets that flip several layers at once. */
+  const onChangeSectionVisibilityRef = useRef(onChangeSectionVisibility);
+  onChangeSectionVisibilityRef.current = onChangeSectionVisibility;
+  function setLayersVisible(next: Record<RouteVisibilityKey, boolean>) {
+    const notify = onChangeSectionVisibilityRef.current;
+    if (notify) for (const key of KMP_VISIBILITY_KEYS) notify(key, next[key] !== false);
+    else setInternalRouteVisibility(next);
+  }
   const [pathLinkDrag, setPathLinkDrag] = useState<PathLinkDragState | null>(null);
   const pathLinkDragRef = useRef<PathLinkDragState | null>(null);
   const [checkpointDraw, setCheckpointDraw] = useState<CheckpointDrawState | null>(null);
@@ -1322,8 +1330,8 @@ export function Noclip3DViewport({
   useEffect(() => {
     if (mode !== 'camera') return;
     const saved = routeVisibilityRef.current;
-    setRouteVisibility({ ...saved, ENPT: false, ITPT: false, CKPT: false, JGPT: false, POTI_OBJECT: false, POTI_CAMERA: true, AREA: true, CAME: true });
-    return () => setRouteVisibility(saved);
+    setLayersVisible({ ...saved, ENPT: false, ITPT: false, CKPT: false, JGPT: false, POTI_OBJECT: false, POTI_CAMERA: true, AREA: true, CAME: true });
+    return () => setLayersVisible(saved);
   }, [mode]);
 
   /**
