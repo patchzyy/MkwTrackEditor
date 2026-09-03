@@ -45,6 +45,19 @@ import {
   previewScaledEntity,
   type PathInfo,
 } from '../../lib/kmpEdit';
+import {
+  NO_CAMERA_LINK,
+  addCamera,
+  applyCameraValues,
+  createDefaultCameraValues,
+  deleteCamera,
+  duplicateCamera,
+  moveCamera,
+  setChainOrder,
+  setChainStart,
+  type CameraChainKind,
+  type CameraValues,
+} from '../camera/cameraDocument';
 import type { CommonResourceArchive } from '../../lib/objflow';
 import { findArchiveData } from '../inspector/postEffectResources';
 import { replaceArchiveFile, replaceCourseKmp, type TrackDocument } from '../../lib/track';
@@ -526,6 +539,98 @@ export function useKmpEditActions(context: KmpEditActionsContext) {
     }
   }
 
+  // --- Camera (CAME) mode -------------------------------------------------
+  // Appended as a block so `src/ui/camera/**` owns the logic and this file only forwards it to
+  // the history stack. Every one of these is a single undo step.
+
+  /** Adds a camera with the given pose and selects it. */
+  function addCameraFromPose(pose: { position: Vec3; rotation?: Vec3; viewStart: Vec3; viewEnd?: Vec3 }) {
+    if (!track?.kmp) return;
+    try {
+      const result = addCamera(track.kmp, createDefaultCameraValues(pose));
+      if (!result.selectedId) return;
+      applyEditorChange(replaceCourseKmp(track, result.bytes), result.selectedId, true, [result.selectedId]);
+      setStatus(`Added ${result.selectedId.replace('CAME-', 'camera ')}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  /** Copies a camera, including where it hands over to. */
+  function duplicateCameraEntry(index: number) {
+    if (!track?.kmp) return;
+    try {
+      const result = duplicateCamera(track.kmp, index);
+      if (!result.selectedId) return;
+      applyEditorChange(replaceCourseKmp(track, result.bytes), result.selectedId, true, [result.selectedId]);
+      setStatus(`Duplicated camera ${index}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  /** Deletes a camera and renumbers every reference to it. */
+  function deleteCameraEntry(index: number) {
+    if (!track?.kmp) return;
+    if (!window.confirm(`Delete camera ${index}? Everything that points at a later camera is renumbered.`)) return;
+    try {
+      const result = deleteCamera(track.kmp, index);
+      applyEditorChange(replaceCourseKmp(track, result.bytes), result.selectedId, true, result.selectedId ? [result.selectedId] : []);
+      setStatus(`Deleted camera ${index}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  /** Moves a camera up or down the list, renumbering references so playback is unchanged. */
+  function moveCameraEntry(from: number, to: number) {
+    if (!track?.kmp) return;
+    try {
+      const result = moveCamera(track.kmp, from, to);
+      applyEditorChange(replaceCourseKmp(track, result.bytes), result.selectedId, true, result.selectedId ? [result.selectedId] : []);
+      setStatus(`Moved camera ${from} to position ${to}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  /** Writes any group of camera fields in one undo step. */
+  function updateCamera(cameraId: string, values: Partial<CameraValues>, statusMessage?: string) {
+    if (!track?.kmp) return;
+    try {
+      applyEditorChange(replaceCourseKmp(track, applyCameraValues(track.kmp, cameraId, values)), cameraId, true, [cameraId]);
+      if (statusMessage) setStatus(statusMessage);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  /** Points the opening or character-selection pan at a camera (or at "none"). */
+  function setCameraChainStart(kind: CameraChainKind, index: number) {
+    if (!track?.kmp) return;
+    try {
+      applyEditorChange(replaceCourseKmp(track, setChainStart(track.kmp, kind, index)));
+      setStatus(
+        index === NO_CAMERA_LINK
+          ? `Cleared the ${kind === 'opening' ? 'opening' : 'selection screen'} pan.`
+          : `Camera ${index} now starts the ${kind === 'opening' ? 'opening' : 'selection screen'} pan.`,
+      );
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  /** Rewrites a chain so it plays in the given order. */
+  function setCameraChainOrder(kind: CameraChainKind, order: number[]) {
+    if (!track?.kmp) return;
+    try {
+      applyEditorChange(replaceCourseKmp(track, setChainOrder(track.kmp, kind, order)));
+      setStatus(`Reordered the ${kind === 'opening' ? 'opening' : 'selection screen'} pan.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   return {
     moveEntity,
     moveCheckpointEndpoint,
@@ -553,5 +658,12 @@ export function useKmpEditActions(context: KmpEditActionsContext) {
     offsetSelectedEntities,
     replaceSelectedObjectTypes,
     applyFillBetween,
+    addCameraFromPose,
+    duplicateCameraEntry,
+    deleteCameraEntry,
+    moveCameraEntry,
+    updateCamera,
+    setCameraChainStart,
+    setCameraChainOrder,
   };
 }

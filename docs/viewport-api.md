@@ -53,6 +53,15 @@ Mouse: hover highlights the mesh under the cursor, click selects it, shift/ctrl-
 to or removes from the selection, and the translate/rotate/scale gizmo attaches to the
 selected mesh's bounding-box centre.
 
+### Visual mode (materials, textures, animations, post effects)
+
+| Prop | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `onVisualSceneChange` | `(scene: VisualRendererScene \| null) => void` | – | Handed the loaded Mario Kart Wii renderer so Visual mode can drive its material/texture/animation methods, and `null` when the scene goes away. Fired after every scene (re)load *and* as soon as the callback itself appears, because Visual mode is usually switched on long after the track finished loading. Held in a ref inside the viewport, so a new callback identity never re-runs the scene load. |
+
+`VisualRendererScene` is declared structurally in `src/ui/visual/visualScene.ts` — like
+`EditorMeshRendererScene`, every member is optional, so `src/ui` never imports vendored types.
+
 ### Types re-exported by the viewport
 
 ```ts
@@ -110,6 +119,22 @@ All of these are reachable from the viewport as `sceneRef.current`.
 `viewStart`, `viewEnd`, `zoomStart`, `zoomEnd`, `routePoints[]`, `routeIndex`, `selected`,
 `hovered`, `label`, `openingOrder`.
 `EditorOverlayCameraChainLink` fields: `from`, `to`, `order`.
+
+### Visual mode: models, animations, render toggles, textures, post effects
+
+| Method | Purpose |
+| --- | --- |
+| `listEditorSceneModels()` | Every BRRES the scene draws as course geometry, with its MDL0 stats and current visibility. |
+| `setEditorSceneModelVisible(archivePath, visible)` | Shows/hides one archive (`./course_model.brres`, `./vrcorn_model.brres`, ...). |
+| `setEditorObjectPreviewsVisible(visible)` | Shows/hides every model spawned from the KMP object list. |
+| `listEditorAnimations(archivePath)` | Every SRT0/PAT0/CLR0/CHR0/VIS0/SCN0 in a loaded archive, with length, loop mode and whether it is currently bound. SCN0 is reported with `supported: false`. |
+| `setEditorAnimationEnabled(archivePath, kind, name, enabled)` | Binds/unbinds one animation. Rebuilds the `MDL0ModelInstance` from the same uploaded `MDL0Model`, because there is no public unbind for CHR0/VIS0. |
+| `setEditorAnimationsPlaying(playing)` / `setEditorSceneTimeFrames(frames \| null)` / `getEditorSceneTimeFrames()` | Pause, scrub and read the shared animation clock. The wall time spent paused is subtracted out instead of stopping the viewer, so the free camera keeps working while animations are frozen. |
+| `setEditorTexturesEnabled` / `setEditorVertexColorsEnabled` / `setEditorLightingEnabled` / `setEditorBloomEnabled` / `setEditorWireframe` / `setEditorDOFMode` / `setEditorPostProcessingEnabled` | Preview-only render toggles. None of them touch the track files. |
+| `getEditorVisualCapabilities()` | `{ bloom, dof, lighting, wireframe }` — which toggles this particular track and device can actually drive. |
+| `reloadEditorTexture(name, texture)` | Swaps an already-uploaded TEX0's pixels in place, reusing the `GfxTexture` handle so every material that samples it picks the new pixels up next frame. Requires the same dimensions and format; returns `false` otherwise. |
+| `listEditorTextureNames()` | Names in the scene's texture holder. |
+| `applyEditorPostEffectFile(path, data)` | Re-applies an edited `posteffect/*` file without reloading the scene: `.bblm` and `.bdof` rebuild their `EggDrawPath`, `.blight` swaps the `EggLightManager`. Returns `false` for files the renderer does not consume — including `posteffect.bfg`, since this renderer has no course-fog draw path. |
 
 ### Mesh picking and editing
 
@@ -197,3 +222,52 @@ From <https://wiki.tockdom.com/wiki/KMP_Editing/Cameras>:
 
 Pure implementations live in `src/lib/cameraPreview.ts` (interpolation + chain) and
 `src/ui/viewport/cameraOverlay.ts` (KMP → overlay), both unit tested.
+
+---
+
+## 6. Model mode, as finished (agent G)
+
+### Extra viewport props
+
+| Prop | Type | What it does |
+| --- | --- | --- |
+| `meshSelection` | `EditorMeshTarget[]` | Makes the mesh selection controlled. Pass it and the outliner can drive what the viewport has selected; omit it and the viewport keeps its own. Clicks in the viewport still report through `onSelectMesh` either way. |
+| `importedMeshes` | `ImportedMesh[]` | Objects placed as course geometry. Ones with a `sourceShape` are drawn as duplicates of that mesh; the rest are loaded as extra model instances. |
+| `resolveImportedMeshSource` | `(sourcePath: string) => Uint8Array \| null` | Supplies the BRRES bytes behind an imported mesh. |
+
+`meshEdits` now **resets** as well as applies: an edit that disappears from the array (undo, or the
+inspector's Restore) puts its mesh back where it started, and the selection's stored transform is
+refreshed so the gizmo follows.
+
+### Extra renderer method
+
+| Method | Purpose |
+| --- | --- |
+| `setEditorMeshCopies(target, transforms)` | Replaces the duplicates of a mesh. Each transform is a game-unit TRS pivoting on the target's centre — the same convention as `setEditorMeshTransform` — and draws one more copy of the same geometry. Copies survive the original being hidden, so "duplicate it, then delete the original" works. Costs one draw call and no extra vertex data. |
+
+Underneath, `ShapeInstanceEditorOverride` in `vendor/noclip.website/src/rres/render.ts` gained a
+`copyDraws` array, and `EditorMeshPicker` gained `setCopies`.
+
+### Document model
+
+`TrackDocument` now carries the Model-mode edits, so history and export both see them:
+
+```ts
+meshEdits?: MeshEdit[];
+importedMeshes?: ImportedMesh[];
+/** BRRES bytes per `ImportedMesh.sourcePath`, so export stays synchronous. */
+meshImportSources?: Record<string, Uint8Array>;
+```
+
+`ImportedMesh.sourceShape` is now a full `EditorMeshTarget` (it was a partial one), because both the
+exporter and the renderer need to resolve it back to a draw call.
+
+`exportTrack` bakes them through `bakeMeshEdits` → `bakeCourseModel`. With no edits the entry list
+and its byte arrays come back untouched, so an unedited track still exports byte-for-byte.
+
+### Reading the model without the renderer
+
+`src/lib/brres/courseMeshes.ts` lists a course model's draw calls straight from the BRRES —
+`listCourseMeshes`, `describeCourseMesh`, `courseMeshTarget`, `courseMeshCenter`. The outliner uses
+it so it works before the scene has loaded, and its `drawOpIndex` numbering is asserted to match
+what the picker reports.

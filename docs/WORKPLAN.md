@@ -103,3 +103,104 @@ orchestrator has to do in files you did not own.
   `ModeUi` (`src/ui/modes/types.ts`); `App.tsx` composes them. Default mode is KMP.
 - Wave 2 (in progress): F camera UI, G model UI + BRRES writer, H visual mode, J KMP parity,
   K UI redesign (design system in `src/ui/components`, `docs/UI.md`).
+
+### Agent F — Camera (CAME) mode (wave 2)
+
+Camera mode is complete and works on real tracks. Shipped:
+
+- **Camera outliner** (`src/ui/camera/CameraOutliner.tsx`): every CAME entry with a per-family
+  icon, a friendly type name, and badges for opening/selection order, the areas that trigger it
+  and its movement path. Filter box; add / duplicate / delete / reorder; "set as opening start"
+  and "set as selection-screen start".
+- **Chain editors** (`ChainEditor.tsx`): the opening pan and the character-select pan as
+  drag-reorderable lists with per-shot durations and a running total, plus a play button.
+  Editing a chain rewrites the `nextCam` links and the CAME header's first camera.
+- **Friendly inspector** (`CameraInspector.tsx`, `CameraFields.tsx`, `cameraFieldMeta.ts`): every
+  CAME field under a plain-language label with a one-line hint, irrelevant fields hidden per
+  camera type, duration in both frames and seconds, and X/Y/Z-labelled full-width vector rows.
+  Shared with the KMP-mode camera section so a camera reads the same everywhere.
+- **Viewport handles**: camera position via the normal gizmo, the two look-at points via
+  draggable handles, and the camera's route via the existing POTI points. Camera mode also turns
+  the racing-line overlays off so the camera gizmos are actually visible.
+- **Playback** (`CameraPlaybackControls.tsx`): play/pause/stop/loop and a scrubber that flies the
+  real viewport camera through a shot or the whole opening chain; Escape stops and restores the
+  free camera.
+- **Replay cameras**: types 0-3 are first-class in the type picker and the outliner shows which
+  AREA triggers each one.
+
+Verified with `npx tsc --noEmit -p tsconfig.json` (clean), `npx vitest run` (359 passed),
+`npx vite build` (ok), and browser probes against `nintendo_1.szs` and `Z0.szs`
+(`scripts/camera-ui-probe.mjs` with `scripts/probe-camera-ui.js` and
+`scripts/probe-camera-handle-drag.js`). Screenshots: `docs/screenshots/camera-mode-*.png`.
+
+### Model mode — complete (agent G)
+
+Model mode does what section 3 asks for. Clicking track geometry in the viewport selects the
+smallest sensible piece (a connected component of a shape); `]` / `[` widen and narrow that to the
+whole mesh or the whole bone, and the inspector has the same control in words. The selection can be
+moved, rotated, scaled, hidden, deleted, restored and duplicated, from the gizmo or from numeric
+fields, and an object model can be placed into the track as scenery. All of it is baked into
+`course_model.brres` on export.
+
+The interesting part was the writer. Three properties of the format each cost a bug:
+
+- A pointer from one block to another (a resource dictionary to its data, a material to its TEV
+  shader) is read back **unsigned**, so the target has to sit after the pointer. Appending a grown
+  dictionary table past the blocks it indexes produced negative offsets that noclip's parser
+  rejected. Dictionaries are now re-emitted into a gap opened in front of the first block.
+- Readers over-read the tail of a block on purpose — a fixed-size material display list, four bytes
+  past a vertex array — which the next block normally covers. An edited model keeps slack behind
+  the last block it appended.
+- New textures have to be slotted into the layout ahead of the animation sub-files (SRT0/CLR0/PAT0),
+  whose internal name pointers this editor does not model, so those keep their distance to the
+  string pool.
+
+Verified with `npx tsc --noEmit`, `npx vitest run` (401 tests), `npx vite build`, and a scripted
+browser pass over `Z0.szs` and `nintendo_1.szs` (`scripts/probe-model-ui.mjs` +
+`scripts/probe-model-mode-ui.js`, screenshots in `docs/screenshots/model-ui-*.png` and
+`model-nintendo-*.png`). An unedited track still exports byte-for-byte identically.
+
+Known gap: a mesh whose vertices are shared between two connected components moves its neighbours
+too. The exporter detects this and warns rather than silently corrupting the shape; splitting the
+vertex data per component would be the fix.
+
+### Agent H — Visual mode (wave 2)
+
+Visual mode is no longer a placeholder: it is the non-KMP *look* of the track, with every KMP
+overlay hidden (`showKmpEditorOverlay: false`). Shipped:
+
+- **Archive browser** (`src/ui/visual/VisualOutliner.tsx`, `visualArchive.ts`): every `.brres` in
+  the track, course first, then skybox, minimap and object archives. For the selected archive:
+  its MDL0 models (with per-archive show/hide), its materials, its TEX0 textures and its
+  animations, all parsed with the vendored noclip parser so the numbers match what is rendered.
+- **Texture previews and replacement** (`TexturePreview.tsx`, `TextureInspector.tsx`,
+  `textureReplace.ts`, `src/lib/tex0Codec.ts`, `src/lib/tex0Brres.ts`): every TEX0 is decoded with
+  noclip's own GX decoder onto an alpha checkerboard. Importing a PNG/JPG re-encodes it to the
+  texture's own GX format (I4/I8/IA4/IA8/RGB565/RGB5A3/RGBA8/CMPR) with a generated mip chain,
+  patches it into the BRRES in place, pushes it at the live renderer and exports with the track.
+  Textures can also be exported back out as PNG.
+- **Material inspector**: blend mode, cull mode, alpha test, depth write, TEV/texgen/indirect
+  stage counts, light set and fog index, plus the textures the material samples (click-through
+  both ways between materials and textures).
+- **Animations**: every SRT0/PAT0/CLR0/CHR0/VIS0 (and SCN0, listed but unplayable) with a
+  per-animation play/stop toggle and a transport that pauses and scrubs the shared animation clock
+  to an exact frame without freezing the free camera.
+- **Render toggles and presets** (`VisualRenderOverlay.tsx`): Game look / Flat / Wireframe, and
+  the individual textures / vertex colours / lighting / bloom / DOF / skybox / objects / wireframe
+  toggles behind them, greyed out when the track has no such resource.
+- **Post effects**: the existing `PostEffectsPanel` is now reachable from Visual mode, and edits to
+  `posteffect.bblm`, `posteffect.bdof` and `posteffect.blight` are re-applied to the live scene
+  without a reload (`applyEditorPostEffectFile`).
+
+**Not done, deliberately:** course fog is *editable and exported* but not *previewed*. A
+screen-space `EggDrawPathFog` was written and then removed: its render-graph pass wiped the main
+colour target to black in every mode, and rendering GX fog properly means filling the material
+`FogBlock` inside `vendor/.../rres/render.ts`, which another mode owns. The post-effects panel says
+so in the UI.
+
+Verified with `npx tsc --noEmit -p tsconfig.json` (clean), `npx vitest run` (429 passed, up from
+359 on main), `npx vite build` (ok), and a browser probe against `nintendo_1.szs`
+(`scripts/camera-ui-probe.mjs` with `scripts/probe-visual-ui.js`). Export correctness is proved by
+`src/ui/visual/visualExport.test.ts`, which replaces a texture and edits the fog table on four real
+tracks, exports the `.szs`, re-reads it and re-parses the BRRES.
+Screenshots: `docs/screenshots/visual-mode-*.png`.
