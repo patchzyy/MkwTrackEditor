@@ -50,7 +50,7 @@ and nothing outside `src/lib/playtest/` touches WebAssembly.
 | `src/lib/playtest/types.ts` | `PlaytestRuntime` and everything it exchanges: input, kart pose, race state, camera pose, the character/vehicle tables. |
 | `src/lib/playtest/mockRuntime.ts` | A deterministic kinematic stand-in implementing the same interface, so the UI can be built, tested and probed without WASM. |
 | `src/lib/playtest/playtestLoop.ts` | `planFixedSteps`: real elapsed milliseconds → whole 60 Hz steps, with capped catch-up. |
-| `src/ui/playtest/runtimeFactory.ts` | The single place that picks a runtime. One line to swap the mock for Kinoko. |
+| `src/ui/playtest/runtimeFactory.ts` | The single place that picks a runtime: Kinoko in the app, the mock for UI-only testing. |
 | `src/ui/playtest/usePlaytestSession.ts` | Session lifecycle: packing the course, creating the runtime, the controller listeners, the HUD sample, the borrowed dock layout. |
 | `src/ui/playtest/playtestInput.ts` | Pure keyboard/gamepad → `PlaytestInput` mapping and the controls summary. |
 | `src/ui/playtest/playtestChaseCamera.ts`, `playtestCamera.ts` | The chase-camera maths, and the `CameraController` installed for the session. |

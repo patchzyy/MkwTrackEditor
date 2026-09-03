@@ -214,7 +214,8 @@ during `'intro'` the camera already sits behind the kart.
 course from `public/dev-tracks/` (falling back to the Dolphin track folders in
 `src/lib/realTrackFixtures.testdata.ts`), holds accelerate through the intro and countdown and for
 600 racing frames, and checks the kart moved, the stage progressed, `restart()` returned it to the
-start, and that both a non-Yaz0 archive and a malformed-but-Yaz0 archive raise `PlaytestError`.
+start, that a bare U8 archive (what `exportTrack({ compress: false })` produces) is accepted, and
+that both a garbage archive and a malformed-but-Yaz0 archive raise `PlaytestError`.
 It skips itself when the fixtures are not on the machine. It also prints the average `step()` cost.
 
 For a wider check after touching the engine:
@@ -253,11 +254,12 @@ one error toast. Loading a different track while a session is running ends it to
 `src/ui/playtest/runtimeFactory.ts` is the only place that names a concrete runtime:
 
 ```ts
-export const playtestRuntimeFactory: PlaytestRuntimeFactory = createMockPlaytestRuntime;
+export const playtestRuntimeFactory: PlaytestRuntimeFactory = createKinokoRuntime;
 ```
 
-After the WebAssembly half merges, change that one line to `createKinokoRuntime` from
-`src/lib/playtest/kinokoRuntime.ts`. Nothing else in `src/ui/` refers to either implementation.
+Nothing else in `src/ui/` refers to an implementation. `createMockPlaytestRuntime` from
+`src/lib/playtest/mockRuntime.ts` implements the same interface with a kinematic stand-in; swap it
+in here to exercise the UI without the WebAssembly module.
 
 ### The frame loop
 
@@ -373,7 +375,7 @@ unit-tested in `playtestHudModel.ts`.
 | `src/ui/playtest/playtestChaseCamera.test.ts` | Quaternion rotation, the camera goal, frame-rate-independent smoothing, convergence. |
 | `src/ui/playtest/playtestHudModel.test.ts` | Time, speed and countdown formatting. |
 
-`scripts/probe-playtest.js` drives the whole feature in a real browser, against the mock runtime:
+`scripts/probe-playtest.js` drives the whole feature in a real browser, with the Kinoko runtime:
 
 ```bash
 npx vite --host 127.0.0.1 --port 5194 --strictPort

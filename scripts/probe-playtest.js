@@ -1,11 +1,10 @@
-// Body for scripts/ui-shell-probe.mjs. Drives the whole playtest feature against the mock
-// runtime: opens the top-bar popover, starts a session, holds accelerate through the countdown
-// and into the race, restarts, and leaves. Reports enough for Node to assert on.
+// Body for scripts/ui-shell-probe.mjs. Drives the whole playtest feature against whichever
+// runtime src/ui/playtest/runtimeFactory.ts selects (Kinoko in the app): opens the top-bar
+// popover, starts a session, holds accelerate through the countdown and into the race, restarts,
+// and leaves. Reports enough for Node to assert on.
 //
 //   node scripts/ui-shell-probe.mjs "http://127.0.0.1:5186/?smokeTrack=/dev-tracks/Z0.szs" scripts/probe-playtest.js
 //
-// The session runs against `createMockPlaytestRuntime` (see src/ui/playtest/runtimeFactory.ts),
-// so this probe never needs the Kinoko WebAssembly module.
 
 const prefix = window.__probePrefix ?? 'playtest';
 const report = { prefix };

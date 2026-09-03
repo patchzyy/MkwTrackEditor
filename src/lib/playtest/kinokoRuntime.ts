@@ -11,6 +11,7 @@
 
 import createKinokoModule, { type KinokoModule, type KinokoPtr } from './wasm/kinoko.mjs';
 import kinokoWasmUrl from './wasm/kinoko.wasm?url';
+import { encodeYaz0Uncompressed } from '../yaz0';
 import {
   PlaytestError,
   type CreatePlaytestRuntimeOptions,
@@ -112,6 +113,21 @@ function isYaz0(bytes: Uint8Array): boolean {
   );
 }
 
+function isU8(bytes: Uint8Array): boolean {
+  return bytes.length >= 0x20 && bytes[0] === 0x55 && bytes[1] === 0xaa && bytes[2] === 0x38 && bytes[3] === 0x2d;
+}
+
+/**
+ * Kinoko only mounts Yaz0-wrapped archives. The editor's export path can hand us a bare U8
+ * archive (`exportTrack(..., { compress: false })`), so give it the cheap uncompressed wrapper
+ * instead of making every caller remember to.
+ */
+function asYaz0Archive(bytes: Uint8Array): Uint8Array | null {
+  if (isYaz0(bytes)) return bytes;
+  if (isU8(bytes)) return encodeYaz0Uncompressed(bytes);
+  return null;
+}
+
 class KinokoRuntime implements PlaytestRuntime {
   #module: KinokoModule | null;
   #onLog: (line: string) => void;
@@ -201,21 +217,22 @@ class KinokoRuntime implements PlaytestRuntime {
       throw new PlaytestError('Playtest runtime has been disposed.');
     }
 
-    if (!isYaz0(courseArchive)) {
+    const courseSzs = asYaz0Archive(courseArchive);
+    if (!courseSzs) {
       this.#fail(
         'load the course',
-        'the archive is not a Yaz0 .szs (it does not start with the Yaz0 magic)',
+        'the archive is neither a Yaz0 .szs nor a U8 archive (bad magic)',
       );
     }
 
-    const commonArchive = this.#commonArchive;
-    if (!isYaz0(commonArchive)) {
-      this.#fail('load the course', 'Race/Common.szs is not a Yaz0 .szs');
+    const commonArchive = asYaz0Archive(this.#commonArchive);
+    if (!commonArchive) {
+      this.#fail('load the course', 'Race/Common.szs is neither a Yaz0 .szs nor a U8 archive');
     }
 
     const status = this.#guard('load the course', (module) => {
       this.#provideFile(module, COMMON_ARCHIVE_PATH, commonArchive);
-      this.#provideFile(module, COURSE_ARCHIVE_PATH, courseArchive);
+      this.#provideFile(module, COURSE_ARCHIVE_PATH, courseSzs);
       return module._kinoko_load_course(
         options.character,
         options.vehicle,

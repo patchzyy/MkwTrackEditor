@@ -21,6 +21,7 @@ import {
   type PlaytestRuntime,
 } from './types';
 import { listTracks, NINTENDO_TRACK_DIR, CUSTOM_TRACK_DIR } from '../realTrackFixtures.testdata';
+import { decodeYaz0 } from '../yaz0';
 
 const COMMON_PATH = 'public/data/MarioKartWii/Race/Common.szs';
 const WASM_PATH = 'src/lib/playtest/wasm/kinoko.wasm';
@@ -173,6 +174,17 @@ describe.skipIf(!haveFixtures)('kinokoRuntime', () => {
       for (let i = 0; i < 480; i++) runtime.step();
       expect(runtime.readRaceState().stage).not.toBe('intro');
       expect(Number.isFinite(runtime.readKartState().speed)).toBe(true);
+    } finally {
+      runtime.dispose();
+    }
+  }, 120_000);
+
+  it('accepts a bare U8 archive, which is what exportTrack({ compress: false }) produces', async () => {
+    const runtime = await makeRuntime();
+    try {
+      runtime.loadCourse(decodeYaz0(read(nintendoTrack!)), DEFAULT_PLAYTEST_COURSE_OPTIONS);
+      runtime.step();
+      expect(runtime.readRaceState().frame).toBe(1);
     } finally {
       runtime.dispose();
     }

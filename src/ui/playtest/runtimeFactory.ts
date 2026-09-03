@@ -1,4 +1,4 @@
-import { createMockPlaytestRuntime } from '../../lib/playtest/mockRuntime';
+import { createKinokoRuntime } from '../../lib/playtest/kinokoRuntime';
 import type { PlaytestRuntimeFactory } from '../../lib/playtest/types';
 
 /**
@@ -7,12 +7,9 @@ import type { PlaytestRuntimeFactory } from '../../lib/playtest/types';
  * Everything else — `usePlaytestSession`, the viewport, the HUD — goes through this constant and
  * only ever sees the `PlaytestRuntime` interface from `src/lib/playtest/types.ts`.
  *
- * INTEGRATOR: once the Kinoko WebAssembly half has landed, import `createKinokoRuntime` from
- * `../../lib/playtest/kinokoRuntime` instead of `createMockPlaytestRuntime`, and assign it to
- * `playtestRuntimeFactory` below. That is the whole integration.
- *
- * Nothing else in `src/ui/` has to change. `createMockPlaytestRuntime` stays in the tree: it is
- * what the unit tests and `scripts/probe-playtest.js` run against, so the UI can be exercised
- * without WASM.
+ * The app runs Kinoko (Mario Kart Wii's physics engine compiled to WebAssembly; see
+ * `docs/PLAYTEST.md`). `createMockPlaytestRuntime` in `src/lib/playtest/mockRuntime.ts` implements
+ * the same interface with a kinematic stand-in; the unit tests use it, and swapping it in here
+ * lets the UI be exercised without the WASM module.
  */
-export const playtestRuntimeFactory: PlaytestRuntimeFactory = createMockPlaytestRuntime;
+export const playtestRuntimeFactory: PlaytestRuntimeFactory = createKinokoRuntime;
