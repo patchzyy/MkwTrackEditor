@@ -60,10 +60,6 @@ export function applyMeshSelectionClick(
   return [...current, entry];
 }
 
-export function findMeshSelection(entries: readonly MeshSelectionEntry[], key: string): MeshSelectionEntry | null {
-  return entries.find((entry) => entry.key === key) ?? null;
-}
-
 export function updateMeshSelectionTransform(
   entries: readonly MeshSelectionEntry[],
   key: string,

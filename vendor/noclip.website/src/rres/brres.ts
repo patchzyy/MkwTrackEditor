@@ -936,8 +936,15 @@ function parseMDL0_NodeEntry(buffer: ArrayBufferSlice, entryOffs: number, baseOf
 
     let parentNodeId: number = -1;
     if (toParentNode !== 0) {
-        // The root node should not have a parent.
-        assert(id > 0);
+        // Upstream asserted `id > 0` here, on the assumption that only the root node has id 0 and
+        // that the root has no parent. Mario Kart Wii's minimap models (`map_model.brres`, in
+        // every retail and custom track) break that assumption: all three of their bones — `map`,
+        // `posLD` and `posRU` — ship with the id field left at 0, so the two children tripped the
+        // assert and the whole archive failed to parse.
+        //
+        // The id is only read back for CHR0/VIS0 animation binding, and parentNodeId below is
+        // derived from byte offsets rather than from the id, so a duplicated id costs nothing
+        // here. Files that parsed before are unaffected: the assert only ever fired on this case.
 
         // The to*Node offsets are relative offsets from the start of this ResNode, in bytes.
         // Since the nodes are tightly packed, we can find the proper index from the start of the

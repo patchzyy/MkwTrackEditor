@@ -1,5 +1,5 @@
 import type { Vec3 } from './kmp';
-import type { BrresEditorNode, EditorMeshTarget, MeshSelectionGranularity, MeshTransform } from './brresEditor';
+import type { EditorMeshTarget, MeshSelectionGranularity, MeshTransform } from './brresEditor';
 
 export interface ViewportTransformSelection {
   id: string;
@@ -10,19 +10,16 @@ export interface ViewportTransformSelection {
   rendererTarget?: ViewportRendererTarget;
 }
 
-export type ViewportRendererTarget =
-  | {
-      kind: 'brresNode';
-      archivePath: string;
-      modelName: string;
-      nodeId: number;
-    }
-  | {
-      kind: 'editorMesh';
-      target: EditorMeshTarget;
-      /** Untransformed bounding-box centre of the mesh, in game units. */
-      baseCenter: Vec3;
-    };
+/**
+ * What a gizmo drag drives in the renderer. Model mode used to move whole MDL0 bones as well;
+ * that was superseded by per-mesh editing, so a mesh is now the only thing a gizmo can target.
+ */
+export interface ViewportRendererTarget {
+  kind: 'editorMesh';
+  target: EditorMeshTarget;
+  /** Untransformed bounding-box centre of the mesh, in game units. */
+  baseCenter: Vec3;
+}
 
 /** Shape of the mesh-editing API exposed by the noclip MKW scene. */
 export interface EditorMeshRendererScene {
@@ -76,43 +73,6 @@ export type EditorMeshTransformPayload =
   | { kind: 'trs'; translation: Vec3; rotation: Vec3; scale: Vec3 }
   | { kind: 'matrix'; matrix: ArrayLike<number> };
 
-export interface BrresViewportPreviewScene extends EditorMeshRendererScene {
-  updateEditorBrresNodeTransform?: (
-    archivePath: string,
-    modelName: string,
-    nodeId: number,
-    translation: Vec3,
-    rotation: Vec3,
-    scale: Vec3,
-  ) => boolean;
-}
-
-export interface BrresViewportBridgeState {
-  selectedSceneNode: BrresEditorNode | null;
-  transformSelection: ViewportTransformSelection | null;
-  transformSelections: ViewportTransformSelection[];
-}
-
-export function toSceneNodeViewportTransformSelection(node: BrresEditorNode): ViewportTransformSelection {
-  return {
-    id: node.id,
-    label: `${node.name} - ${node.modelName}`,
-    position: node.transform.translation,
-    rotation: node.transform.rotation,
-    scale: node.transform.scale,
-    rendererTarget: {
-      kind: 'brresNode',
-      archivePath: node.archivePath,
-      modelName: node.modelName,
-      nodeId: node.nodeId,
-    },
-  };
-}
-
-export function toSceneNodeViewportTransformSelections(nodes: BrresEditorNode[]): ViewportTransformSelection[] {
-  return nodes.map(toSceneNodeViewportTransformSelection);
-}
-
 /** Builds the gizmo target for a picked mesh. Its position is the mesh centre plus its edit offset. */
 export function toMeshViewportTransformSelection(
   target: EditorMeshTarget,
@@ -149,27 +109,9 @@ export function meshTransformFromGizmoPose(
   };
 }
 
-export function buildBrresViewportBridge({
-  modelModeActive,
-  projectSelectionId,
-  archiveNodesById,
-  archiveNodes,
-}: {
-  modelModeActive: boolean;
-  projectSelectionId: string | null;
-  archiveNodesById: Record<string, BrresEditorNode>;
-  archiveNodes: BrresEditorNode[] | null | undefined;
-}): BrresViewportBridgeState {
-  const selectedSceneNode = projectSelectionId ? archiveNodesById[projectSelectionId] ?? null : null;
-  return {
-    selectedSceneNode,
-    transformSelection: modelModeActive && selectedSceneNode ? toSceneNodeViewportTransformSelection(selectedSceneNode) : null,
-    transformSelections: modelModeActive ? toSceneNodeViewportTransformSelections(archiveNodes ?? []) : [],
-  };
-}
-
+/** Pushes a live gizmo pose at the renderer so the mesh follows the drag before it is committed. */
 export function syncBrresViewportTransformSelectionPreview(
-  scene: BrresViewportPreviewScene | null,
+  scene: EditorMeshRendererScene | null,
   selection: ViewportTransformSelection,
   position: Vec3,
   rotation?: Vec3,
@@ -177,17 +119,6 @@ export function syncBrresViewportTransformSelectionPreview(
 ): boolean {
   const rendererTarget = selection.rendererTarget;
   if (!rendererTarget) return false;
-  if (rendererTarget.kind === 'editorMesh') {
-    const transform = meshTransformFromGizmoPose(rendererTarget.baseCenter, position, rotation, scale);
-    return scene?.setEditorMeshTransform?.(rendererTarget.target, { kind: 'trs', ...transform }) ?? false;
-  }
-  if (!rotation || !scale) return false;
-  return scene?.updateEditorBrresNodeTransform?.(
-    rendererTarget.archivePath,
-    rendererTarget.modelName,
-    rendererTarget.nodeId,
-    position,
-    rotation,
-    scale,
-  ) ?? false;
+  const transform = meshTransformFromGizmoPose(rendererTarget.baseCenter, position, rotation, scale);
+  return scene?.setEditorMeshTransform?.(rendererTarget.target, { kind: 'trs', ...transform }) ?? false;
 }

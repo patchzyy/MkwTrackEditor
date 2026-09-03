@@ -194,14 +194,14 @@ export function parseKcl(data: Uint8Array): KclMesh {
   const buffer = data.slice().buffer;
   const reader = new BinReader(buffer);
   const warnings: string[] = [];
-  if (data.length < 0x3c) return { triangles: [], warnings: ['KCL file is too small.'] };
+  if (data.length < 0x3c) return { triangles: [], warnings: ['The collision mesh file is too small to be read.'] };
 
   const posOffset = reader.u32(0);
   const normOffset = reader.u32(4);
   const triOffset = reader.u32(8);
   const octreeOffset = reader.u32(12);
   if (posOffset >= data.length || normOffset >= data.length || triOffset >= data.length) {
-    return { triangles: [], warnings: ['KCL header offsets are outside the file.'] };
+    return { triangles: [], warnings: ['The collision mesh is damaged: its header points outside the file.'] };
   }
 
   const header: KclHeader = {
@@ -264,8 +264,8 @@ export function parseKcl(data: Uint8Array): KclMesh {
     triangles.push({ a, b, c, flag, typeName: kclFlagName(flag), normal, prismIndex: i });
   }
 
-  if (triangles.length === 0) warnings.push('KCL parsed, but no raycastable triangles were recovered.');
-  if (octreeOffset >= data.length) warnings.push('KCL spatial index offset is outside the file.');
+  if (triangles.length === 0) warnings.push('The collision mesh contains no usable surfaces, so clicking the track will not snap to the ground.');
+  if (octreeOffset >= data.length) warnings.push('The collision mesh is damaged: its spatial index points outside the file.');
   // Degenerate prisms are common and harmless (KCL builders emit them for slivers), so they
   // are reported through `prismCount` rather than as a user-facing warning.
   return { triangles, warnings, header, source: data, prismCount: triangleCount };
@@ -300,11 +300,6 @@ function getPrismIndexMap(mesh: KclMesh): Map<number, number> {
   for (let i = 0; i < mesh.triangles.length; i++) map.set(mesh.triangles[i].prismIndex ?? i, i);
   prismIndexCache.set(mesh, { map, triangles: mesh.triangles });
   return map;
-}
-
-/** Discards a cached BVH, e.g. after mutating a mesh's triangle array in place. */
-export function invalidateKclBvh(mesh: KclMesh): void {
-  bvhCache.delete(mesh);
 }
 
 /** World-space bounding box of the collision mesh, or null when it is empty. */

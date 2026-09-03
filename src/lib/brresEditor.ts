@@ -125,12 +125,6 @@ export interface ImportedMesh {
   sourceShape?: EditorMeshTarget;
 }
 
-export const IDENTITY_MESH_TRANSFORM: MeshTransform = {
-  translation: { x: 0, y: 0, z: 0 },
-  rotation: { x: 0, y: 0, z: 0 },
-  scale: { x: 1, y: 1, z: 1 },
-};
-
 export function createIdentityMeshTransform(): MeshTransform {
   return {
     translation: { x: 0, y: 0, z: 0 },

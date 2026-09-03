@@ -14,7 +14,6 @@ import {
   meshTransformFromGizmoPose,
   syncBrresViewportTransformSelectionPreview,
   toMeshViewportTransformSelection,
-  type BrresViewportPreviewScene,
   type EditorMeshBoundsPayload,
   type EditorMeshPickPayload,
   type EditorMeshRendererScene,
@@ -2622,7 +2621,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
   }
 
   function syncRenderedTransformSelection(selection: ViewportTransformSelection, position: Vec3, rotation?: Vec3, scale?: Vec3) {
-    const scene = sceneRef.current as SceneGfx & BrresViewportPreviewScene | null;
+    const scene = sceneRef.current as SceneGfx & EditorMeshRendererScene | null;
     syncBrresViewportTransformSelectionPreview(scene, selection, position, rotation, scale);
   }
 

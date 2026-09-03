@@ -100,8 +100,10 @@ describe('U8', () => {
     }
   });
 
-  it('rejects data that is not a U8 archive', () => {
-    expect(() => parseU8(new Uint8Array(64))).toThrow(/Not a U8 archive/);
+  it('rejects data that is not a track archive, in words the status line can show', () => {
+    // 64 zero bytes: big enough to get past the size check, wrong magic.
+    expect(() => parseU8(new Uint8Array(64))).toThrow(/not a Mario Kart Wii track archive/);
+    // `src/lib/trackLoadErrors.test.ts` covers the rest of the malformed-input surface.
   });
 });
 

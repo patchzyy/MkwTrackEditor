@@ -4,33 +4,58 @@ export function isYaz0(data: Uint8Array): boolean {
   return data.length >= 16 && String.fromCharCode(...data.slice(0, 4)) === 'Yaz0';
 }
 
+/**
+ * Hard ceiling on what a Yaz0 header may claim to decompress to. The largest real course
+ * archive on record is well under 64 MB; this only exists so a corrupt or hostile header cannot
+ * ask the browser for a multi-gigabyte allocation before anything has been validated.
+ */
+const MAX_DECODED_SIZE = 256 * 1024 * 1024;
+
 export function decodeYaz0(data: Uint8Array): Uint8Array {
   if (!isYaz0(data)) return data;
   const reader = new BinReader(data.slice().buffer);
   const decodedSize = reader.u32(4);
+  if (decodedSize > MAX_DECODED_SIZE) {
+    throw new Error(
+      `This track archive is damaged: it claims to unpack to ${Math.round(decodedSize / (1024 * 1024))} MB, which is far larger than any real course.`,
+    );
+  }
+
   const out = new Uint8Array(decodedSize);
   let src = 16;
   let dst = 0;
   let validBits = 0;
   let code = 0;
 
+  // Reading past the end used to yield `undefined`, which stores as 0 — a truncated archive
+  // decoded to plausible-looking zero-filled garbage instead of reporting the problem.
+  const byteAt = (index: number): number => {
+    if (index >= data.length) {
+      throw new Error('This track archive is incomplete: the compressed data ends before the archive does. The file is probably truncated.');
+    }
+    return data[index];
+  };
+
   while (dst < decodedSize) {
     if (validBits === 0) {
-      code = data[src++];
+      code = byteAt(src++);
       validBits = 8;
     }
 
     if ((code & 0x80) !== 0) {
-      out[dst++] = data[src++];
+      out[dst++] = byteAt(src++);
     } else {
-      const b1 = data[src++];
-      const b2 = data[src++];
+      const b1 = byteAt(src++);
+      const b2 = byteAt(src++);
       const dist = ((b1 & 0x0f) << 8) | b2;
       let count = b1 >>> 4;
-      if (count === 0) count = data[src++] + 0x12;
+      if (count === 0) count = byteAt(src++) + 0x12;
       else count += 2;
 
       const copySrc = dst - (dist + 1);
+      if (copySrc < 0) {
+        throw new Error('This track archive is damaged: its compressed data refers to bytes before the start of the file.');
+      }
       for (let i = 0; i < count && dst < decodedSize; i++) out[dst++] = out[copySrc + i];
     }
 

@@ -794,11 +794,6 @@ export function addRespawnForCheckpoint(
   };
 }
 
-/** Creates an empty group; useful when starting a path from scratch. */
-export function createEmptyPathGroup(): KmpPathGroup {
-  return createPathGroup();
-}
-
 // ---------------------------------------------------------------------------
 // Point factories and generic path editing
 // ---------------------------------------------------------------------------

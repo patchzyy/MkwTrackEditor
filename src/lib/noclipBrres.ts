@@ -51,17 +51,6 @@ export async function decodeTextureImage(texture: DecodableTexture, level = 0): 
   }
 }
 
-/** Human-readable GX texture format name (`RGB5A3`, `CMPR`, ...). */
-export async function getTextureFormatName(format: number): Promise<string> {
-  try {
-    // @ts-ignore noclip source is vendored outside this app's tsconfig surface.
-    const GXTexture = await import('../../vendor/noclip.website/src/gx/gx_texture.js');
-    return GXTexture.getFormatName(format, null);
-  } catch {
-    return `Format ${format}`;
-  }
-}
-
 /** Renders a decoded texture to a PNG data URL at 1:1, for thumbnails and downloads. */
 export function textureImageToDataUrl(image: DecodedTextureImage): string | null {
   const canvas = textureImageToCanvas(image);
@@ -98,6 +87,13 @@ export interface NoclipBrresSummary {
     vis0: string[];
     scn0: string[];
   };
+  /**
+   * Why the archive could not be read, when it could not be. The summary still resolves to an
+   * empty model/texture list so a single bad archive cannot stop a track from opening, but the
+   * caller needs to know the difference between "no models" and "unreadable" — otherwise a
+   * corrupt `course_model.brres` looks exactly like an empty viewport with nothing to explain it.
+   */
+  error?: string;
 }
 
 export interface NoclipBrresSummaryOptions {
@@ -123,11 +119,12 @@ export async function parseNoclipBrresSummary(
   let rres: any;
   try {
     rres = BRRES.parse(new ArrayBufferSlice(data.slice().buffer));
-  } catch {
+  } catch (error) {
     return {
       models: [],
       textures: [],
       animations: { srt0: [], pat0: [], clr0: [], chr0: [], vis0: [], scn0: [] },
+      error: error instanceof Error && error.message ? error.message : 'the file is not a readable model archive',
     };
   }
   const renderedPreviewDataUrl =

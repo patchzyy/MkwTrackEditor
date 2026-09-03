@@ -1,118 +1,95 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  buildBrresViewportBridge,
+  meshTransformFromGizmoPose,
   syncBrresViewportTransformSelectionPreview,
-  toSceneNodeViewportTransformSelection,
-  toSceneNodeViewportTransformSelections,
+  toMeshViewportTransformSelection,
 } from './brresRenderAdapter';
+import type { EditorMeshTarget } from './brresEditor';
+
+const target: EditorMeshTarget = {
+  archivePath: './course_model.brres',
+  modelName: 'course',
+  shapeIndex: 4,
+  drawOpIndex: 11,
+  componentIndex: 2,
+  nodeId: 0,
+  granularity: 'component',
+};
+
+const baseCenter = { x: 100, y: 200, z: 300 };
 
 describe('BRRES render adapter', () => {
-  it('maps scene nodes into noclip viewport transform selections', () => {
-    const node = {
-      id: 'course_model.brres::node::course::7',
-      archivePath: 'course_model.brres',
-      modelName: 'course',
-      name: 'road_joint',
-      nodeId: 7,
-      parentNodeId: 0,
-      visible: true,
-      billboardMode: 0,
-      billboardRefNodeId: 0,
-      sourceOffset: 0x120,
-      transform: {
-        scale: { x: 1, y: 2, z: 3 },
-        rotation: { x: 10, y: 20, z: 30 },
-        translation: { x: 100, y: 200, z: 300 },
-      },
-    };
+  it('puts the gizmo at the mesh centre plus the edit offset', () => {
+    const selection = toMeshViewportTransformSelection(
+      target,
+      baseCenter,
+      { translation: { x: 5, y: -10, z: 15 }, rotation: { x: 0, y: 90, z: 0 }, scale: { x: 2, y: 2, z: 2 } },
+      'Tree',
+      'mesh-1',
+    );
 
-    expect(toSceneNodeViewportTransformSelection(node)).toEqual({
-      id: node.id,
-      label: 'road_joint - course',
-      position: node.transform.translation,
-      rotation: node.transform.rotation,
-      scale: node.transform.scale,
-      rendererTarget: {
-        kind: 'brresNode',
-        archivePath: 'course_model.brres',
-        modelName: 'course',
-        nodeId: 7,
-      },
-    });
-    expect(toSceneNodeViewportTransformSelections([node])).toHaveLength(1);
+    expect(selection.id).toBe('mesh-1');
+    expect(selection.label).toBe('Tree');
+    expect(selection.position).toEqual({ x: 105, y: 190, z: 315 });
+    expect(selection.rotation).toEqual({ x: 0, y: 90, z: 0 });
+    expect(selection.scale).toEqual({ x: 2, y: 2, z: 2 });
+    expect(selection.rendererTarget).toEqual({ kind: 'editorMesh', target, baseCenter });
   });
 
-  it('keeps BRRES preview-target routing in the app-side render adapter', () => {
-    const updateEditorBrresNodeTransform = vi.fn(() => true);
-    const selection = {
-      id: 'course_model.brres::node::course::7',
-      label: 'road_joint - course',
-      position: { x: 1, y: 2, z: 3 },
-      rotation: { x: 4, y: 5, z: 6 },
-      scale: { x: 7, y: 8, z: 9 },
-      rendererTarget: {
-        kind: 'brresNode' as const,
-        archivePath: 'course_model.brres',
-        modelName: 'course',
-        nodeId: 7,
-      },
-    };
+  it('turns an absolute gizmo pose back into the mesh-relative transform', () => {
+    expect(meshTransformFromGizmoPose(baseCenter, { x: 105, y: 190, z: 315 }, { x: 0, y: 90, z: 0 }, { x: 2, y: 2, z: 2 })).toEqual({
+      translation: { x: 5, y: -10, z: 15 },
+      rotation: { x: 0, y: 90, z: 0 },
+      scale: { x: 2, y: 2, z: 2 },
+    });
+  });
+
+  it('defaults a missing rotation and scale rather than writing undefined at the renderer', () => {
+    expect(meshTransformFromGizmoPose(baseCenter, { x: 100, y: 200, z: 300 }, undefined, undefined)).toEqual({
+      translation: { x: 0, y: 0, z: 0 },
+      rotation: { x: 0, y: 0, z: 0 },
+      scale: { x: 1, y: 1, z: 1 },
+    });
+  });
+
+  it('pushes a drag preview at the scene as a relative TRS transform', () => {
+    const setEditorMeshTransform = vi.fn(() => true);
+    const selection = toMeshViewportTransformSelection(
+      target,
+      baseCenter,
+      { translation: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 } },
+      'Tree',
+      'mesh-1',
+    );
 
     expect(
       syncBrresViewportTransformSelectionPreview(
-        { updateEditorBrresNodeTransform },
+        { setEditorMeshTransform },
         selection,
-        selection.position,
-        selection.rotation,
-        selection.scale,
+        { x: 110, y: 200, z: 300 },
+        { x: 0, y: 45, z: 0 },
+        { x: 1, y: 1, z: 1 },
       ),
     ).toBe(true);
-    expect(updateEditorBrresNodeTransform).toHaveBeenCalledWith(
-      'course_model.brres',
-      'course',
-      7,
-      selection.position,
-      selection.rotation,
-      selection.scale,
-    );
-    expect(syncBrresViewportTransformSelectionPreview(null, selection, selection.position)).toBe(false);
+    expect(setEditorMeshTransform).toHaveBeenCalledWith(target, {
+      kind: 'trs',
+      translation: { x: 10, y: 0, z: 0 },
+      rotation: { x: 0, y: 45, z: 0 },
+      scale: { x: 1, y: 1, z: 1 },
+    });
   });
 
-  it('builds the model-mode viewport bridge from app-side archive-node state', () => {
-    const node = {
-      id: 'course_model.brres::node::course::7',
-      archivePath: 'course_model.brres',
-      modelName: 'course',
-      name: 'road_joint',
-      nodeId: 7,
-      parentNodeId: 0,
-      visible: true,
-      sourceOffset: 0x120,
-      billboardMode: 0,
-      billboardRefNodeId: 0,
-      transform: {
-        scale: { x: 1, y: 2, z: 3 },
-        rotation: { x: 10, y: 20, z: 30 },
-        translation: { x: 100, y: 200, z: 300 },
-      },
-    };
-
-    const bridge = buildBrresViewportBridge({
-      modelModeActive: true,
-      projectSelectionId: node.id,
-      archiveNodesById: { [node.id]: node },
-      archiveNodes: [node],
-    });
-    expect(bridge.selectedSceneNode).toBe(node);
-    expect(bridge.transformSelection?.id).toBe(node.id);
-    expect(bridge.transformSelections).toHaveLength(1);
+  it('does nothing when there is no scene or no renderer target', () => {
+    const selection = toMeshViewportTransformSelection(
+      target,
+      baseCenter,
+      { translation: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 } },
+      'Tree',
+      'mesh-1',
+    );
+    expect(syncBrresViewportTransformSelectionPreview(null, selection, baseCenter)).toBe(false);
     expect(
-      buildBrresViewportBridge({
-        modelModeActive: false,
-        projectSelectionId: node.id,
-        archiveNodesById: { [node.id]: node },
-        archiveNodes: [node],
-      }).transformSelections,
-    ).toHaveLength(0);
+      syncBrresViewportTransformSelectionPreview({ setEditorMeshTransform: vi.fn(() => true) }, { ...selection, rendererTarget: undefined }, baseCenter),
+    ).toBe(false);
   });
 });

@@ -68,10 +68,10 @@ export async function loadTrackBytes(raw: Uint8Array, fileName: string, options:
       kmpFile = readKmpFile(courseKmp.data);
       warnings.push(...kmp.warnings);
     } catch (error) {
-      warnings.push(`course.kmp could not be parsed: ${error instanceof Error ? error.message : String(error)}`);
+      warnings.push(`The track layout (course.kmp) could not be read, so this track cannot be edited: ${error instanceof Error ? error.message : String(error)}`);
     }
   } else {
-    warnings.push('course.kmp is missing.');
+    warnings.push('This archive has no track layout (course.kmp), so there is nothing to edit in it.');
   }
 
   if (courseKcl?.data) {
@@ -79,18 +79,24 @@ export async function loadTrackBytes(raw: Uint8Array, fileName: string, options:
       kcl = parseKcl(courseKcl.data);
       warnings.push(...kcl.warnings);
     } catch (error) {
-      warnings.push(`course.kcl could not be parsed: ${error instanceof Error ? error.message : String(error)}`);
+      warnings.push(`The collision mesh (course.kcl) could not be read: ${error instanceof Error ? error.message : String(error)}`);
     }
   } else {
-    warnings.push('course.kcl is missing.');
+    warnings.push('This archive has no collision mesh (course.kcl), so clicking the track will not snap to the ground.');
   }
 
   for (const entry of archiveEntries.filter((candidate) => candidate.type === 'file' && candidate.path.toLowerCase().endsWith('.brres')).slice(0, brresSummaryLimit)) {
     if (!entry.data) continue;
+    const name = entry.path.split('/').pop() ?? entry.path;
     try {
-      brresSummaries[entry.path] = await parseNoclipBrresSummary(entry.data);
+      const summary = await parseNoclipBrresSummary(entry.data);
+      brresSummaries[entry.path] = summary;
+      // `parseNoclipBrresSummary` never throws — it reports an unreadable archive in `error` so
+      // one bad file cannot stop the track opening. Surfacing it here is what keeps a corrupt
+      // model from looking like an empty viewport with no explanation.
+      if (summary.error) warnings.push(`The model file ${name} could not be read, so it will not appear in the viewport.`);
     } catch (error) {
-      warnings.push(`${entry.path} could not be parsed by noclip BRRES parser: ${error instanceof Error ? error.message : String(error)}`);
+      warnings.push(`The model file ${name} could not be read: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

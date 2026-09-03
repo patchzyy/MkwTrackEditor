@@ -54,16 +54,29 @@ export function parseU8(data: Uint8Array): U8Entry[] {
 }
 
 export function parseU8WithLayout(data: Uint8Array): { entries: U8Entry[]; layout: U8Layout } {
+  if (data.length < 0x20) {
+    throw new Error('This file is too small to be a Mario Kart Wii track archive.');
+  }
   const buffer = data.slice().buffer;
   const reader = new BinReader(buffer);
-  if (reader.u32(0) !== 0x55aa382d) throw new Error('Not a U8 archive');
+  if (reader.u32(0) !== 0x55aa382d) {
+    throw new Error('This file is not a Mario Kart Wii track archive. Open a course .szs file, such as one from a track pack or the game disc.');
+  }
 
   const rootOffset = reader.u32(4);
   const tableSize = reader.u32(8);
   const declaredDataStart = reader.u32(12);
   const reservedWords = [reader.u32(16), reader.u32(20), reader.u32(24), reader.u32(28)];
+  if (rootOffset + 12 > data.length) {
+    throw new Error('This track archive is damaged: its file table starts past the end of the file.');
+  }
   const firstNode = readNode(reader, rootOffset, 0);
   const nodeCount = firstNode.size;
+  // Each node is 12 bytes, so a node count that does not fit in the file is corrupt. Checking
+  // it here keeps a bad header from asking for a multi-gigabyte array below.
+  if (nodeCount < 1 || rootOffset + nodeCount * 12 > data.length) {
+    throw new Error(`This track archive is damaged: its file table claims ${nodeCount} entries, which do not fit in the file.`);
+  }
   const stringTableOffset = rootOffset + nodeCount * 12;
   const nodes = Array.from({ length: nodeCount }, (_, i) => readNode(reader, rootOffset + i * 12, i));
   const entries: U8Entry[] = [];
