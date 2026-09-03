@@ -8,7 +8,15 @@
 
 import { mat3, mat4, vec3 } from 'gl-matrix';
 import type { MeshTransform } from '../brresEditor';
-import { BRRES_MODELS_GROUP, makeSubFileNameReader, readBrresRaw, type BrresRaw } from './brresRaw';
+import {
+  BRRES_MODELS_GROUP,
+  BRRES_PALETTES_GROUP,
+  BRRES_TEXTURES_GROUP,
+  findSubFile,
+  makeSubFileNameReader,
+  readBrresRaw,
+  type BrresRaw,
+} from './brresRaw';
 import { Mdl0Editor, type Mdl0DicKey, type Mdl0DrawList, type Mdl0ShapeInfo, type VertexArrayKind } from './mdl0Raw';
 import { computeJointMatrices, type BakeWarning } from './meshBake';
 
@@ -20,15 +28,30 @@ export interface MergeSource {
   transform: MeshTransform;
   /** Used in warning messages and to name the merged blocks. */
   label: string;
+  /**
+   * Decides what an imported texture or palette should be called in the target archive. Called
+   * with the sub-file's own bytes so the caller can tell "the track already has this exact
+   * image" (reuse it) from "the track has a different image under this name" (rename).
+   * Omitted means "keep every name as it is".
+   */
+  resolveResourceName?: (groupName: string, name: string, data: Uint8Array | null) => string;
 }
 
 export interface MergeResult {
   added: boolean;
   warnings: BakeWarning[];
-  /** Texture names the merged materials sample; the archive must carry TEX0s for these. */
+  /**
+   * Texture names the merged materials sample, as they are called *in the target archive*; the
+   * archive must carry TEX0s for these.
+   */
   textures: string[];
-  /** Palette names the merged materials sample; the archive must carry PLT0s for these. */
+  /** Palette names the merged materials sample, as they are called in the target archive. */
   palettes: string[];
+  /**
+   * Target name back to the name the sub-file has in the source archive, for every resource that
+   * had to be renamed to avoid clashing with a different image the track already had.
+   */
+  renamedResources: Map<string, string>;
   /** The source archive, so the caller can lift those textures out of it. */
   sourceArchive: BrresRaw | null;
 }
@@ -71,6 +94,7 @@ export function mergeImportedModel(target: Mdl0Editor, source: MergeSource): Mer
       sourceArchive: null,
       textures: [],
       palettes: [],
+      renamedResources: new Map(),
       warnings: [{ code: 'model.import-unreadable', message: `The model file for "${source.label}" could not be read: ${message(error)}` }],
     };
   }
@@ -85,6 +109,7 @@ export function mergeImportedModel(target: Mdl0Editor, source: MergeSource): Mer
       sourceArchive,
       textures: [],
       palettes: [],
+      renamedResources: new Map(),
       warnings: [{ code: 'model.import-empty', message: `"${source.label}" has no 3D model to place.` }],
     };
   }
@@ -101,7 +126,21 @@ export function mergeImportedModel(target: Mdl0Editor, source: MergeSource): Mer
   const materialIdMap = new Map<number, number>();
   const textures = new Set<string>();
   const palettes = new Set<string>();
+  const renamedResources = new Map<string, string>();
   let added = false;
+
+  /**
+   * Maps one resource name from the source archive to the name it will have here. Resolving this
+   * before the material is copied is what makes a rename work at all: the sampler's name pointer,
+   * the MDL0 texture-link entry and the copied TEX0 then all agree.
+   */
+  const resolveName = (groupName: string, name: string): string => {
+    if (!name || !source.resolveResourceName) return name;
+    const sub = findSubFile(sourceArchive, groupName, name);
+    const target = source.resolveResourceName(groupName, name, sub?.data ?? null);
+    if (target !== name) renamedResources.set(target, name);
+    return target;
+  };
 
   const drawLists: Array<{ list: Mdl0DrawList; ops: ReturnType<Mdl0Editor['readDrawOps']> }> = [
     { list: 'opaque', ops: from.readDrawOps('opaque') },
@@ -122,7 +161,7 @@ export function mergeImportedModel(target: Mdl0Editor, source: MergeSource): Mer
 
       const newShapeId = copyShape(target, from, shape, local, arrayIdMap, prefix);
       if (newShapeId === null) continue;
-      const materialId = copyMaterial(target, from, sourceMaterials[op.materialId], materialIdMap, textures, palettes, prefix, newShapeId, warnings);
+      const materialId = copyMaterial(target, from, sourceMaterials[op.materialId], materialIdMap, textures, palettes, prefix, newShapeId, warnings, resolveName);
       if (materialId === null) continue;
       target.queueDrawOp(list, { materialId, shapeId: newShapeId, nodeId: rootNodeId, priority: op.priority });
       added = true;
@@ -142,7 +181,7 @@ export function mergeImportedModel(target: Mdl0Editor, source: MergeSource): Mer
   if (!added && warnings.length === 0) {
     warnings.push({ code: 'model.import-empty', message: `"${source.label}" had no geometry to place.` });
   }
-  return { added, warnings, textures: [...textures], palettes: [...palettes], sourceArchive };
+  return { added, warnings, textures: [...textures], palettes: [...palettes], renamedResources, sourceArchive };
 }
 
 function copyShape(
@@ -242,6 +281,7 @@ function copyMaterial(
   prefix: string,
   shapeId: number,
   warnings: BakeWarning[],
+  resolveName: (groupName: string, name: string) => string,
 ): number | null {
   if (!material) {
     warnings.push({ code: 'model.import-material', message: 'A placed model referenced a material that is missing from its file.' });
@@ -257,9 +297,11 @@ function copyMaterial(
     const at = material.offset + samplerOffset + i * 0x34;
     const textureRelative = sourceView.getInt32(at + 0x00);
     const paletteRelative = sourceView.getInt32(at + 0x04);
+    const texture = textureRelative !== 0 ? from.readNameAt(at + textureRelative) : '';
+    const palette = paletteRelative !== 0 ? from.readNameAt(at + paletteRelative) : null;
     samplerNames.push({
-      texture: textureRelative !== 0 ? from.readNameAt(at + textureRelative) : '',
-      palette: paletteRelative !== 0 ? from.readNameAt(at + paletteRelative) : null,
+      texture: texture ? resolveName(BRRES_TEXTURES_GROUP, texture) : '',
+      palette: palette ? resolveName(BRRES_PALETTES_GROUP, palette) : null,
     });
   }
   for (const sampler of samplerNames) {

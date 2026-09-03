@@ -25,11 +25,11 @@ import {
   buildEditMatrix,
   collectAffectedVertices,
   collectDrawOps,
-  componentOwnsVerticesExclusively,
   computeJointMatrices,
   countArrayUsers,
   isIdentityTransform,
   readShapeGeometryCache,
+  splitSharedVertexData,
   transformNormalArray,
   transformPositionArray,
   type BakeWarning,
@@ -83,6 +83,7 @@ export function bakeCourseModel(brres: Uint8Array, options: BakeCourseModelOptio
   let addedMeshes = 0;
   let changed = false;
   const merges: MergeResult[] = [];
+  const resolveResourceName = createResourceNamer(raw);
 
   for (const subFile of modelsGroup.entries) {
     const modelEdits = edits.filter((edit) => edit.target.modelName === subFile.name);
@@ -93,7 +94,7 @@ export function bakeCourseModel(brres: Uint8Array, options: BakeCourseModelOptio
     if (modelEdits.length === 0 && modelImports.length === 0) continue;
 
     const model = new Mdl0Editor(subFile.data, makeSubFileNameReader(raw, subFile));
-    const outcome = applyModelEdits(model, modelEdits, modelImports, options.importSources ?? new Map());
+    const outcome = applyModelEdits(model, modelEdits, modelImports, options.importSources ?? new Map(), resolveResourceName);
     warnings.push(...outcome.warnings);
     merges.push(...outcome.merges);
     transformedMeshes += outcome.transformedMeshes;
@@ -118,9 +119,64 @@ export function bakeCourseModel(brres: Uint8Array, options: BakeCourseModelOptio
 }
 
 /**
- * Copies the TEX0/PLT0 sub-files an imported model samples into the course archive. Names the
- * course already has are skipped, so the track's own texture wins and two copies of the same
- * object share one image.
+ * Decides what an imported model's texture or palette is called once it is in the course
+ * archive.
+ *
+ * A name the course already uses is kept only when the image behind it is byte-identical — two
+ * placements of the same object then share one TEX0, and an object that samples a texture the
+ * track genuinely already has costs nothing. When the course has a *different* image under that
+ * name, the import is renamed instead. Reusing it would silently repaint the placed object with
+ * the track's own artwork, which is what this replaces.
+ */
+function createResourceNamer(raw: BrresRaw): (groupName: string, name: string, data: Uint8Array | null) => string {
+  const decided = new Map<string, string>();
+  const taken = new Set<string>();
+  for (const group of raw.groups) for (const entry of group.entries) taken.add(`${group.name}|${entry.name}`);
+
+  return (groupName, name, data) => {
+    if (!name) return name;
+    const key = `${groupName}|${name}|${fingerprint(data)}`;
+    const already = decided.get(key);
+    if (already !== undefined) return already;
+
+    const existing = findSubFile(raw, groupName, name);
+    let target = name;
+    if (existing && data && !sameBytes(existing.data, data)) {
+      for (let i = 1; ; i++) {
+        const candidate = `${name}_${i}`;
+        if (!taken.has(`${groupName}|${candidate}`)) {
+          target = candidate;
+          break;
+        }
+      }
+    }
+    taken.add(`${groupName}|${target}`);
+    decided.set(key, target);
+    return target;
+  };
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/** Enough of a content identity to tell two same-named imports apart. */
+function fingerprint(data: Uint8Array | null): string {
+  if (!data) return 'none';
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < data.length; i++) {
+    hash ^= data[i];
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `${data.length}:${(hash >>> 0).toString(16)}`;
+}
+
+/**
+ * Copies the TEX0/PLT0 sub-files an imported model samples into the course archive. A name the
+ * course already carries is skipped, because `createResourceNamer` has already guaranteed that
+ * the name only survives when the image behind it is the same one.
  *
  * The new sub-files go in *ahead of* the first sub-file the writer cannot relocate — the texture
  * and colour animations, whose internal name pointers this editor does not model. Everything
@@ -154,7 +210,8 @@ function copyImportedResources(raw: BrresRaw, merges: readonly MergeResult[], wa
       const group = groupFor(job.groupName);
       for (const name of job.names) {
         if (group.entries.some((entry) => entry.name === name)) continue;
-        const original = findSubFile(source, job.groupName, name);
+        // A renamed resource still has to be looked up under the name it has in its own file.
+        const original = findSubFile(source, job.groupName, merge.renamedResources.get(name) ?? name);
         if (!original) {
           warnings.push({
             code: 'model.import-texture-missing',
@@ -203,6 +260,7 @@ function applyModelEdits(
   edits: readonly MeshEdit[],
   imports: readonly ImportedMesh[],
   importSources: ReadonlyMap<string, Uint8Array>,
+  resolveResourceName: (groupName: string, name: string, data: Uint8Array | null) => string,
 ): ModelEditOutcome {
   const warnings: BakeWarning[] = [];
   let transformedMeshes = 0;
@@ -223,7 +281,24 @@ function applyModelEdits(
     return cache;
   };
 
+  /**
+   * A shape that more than one draw call draws is drawn more than once — usually under a
+   * different node, so the copies sit somewhere else on the track. Its vertex arrays are the
+   * same arrays, so editing through one draw call would move every copy. Give the edited draw
+   * call a shape of its own first; the vertex-array copy-on-write below then separates the data,
+   * because the clone starts out sharing its arrays with the original.
+   */
+  const detachSharedShape = (target: DrawOpRef): void => {
+    if (drawOps.filter((ref) => ref.op.shapeId === target.op.shapeId).length < 2) return;
+    const shape = model.getShape(target.op.shapeId);
+    if (!shape) return;
+    const clonedId = model.duplicateShape(shape, uniqueName(model, 'shape', shape.name), shape.positionArrayId, shape.normalArrayId);
+    target.op.shapeId = clonedId;
+    caches.delete(target.combinedIndex);
+  };
+
   // Transforms first: deletions only change the draw list, so they cannot disturb them.
+  let detachedShapes = false;
   for (const edit of edits) {
     if (edit.deleted || !edit.visible || isIdentityTransform(edit.transform)) continue;
     const targets = resolveTargets(drawOps, edit);
@@ -231,13 +306,18 @@ function applyModelEdits(
       warnings.push({ code: 'model.edit-unmatched', message: `An edited mesh (draw call ${edit.target.drawOpIndex}) is no longer in the course model.` });
       continue;
     }
+    for (const target of targets) {
+      const before = target.op.shapeId;
+      detachSharedShape(target);
+      if (target.op.shapeId !== before) detachedShapes = true;
+    }
     const applied = applyTransformEdit(model, edit, targets, shapeCache, warnings);
     if (applied) transformedMeshes++;
   }
 
   // Duplicates and imports append geometry; they need the pre-deletion draw ops.
   for (const mesh of imports) {
-    const result = appendImportedMesh(model, mesh, drawOps, shapeCache, importSources);
+    const result = appendImportedMesh(model, mesh, drawOps, shapeCache, importSources, resolveResourceName);
     warnings.push(...result.warnings);
     if (result.merge) merges.push(result.merge);
     if (result.added) addedMeshes++;
@@ -262,9 +342,13 @@ function applyModelEdits(
   } else {
     for (const list of ['opaque', 'translucent'] as const) {
       const appended = model.pendingDrawOps(list);
-      if (appended.length === 0) continue;
-      const existing = model.readDrawOps(list) ?? [];
-      model.writeDrawOps(list, [...existing, ...appended]);
+      // `detachedShapes` means a draw op was repointed at a cloned shape in place, so the list
+      // has to be rewritten even though no op was added or removed.
+      if (appended.length === 0 && !detachedShapes) continue;
+      const existing = model.readDrawOps(list);
+      if (!existing) continue;
+      const kept = drawOps.filter((ref) => ref.list === list).map((ref) => ref.op);
+      model.writeDrawOps(list, [...kept, ...appended]);
     }
   }
 
@@ -311,12 +395,6 @@ function applyTransformEdit(
   const shapes = model.listShapes();
 
   for (const step of plan) {
-    if (componentIndex !== null && !componentOwnsVerticesExclusively(step.cache, componentIndex, step.positions)) {
-      warnings.push({
-        code: 'model.component-shared-vertices',
-        message: `"${step.cache.shape.name}" shares vertices between components, so moving one piece also moves its neighbours.`,
-      });
-    }
     // Fold the joint matrix out and back in: the arrays hold model-space positions.
     const inverseJoint = mat4.create();
     if (!mat4.invert(inverseJoint, step.cache.joint)) mat4.identity(inverseJoint);
@@ -333,7 +411,21 @@ function applyTransformEdit(
         model.setShapeArrayId(shape, 'vtxPos', positionArrayId);
       }
     }
-    const positionResult = transformPositionArray(model, positionArrayId, step.positions, local);
+
+    // Stop sharing vertex data with the neighbouring components before writing into it.
+    let positions = step.positions;
+    if (componentIndex !== null) {
+      const split = splitSharedVertexData(model, step.cache, componentIndex, 'vtxPos', positionArrayId, positions);
+      positions = split.entries;
+      if (split.blocked !== null) {
+        warnings.push({
+          code: 'model.component-shared-vertices',
+          message: describeBlockedSplit(shape.name, 'positions', split.blocked),
+        });
+      }
+    }
+
+    const positionResult = transformPositionArray(model, positionArrayId, positions, local);
     if (positionResult) {
       model.expandModelBounds(positionResult.bounds.min[0], positionResult.bounds.min[1], positionResult.bounds.min[2]);
       model.expandModelBounds(positionResult.bounds.max[0], positionResult.bounds.max[1], positionResult.bounds.max[2]);
@@ -354,10 +446,38 @@ function applyTransformEdit(
           model.setShapeArrayId(shape, 'vtxNrm', normalArrayId);
         }
       }
-      transformNormalArray(model, normalArrayId, step.normals, local);
+
+      // Two components of one shape sharing a normal is the common case, not the exception: any
+      // two flat-topped pieces both name the "straight up" entry. Without this split, rotating
+      // one piece would re-light every other piece that shares the normal.
+      let normals = step.normals;
+      if (componentIndex !== null) {
+        const split = splitSharedVertexData(model, step.cache, componentIndex, 'vtxNrm', normalArrayId, normals);
+        normals = split.entries;
+        if (split.blocked !== null) {
+          warnings.push({
+            code: 'model.component-shared-vertices',
+            message: describeBlockedSplit(shape.name, 'normals', split.blocked),
+          });
+        }
+      }
+      transformNormalArray(model, normalArrayId, normals, local);
     }
   }
   return true;
+}
+
+/**
+ * The two cases a per-component split genuinely cannot handle. Both are hard limits of the
+ * format rather than gaps in the implementation, and neither occurs in any of the 338 tracks
+ * installed here.
+ */
+function describeBlockedSplit(shapeName: string, what: 'positions' | 'normals', reason: 'index-width' | 'entry-count'): string {
+  const limit = reason === 'index-width'
+    ? 'its display list addresses that array with 8-bit references, which cannot reach past entry 255'
+    : 'that array already holds close to the 65,535 entries the format allows';
+  return `"${shapeName}" shares ${what} between connected components and they could not be split, because ${limit}. `
+    + `Moving this piece also moves the pieces it shares ${what} with; move the whole mesh instead.`;
 }
 
 function hasRotationOrScale(edit: MeshEdit): boolean {
@@ -385,6 +505,7 @@ function appendImportedMesh(
   drawOps: readonly DrawOpRef[],
   shapeCache: (drawOp: DrawOpRef) => ShapeGeometryCache | null,
   importSources: ReadonlyMap<string, Uint8Array>,
+  resolveResourceName: (groupName: string, name: string, data: Uint8Array | null) => string,
 ): AppendResult {
   if (!mesh.visible) return { added: false, warnings: [] };
   if (mesh.sourceShape) return duplicateCourseMesh(model, mesh, drawOps, shapeCache);
@@ -403,6 +524,7 @@ function appendImportedMesh(
     modelName: mesh.modelName || null,
     transform: mesh.transform,
     label: describeImport(mesh),
+    resolveResourceName,
   };
   const merge = mergeImportedModel(model, request);
   return { added: merge.added, warnings: merge.warnings, merge };

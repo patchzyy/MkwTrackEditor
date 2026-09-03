@@ -33,8 +33,10 @@ import {
   readPrimitiveVertices,
   readVertexDescriptor,
   valuesFitFormat,
+  writeAttributeIndex,
   type GxCompType,
   type GxVertexArrayFormat,
+  type GxVertexDescriptor,
 } from './gxVertex';
 
 export type Mdl0DicKey =
@@ -415,6 +417,11 @@ export class Mdl0Editor {
    * "distance back to the model" field, and the dictionary entries — all rewritten here.
    */
   private insertGap(at: number, length: number): void {
+    // Captured before anything moves: which materials came from the source file (an appended one
+    // declares its names through `addStringRef` instead) and where they were.
+    const appendedRegionBefore = this.appendedRegionStart;
+    const materialsBefore = (this.dics.get('material')?.entries ?? []).map((entry) => entry.offset);
+
     const next = new Uint8Array(this.buffer.length + length);
     next.set(this.buffer.subarray(0, at), 0);
     next.set(this.buffer.subarray(at), at + length);
@@ -442,6 +449,34 @@ export class Mdl0Editor {
     const info = this.nameFieldOffset + 0x04;
     const nodeTable = this.view.getInt32(info + 0x24);
     if (nodeTable !== 0 && info + nodeTable >= at) this.view.setInt32(info + 0x24, nodeTable + length);
+
+    // A name pointer is stored relative to the field holding it and aims *out* of the model, at
+    // the archive's string pool. Moving the block that holds one therefore invalidates it, and
+    // `collectStringRefs` reads a material's sampler names back through exactly these pointers —
+    // so a stale one does not merely misplace a name, it makes every sampler in the file read as
+    // empty and the exported track lose its textures. Re-relativize them against the new home.
+    for (let i = 0; i < materialsBefore.length; i++) {
+      const before = materialsBefore[i];
+      if (before < at) continue; // did not move
+      if (before >= appendedRegionBefore) continue; // appended: names are declared explicitly
+      const offset = before + length;
+      const samplerCount = this.view.getUint32(offset + 0x2c);
+      const samplerOffset = this.view.getUint32(offset + 0x30);
+      for (let s = 0; s < samplerCount; s++) {
+        const sampler = offset + samplerOffset + s * 0x34;
+        for (const field of [0x00, 0x04]) {
+          const relative = this.view.getInt32(sampler + field);
+          if (relative !== 0) this.view.setInt32(sampler + field, relative - length);
+        }
+      }
+    }
+
+    // Names declared for blocks the editor appended were recorded at their pre-move offsets.
+    this.extraStringRefs = this.extraStringRefs.map((ref) => ({
+      ...ref,
+      offset: shift(ref.offset),
+      base: ref.base === undefined ? undefined : shift(ref.base),
+    }));
   }
 
   // ------------------------------------------------------------------ vertex arrays
@@ -530,6 +565,67 @@ export class Mdl0Editor {
     // `mdl0Offset` (block start relative to the model) is stored at +0x04 in an array block.
     this.view.setInt32(offset + 0x04, -offset);
     return { promoted: true };
+  }
+
+  /**
+   * Re-emits a vertex array with more entries than it had, appended past the model's end, and
+   * repoints its dictionary entry. `values` must hold `newCount` whole entries.
+   *
+   * Used to give one connected component private copies of vertex-array entries it would
+   * otherwise share with a neighbouring component. The array keeps its own fixed-point format
+   * when the new values still fit it, and is promoted to float32 when they do not — the same
+   * rule `writeVertexArrayValues` follows.
+   */
+  public growVertexArray(array: Mdl0VertexArrayInfo, values: Float32Array, newCount: number): { promoted: boolean } {
+    const format = this.vertexArrayFormat(array);
+    if (values.length !== newCount * format.componentCount) {
+      throw new Error(`MDL0: vertex array "${array.name}" expects ${newCount * format.componentCount} values for ${newCount} entries.`);
+    }
+    if (newCount > 0xffff) {
+      throw new Error(`MDL0: vertex array "${array.name}" cannot hold ${newCount} entries; the count field is 16-bit.`);
+    }
+
+    const keepsFormat = valuesFitFormat(values, format);
+    const outputFormat: GxVertexArrayFormat = keepsFormat ? format : { ...format, compType: GX_COMP_TYPE.F32, compShift: 0 };
+    const encoded = encodeVertexArray(values, outputFormat);
+    const stride = outputFormat.componentCount * componentByteSize(outputFormat.compType);
+    const dataStart = 0x40;
+    const blockSize = alignUp(dataStart + encoded.length, 0x20);
+    const block = new Uint8Array(blockSize);
+    // Keep the original header (id, name pointer, and the position array's min/max) and fix up
+    // only what actually changed.
+    block.set(this.buffer.subarray(array.blockOffset, array.blockOffset + Math.min(dataStart, array.blockSize)), 0);
+    const blockView = new DataView(block.buffer);
+    blockView.setUint32(0x00, blockSize);
+    blockView.setUint32(0x08, dataStart);
+    blockView.setUint32(0x18, outputFormat.compType);
+    if (array.kind === 'vtxClr') {
+      blockView.setUint8(0x1c, stride);
+    } else {
+      blockView.setUint8(0x1c, outputFormat.compShift);
+      blockView.setUint8(0x1d, stride);
+    }
+    blockView.setUint16(0x1e, newCount);
+    block.set(encoded, dataStart);
+
+    const offset = this.append(block, 0x20);
+    const dic = this.dics.get(array.kind)!;
+    this.writeDic(array.kind, dic.entries.map((entry, index) => (index === array.index ? { ...entry, offset } : entry)));
+    // `mdl0Offset` (block start relative to the model) lives at +0x04 in an array block.
+    this.view.setInt32(offset + 0x04, -offset);
+    return { promoted: !keepsFormat };
+  }
+
+  /**
+   * Points one display-list vertex of a shape at a different entry of a vertex array.
+   *
+   * `vertexOffset` is a byte offset inside the shape's primitive display list, as reported by
+   * `readShapeGeometry().vertexOffsets`. The display list is patched in place, so nothing moves.
+   */
+  public setPrimitiveAttributeIndex(shape: Mdl0ShapeInfo, vcd: GxVertexDescriptor, vertexOffset: number, attr: number, index: number): void {
+    const dl = this.buffer.subarray(shape.primOffset, shape.primOffset + shape.primSize);
+    writeAttributeIndex(dl, vertexOffset, vcd, attr, index);
+    this.dirty = true;
   }
 
   /** Copies a vertex array to a fresh block and appends it as a new array. Returns its id. */
