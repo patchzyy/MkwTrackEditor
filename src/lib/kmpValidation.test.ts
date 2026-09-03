@@ -171,7 +171,8 @@ describe('KMP validation', () => {
     const issue = validateKmpFile(file).find((candidate) => candidate.code === 'checkpoint.respawn-out-of-range');
     expect(issue?.level).toBe('error');
     expect(issue?.entityId).toBe('CKPT-1');
-    expect(issue?.message).toContain('#7');
+    // Records are numbered from 1 in every message, matching the outliner.
+    expect(issue?.message).toBe('Checkpoint #2 points at respawn point #8, which does not exist.');
   });
 
   it('reports a checkpoint with no respawn point assigned', () => {
@@ -292,6 +293,16 @@ describe('KMP validation', () => {
     const found = codes(validateKmpFile(file));
     expect(found).toContain('camera.route-missing');
     expect(found).toContain('camera.route-out-of-range');
+  });
+
+  it('ignores the route field of a camera that does not travel along a route', () => {
+    // Retail Bowser's Castle stores 251 in the route field of a stationary camera. The game
+    // never reads it, so neither should the validator.
+    const file = validTrack();
+    file.cameras.push(camera({ type: 3, routeIndex: 251 }));
+    const found = codes(validateKmpFile(file));
+    expect(found).not.toContain('camera.route-out-of-range');
+    expect(found).not.toContain('camera.route-missing');
   });
 
   it('reports an opening camera index that does not exist', () => {

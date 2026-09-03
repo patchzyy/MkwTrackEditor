@@ -1,0 +1,339 @@
+/*
+ * KMP-mode styles. Imported by `KmpMode.tsx`, so they only load with the mode. Everything is
+ * scoped under a `kmp*` class name; the shared shell styles in `src/styles.css` are untouched.
+ */
+
+.kmpPanel .placeAssetsHeader {
+  /* The panel is a column flexbox; without this the header shrinks to its min-height and the
+     item count spills over the tree below it. */
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.kmpTreeToolbar {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.kmpTreeToolbar .button {
+  flex: 1 1 0;
+  padding: 4px 7px;
+  font-size: 11px;
+}
+
+.kmpPanelBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 8px 12px;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.kmpFilter {
+  width: 100%;
+}
+
+.kmpTree {
+  display: grid;
+  gap: 1px;
+  align-content: start;
+}
+
+.kmpTreeEmpty {
+  margin: 0;
+  padding: 10px 2px;
+  color: #9faaba;
+  font-size: 12px;
+}
+
+.kmpTreeRow {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  min-height: 22px;
+}
+
+.kmpTreeRow.isSection {
+  margin-top: 4px;
+}
+
+.kmpTreeRow.isSection .kmpTreeName {
+  font-weight: 600;
+  color: #dbe4f0;
+}
+
+.kmpTreeRow.isSelected {
+  background: #1d2836;
+  border-color: #2f4460;
+}
+
+.kmpTreeRow.isPrimary {
+  background: #24334a;
+  border-color: #3d5c86;
+}
+
+.kmpTreeRow.isHidden .kmpTreeName,
+.kmpTreeRow.isHidden .kmpTreeDetail {
+  opacity: 0.45;
+}
+
+.kmpTreeRow:hover {
+  background: #182130;
+}
+
+.kmpTreeChevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: #8fa0b6;
+  cursor: pointer;
+}
+
+.kmpTreeChevron:hover {
+  color: #e7ecf4;
+}
+
+.kmpTreeChevronSpacer {
+  cursor: default;
+}
+
+.kmpTreeLabel {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  width: 100%;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: #cfd8e6;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kmpTreeAccent {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+/* The name is what identifies the row, so the detail column gives up its width first. */
+.kmpTreeName {
+  flex: 0 1 auto;
+  flex-shrink: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kmpTreeDetail {
+  flex: 1 1 0;
+  flex-shrink: 200;
+  min-width: 0;
+  color: #7d8b9e;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kmpTreeIssue {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.kmpTreeIssue.isError {
+  color: #ff6b6b;
+}
+
+.kmpTreeIssue.isWarning {
+  color: #ffc45e;
+}
+
+.kmpTreeCount {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: #1b2432;
+  color: #8fa0b6;
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.kmpTreeEye {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: #8fa0b6;
+  cursor: pointer;
+}
+
+.kmpTreeEye:hover {
+  background: #23304a;
+  color: #e7ecf4;
+}
+
+/* --- Inspector ------------------------------------------------------------- */
+
+.kmpInspector {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.kmpToolGroup {
+  display: grid;
+  gap: 7px;
+  align-content: start;
+  padding: 9px 10px;
+  border: 1px solid #232c39;
+  border-radius: 7px;
+  background: #141a23;
+}
+
+.kmpToolGroup h3 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8fa0b6;
+}
+
+.kmpSelectionName {
+  margin: 0;
+  font-size: 13px;
+  color: #e7ecf4;
+}
+
+.kmpToolHint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #8b9aad;
+}
+
+.kmpButtonRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.kmpButtonRow .button.isActive {
+  border-color: #4f7fc4;
+  background: #24405f;
+  color: #eaf2ff;
+}
+
+.kmpLinkEditor {
+  display: grid;
+  gap: 4px;
+}
+
+.kmpLinkLabel {
+  font-size: 11px;
+  color: #8fa0b6;
+}
+
+.kmpLinkChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.kmpLinkChip {
+  padding: 2px 7px;
+  border: 1px solid #33445e;
+  border-radius: 10px;
+  background: #1a2434;
+  color: #cfd8e6;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.kmpLinkChip:hover {
+  border-color: #6b4444;
+  background: #2c1f1f;
+}
+
+.kmpIssueLink {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #cfd8e6;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kmpIssueLink:hover {
+  color: #9dc6ff;
+  text-decoration: underline;
+}
+
+.kmpIssueFix {
+  justify-self: start;
+  margin-top: 4px;
+}
+
+/* --- Viewport HUD ---------------------------------------------------------- */
+
+.kmpToolsOverlay {
+  display: grid;
+  gap: 6px;
+  min-width: 250px;
+}
+
+.kmpToolsRow {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.kmpToolsLabel {
+  font-size: 11px;
+  color: #8fa0b6;
+}
+
+.kmpToolsButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.kmpToolsButtons .button {
+  padding: 3px 7px;
+  font-size: 11px;
+}
+
+.kmpToolsButtons .button.isActive {
+  border-color: #4f7fc4;
+  background: #24405f;
+  color: #eaf2ff;
+}

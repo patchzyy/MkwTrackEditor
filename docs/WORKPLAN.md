@@ -205,6 +205,59 @@ Verified with `npx tsc --noEmit -p tsconfig.json` (clean), `npx vitest run` (429
 tracks, exports the `.szs`, re-reads it and re-parses the BRRES.
 Screenshots: `docs/screenshots/visual-mode-*.png`.
 
+### KMP mode — complete (agent J)
+
+KMP mode is now a real track-data editor rather than a property sheet bolted to a picker.
+
+- **Outliner** (`src/ui/kmp/KmpOutliner.tsx`): the whole track as a tree of sections, groups and
+  points, with friendly names only — the twelve headings are "Start points", "Enemy routes",
+  "Checkpoints", "Track settings" and so on, never `KTPT`/`ENPH`/`STGI`. Search, expand/collapse,
+  per-section eye toggles wired to the same visibility state the viewport uses, group colour dots,
+  validation badges that roll up from a point to its group and section, click to select a whole
+  group, ctrl-click to add, shift-click for a range, double-click to frame.
+- **Tool inspector** (`KmpInspector.tsx`): the buttons that apply to what is selected. Path graphs
+  get insert before/after, delete point, split, join, reverse group, reverse path, delete group and
+  a prev/next connection editor that respects the six-link limit. Checkpoints get finish
+  line/key/ordinary, key renumbering in driving order, nearest-respawn assignment and "new respawn
+  here". Routes get append and reverse. A multi-selection gets batch move and batch object-type
+  replacement. Everything is one undo step.
+- **Viewport gestures** (`KmpToolsOverlay.tsx`): drag a group's end handle onto another group to
+  connect it, or onto a group it already leads to, to disconnect it; drag across the track to draw
+  a checkpoint; group colours and the checkpoint corridor as overlay switches. F frames, H hides
+  the selection's layer, the numpad switches views.
+- **Validation** is in the mode's own panel, each message clickable to select and frame the record
+  it is about, with a one-click repair where one exists (drop a broken route or camera link, show a
+  hidden object, create a route, assign respawns, renumber key checkpoints).
+
+Three real bugs came out of it. `writePathGraph` left a group record's six link slots unpadded, so
+an edited `KmpFile` no longer matched a parsed one and the UI printed the 0xFF null slots as
+"group 256". Path-graph validation issues carried an entity id (`ENPH-2`) that no entity has, so
+they could never select anything. And every message numbered records from 0 while the UI numbered
+them from 1 — the whole app is 1-based now. Two gaps were filled: the start point's player index
+had no editor at all, and the track settings were an unlabelled row of raw bytes.
+
+Verified with `npx tsc --noEmit -p tsconfig.json` (clean), `npx vitest run` (505 passed, 1
+skipped), `npx vite build` (ok), a new round-trip test that drives insert/split/link/renumber/
+respawn edits over all 338 real tracks on this machine (`src/lib/kmpEditRoundTrip.test.ts`:
+byte-stable untouched, byte- and model-stable after editing, no new validation errors), and a
+browser pass over `Z0.szs` and `Z13.szs` (`scripts/kmp-ui-probe.mjs` +
+`scripts/probe-kmp-mode-ui.js`). Screenshots: `docs/screenshots/kmp-ui-*.png`.
+
+Validator tuning done at the same time, measured against the 336 real tracks with checkpoints
+that are installed on this machine (316 now report no errors at all):
+
+- "Only one lap counter" and "no repeated key checkpoint" both fired on every track that splits
+  into parallel routes, which is exactly where repeating a key number is correct. Both rules now
+  ask whether a driver would cross the two copies on the *same* run — reachability along `next`
+  links, stopping at the group the lap starts in, because a checkpoint path is a loop and plain
+  reachability says everything reaches everything.
+- A gap in the key numbering is a warning, not an error; ported tracks ship gaps and still count
+  laps.
+- The character-selection camera index in the CAME header is a warning: a course KMP never drives
+  that screen and ports routinely leave a stale value there.
+- A camera type that does not travel along a route no longer has its route field checked. Retail
+  Bowser's Castle stores 251 in that field on a stationary camera, which the game ignores.
+
 ### Agent K — UI redesign and content browser (wave 2)
 
 Section 7 is done: the editor is one dark 3D-editor shell instead of a pile of ad-hoc panels.

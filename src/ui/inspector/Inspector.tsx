@@ -26,6 +26,7 @@ import { PathGroupSection } from './sections/PathGroupSection';
 import { RespawnCannonSection } from './sections/RespawnCannonSection';
 import { RoutePointSection } from './sections/RoutePointSection';
 import { StageSection } from './sections/StageSection';
+import { StartPointSection } from './sections/StartPointSection';
 
 /** Property inspector for the primary selected KMP record. */
 export function Inspector({
@@ -67,6 +68,7 @@ export function Inspector({
   onChangeBattleFinishField,
   onChangeStageField,
   onChangeStageFlareColor,
+  onChangeStartPlayerIndex,
   onChangeRotation,
   onChangeScale,
   onChangeObjectId,
@@ -112,6 +114,7 @@ export function Inspector({
   onChangeBattleFinishField: (field: KmpBattleFinishField, value: number) => void;
   onChangeStageField: (field: KmpStageField, value: number) => void;
   onChangeStageFlareColor: (channelIndex: number, value: number) => void;
+  onChangeStartPlayerIndex: (playerIndex: number) => void;
   onChangeRotation: (rotation: Vec3) => void;
   onChangeScale: (scale: Vec3) => void;
   onChangeObjectId: (objectId: number) => void;
@@ -184,6 +187,7 @@ export function Inspector({
         onChangeCannonField={onChangeCannonField}
         onChangeBattleFinishField={onChangeBattleFinishField}
       />
+      <StartPointSection entity={entity} onChangePlayerIndex={onChangeStartPlayerIndex} />
       <StageSection entity={entity} onChangeStageField={onChangeStageField} onChangeStageFlareColor={onChangeStageFlareColor} />
       {(entity.rotation || entity.scale) && <div className="detailsSectionHeader">Transform</div>}
       {entity.rotation && (

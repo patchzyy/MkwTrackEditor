@@ -31,7 +31,7 @@ import {
   writePathGraph,
   type PathGraph,
 } from './kmpGraph';
-import { createEmptyKmpFile, type KmpCheckpoint, type KmpEnemyPoint, type KmpPathGroup } from './kmpFile';
+import { KMP_NULL_INDEX_8, createEmptyKmpFile, type KmpCheckpoint, type KmpEnemyPoint, type KmpPathGroup } from './kmpFile';
 import { decodeYaz0 } from './yaz0';
 import { parseU8 } from './u8';
 import { readKmpFile } from './kmpFile';
@@ -367,6 +367,60 @@ describe('lap path validity', () => {
     const validity = computeLapPathValidity(g);
     expect(validity.missingKeyCheckpoints).toEqual([2]);
     expect(validity.duplicateKeyCheckpoints).toEqual([1]);
+  });
+
+  it('accepts a key number repeated across two parallel routes', () => {
+    // Group 0 forks into 1 and 2, which rejoin at 3. A driver only ever crosses one of the
+    // two copies of key 1, so this is the intended way to key a split, not a mistake.
+    const g: PathGraph<KmpCheckpoint> = {
+      kind: 'checkpoint',
+      groups: [
+        { points: [checkpoint(0)], prev: [3], next: [1, 2], linkFlags: 0 },
+        { points: [checkpoint(1)], prev: [0], next: [3], linkFlags: 0 },
+        { points: [checkpoint(1)], prev: [0], next: [3], linkFlags: 0 },
+        { points: [checkpoint(2)], prev: [1, 2], next: [0], linkFlags: 0 },
+      ],
+    };
+    const validity = computeLapPathValidity(g);
+    expect(validity.duplicateKeyCheckpoints).toEqual([]);
+    expect(validity.issues.map((issue) => issue.code)).not.toContain('checkpoint.duplicate-key');
+  });
+
+  it('still reports a key number repeated along one run through the track', () => {
+    // Same fork, but the copy of key 1 sits after the rejoin, so every driver crosses both.
+    const g: PathGraph<KmpCheckpoint> = {
+      kind: 'checkpoint',
+      groups: [
+        { points: [checkpoint(0)], prev: [3], next: [1, 2], linkFlags: 0 },
+        { points: [checkpoint(1)], prev: [0], next: [3], linkFlags: 0 },
+        { points: [checkpoint(KMP_NULL_INDEX_8)], prev: [0], next: [3], linkFlags: 0 },
+        { points: [checkpoint(1)], prev: [1, 2], next: [0], linkFlags: 0 },
+      ],
+    };
+    expect(computeLapPathValidity(g).duplicateKeyCheckpoints).toEqual([1]);
+  });
+
+  it('accepts a lap counter on each of two parallel routes', () => {
+    // Retro Rewind's ports of SNES Mario Circuit and Wii DK Summit both do this: the finish
+    // line is keyed on both branches so a lap counts whichever way the driver went.
+    const g: PathGraph<KmpCheckpoint> = {
+      kind: 'checkpoint',
+      groups: [
+        { points: [checkpoint(0)], prev: [3], next: [1, 2], linkFlags: 0 },
+        { points: [checkpoint(1)], prev: [0], next: [3], linkFlags: 0 },
+        { points: [checkpoint(1)], prev: [0], next: [3], linkFlags: 0 },
+        { points: [checkpoint(KMP_NULL_INDEX_8)], prev: [1, 2], next: [0], linkFlags: 0 },
+      ],
+    };
+    expect(computeLapPathValidity(g).issues.map((issue) => issue.code)).not.toContain('checkpoint.multiple-lap-counters');
+  });
+
+  it('reports two lap counters a driver crosses on the same run', () => {
+    const g: PathGraph<KmpCheckpoint> = {
+      kind: 'checkpoint',
+      groups: [{ points: [checkpoint(0), checkpoint(1), checkpoint(0)], prev: [0], next: [0], linkFlags: 0 }],
+    };
+    expect(computeLapPathValidity(g).issues.map((issue) => issue.code)).toContain('checkpoint.multiple-lap-counters');
   });
 
   it('reports key checkpoints numbered out of driving order', () => {

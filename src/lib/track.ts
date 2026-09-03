@@ -419,31 +419,31 @@ function createObjectLookup(common: CommonResourceArchive): ObjectResourceLookup
 }
 
 export function describeEntity(entity: KmpEntity): string {
-  if (entity.section === 'GOBJ') return `game object #${entity.index}`;
+  if (entity.section === 'GOBJ') return `game object #${entity.index + 1}`;
   if (entity.section === 'POTI' && entity.routePoint) return `object route point ${entity.routePoint.pointIndex}`;
   switch (entity.section) {
     case 'KTPT':
-      return `start point #${entity.index}`;
+      return `start point #${entity.index + 1}`;
     case 'ENPT':
-      return `enemy route point #${entity.index}`;
+      return `enemy route point #${entity.index + 1}`;
     case 'ITPT':
-      return `item route point #${entity.index}`;
+      return `item route point #${entity.index + 1}`;
     case 'CKPT':
-      return `checkpoint #${entity.index}`;
+      return `checkpoint #${entity.index + 1}`;
     case 'AREA':
-      return `area trigger #${entity.index}`;
+      return `area trigger #${entity.index + 1}`;
     case 'CAME':
-      return `camera #${entity.index}`;
+      return `camera #${entity.index + 1}`;
     case 'JGPT':
-      return `respawn point #${entity.index}`;
+      return `respawn point #${entity.index + 1}`;
     case 'CNPT':
-      return `cannon point #${entity.index}`;
+      return `cannon point #${entity.index + 1}`;
     case 'MSPT':
-      return `battle finish point #${entity.index}`;
+      return `battle finish point #${entity.index + 1}`;
     case 'STGI':
       return 'track settings';
     default:
-      return `${entity.section.toLowerCase()} #${entity.index}`;
+      return `${entity.section.toLowerCase()} #${entity.index + 1}`;
   }
 }
 
@@ -478,7 +478,7 @@ function validateObjectPresenceFlags(track: TrackDocument, common?: CommonResour
       results.push({
         level: 'warning',
         code: 'object.presence-uneven',
-        message: `Object #${entity.index} (${objFlowEntry.name}) affects gameplay but is hidden for some player counts, which gives split-screen players an unfair advantage.`,
+        message: `Object #${entity.index + 1} (${objFlowEntry.name}) affects gameplay but is hidden for some player counts, which gives split-screen players an unfair advantage.`,
         entityId: entity.id,
       });
     }
@@ -495,13 +495,13 @@ function validateItemBoxSettings(track: TrackDocument, common?: CommonResourceAr
     const cpuSetting = entity.objectSettings[2];
     const timingSetting = entity.objectSettings[5];
     if (!isValidItemBoxItemSetting(playerSetting)) {
-      results.push({ level: 'warning', code: 'itembox.player-item', message: `Item box #${entity.index} gives players an item the game does not recognise.`, entityId: entity.id });
+      results.push({ level: 'warning', code: 'itembox.player-item', message: `Item box #${entity.index + 1} gives players an item the game does not recognise.`, entityId: entity.id });
     }
     if (!isValidItemBoxItemSetting(cpuSetting)) {
-      results.push({ level: 'warning', code: 'itembox.cpu-item', message: `Item box #${entity.index} gives computer drivers an item the game does not recognise.`, entityId: entity.id });
+      results.push({ level: 'warning', code: 'itembox.cpu-item', message: `Item box #${entity.index + 1} gives computer drivers an item the game does not recognise.`, entityId: entity.id });
     }
     if (!isValidItemBoxTimingSetting(timingSetting)) {
-      results.push({ level: 'warning', code: 'itembox.timing', message: `Item box #${entity.index} uses a respawn timing the game does not recognise.`, entityId: entity.id });
+      results.push({ level: 'warning', code: 'itembox.timing', message: `Item box #${entity.index + 1} uses a respawn timing the game does not recognise.`, entityId: entity.id });
     }
   }
   return results;
@@ -517,7 +517,7 @@ function validateKnownObjectPitfalls(track: TrackDocument): TrackIssue[] {
     results.push({
       level: 'warning',
       code: 'object.route-required',
-      message: `Object #${entity.index} (${routeRequiredName}) needs a route to move along but none is assigned.`,
+      message: `Object #${entity.index + 1} (${routeRequiredName}) needs a route to move along but none is assigned.`,
       entityId: entity.id,
     });
   }
@@ -543,7 +543,7 @@ function validateKnownObjectPitfalls(track: TrackDocument): TrackIssue[] {
       results.push({
         level: 'error',
         code: 'object.inseki-setting',
-        message: `Object #${entity.index} (${entity.objectId === 0x214 ? 'InsekiA' : 'InsekiB'}) has its third setting left at 0, which crashes the retail game.`,
+        message: `Object #${entity.index + 1} (${entity.objectId === 0x214 ? 'InsekiA' : 'InsekiB'}) has its third setting left at 0, which crashes the retail game.`,
         entityId: entity.id,
       });
     }
@@ -560,7 +560,7 @@ function validateKnownObjectPitfalls(track: TrackDocument): TrackIssue[] {
         results.push({
           level: 'warning',
           code: 'object.roulette-transform',
-          message: `Object #${entity.index} (the casino roulette) must stay at position 0,0,0 with no rotation and scale 1 or its rotating road stops working.`,
+          message: `Object #${entity.index + 1} (the casino roulette) must stay at position 0,0,0 with no rotation and scale 1 or its rotating road stops working.`,
           entityId: entity.id,
         });
       }

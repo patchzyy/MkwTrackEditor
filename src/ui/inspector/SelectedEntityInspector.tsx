@@ -14,6 +14,7 @@ import {
   patchKmpGobjObjectId,
   patchKmpGobjPresenceFlags,
   patchKmpGobjSetting,
+  patchKmpKtptPlayerIndex,
   patchKmpPointDeviation,
   patchKmpPointSetting,
   patchKmpPotiPointSetting,
@@ -93,6 +94,7 @@ export function SelectedEntityInspector({
   onChangeBattleFinishField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpBattleFinishField(kmp, entity, field, value))}
   onChangeStageField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpStageField(kmp, entity, field, value))}
   onChangeStageFlareColor={(channelIndex, value) => patchSelectedEntity((kmp, entity) => patchKmpStageFlareColor(kmp, entity, channelIndex, value))}
+  onChangeStartPlayerIndex={(playerIndex) => patchSelectedEntity((kmp, entity) => patchKmpKtptPlayerIndex(kmp, entity, playerIndex))}
   onChangeRotation={(rotation) => patchSelectedEntity((kmp, entity) => patchKmpEntityRotation(kmp, entity, rotation))}
   onChangeScale={(scale) => patchSelectedEntity((kmp, entity) => patchKmpEntityScale(kmp, entity, scale))}
   onChangeObjectId={(objectId) => patchSelectedEntity((kmp, entity) => patchKmpGobjObjectId(kmp, entity, objectId))}

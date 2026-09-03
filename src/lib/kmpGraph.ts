@@ -89,7 +89,19 @@ function sanitizeLinks(links: number[], groupCount: number): number[] {
   return out;
 }
 
-/** Flattens the graph back into the `(points, groups)` pair the KMP stores. */
+/** Pads a link list out to the six fixed slots a KMP group record has, with 0xFF for "none". */
+function padLinks(links: number[]): number[] {
+  const out = links.slice(0, MAX_GROUP_LINKS);
+  while (out.length < MAX_GROUP_LINKS) out.push(KMP_NULL_INDEX_8);
+  return out;
+}
+
+/**
+ * Flattens the graph back into the `(points, groups)` pair the KMP stores.
+ *
+ * The link lists are padded back to their six fixed slots, so an edited `KmpFile` looks exactly
+ * like a freshly parsed one and a write/read round trip is an identity.
+ */
 export function writePathGraph<TPoint>(graph: PathGraph<TPoint>): { points: TPoint[]; groups: KmpPathGroup[] } {
   const points: TPoint[] = [];
   const groups: KmpPathGroup[] = [];
@@ -97,8 +109,8 @@ export function writePathGraph<TPoint>(graph: PathGraph<TPoint>): { points: TPoi
     groups.push({
       start: points.length,
       length: group.points.length,
-      prev: group.prev.slice(0, MAX_GROUP_LINKS),
-      next: group.next.slice(0, MAX_GROUP_LINKS),
+      prev: padLinks(group.prev),
+      next: padLinks(group.next),
       linkFlags: group.linkFlags,
     });
     points.push(...group.points);
@@ -502,13 +514,13 @@ export function validatePathGraph<TPoint>(graph: PathGraph<TPoint>): PathGraphIs
   for (let index = 0; index < groupCount; index++) {
     const group = graph.groups[index];
     if (group.points.length === 0) {
-      issues.push({ level: 'error', code: 'path.empty-group', message: `${label} #${index} has no points.`, groupIndex: index });
+      issues.push({ level: 'error', code: 'path.empty-group', message: `${label} #${index + 1} has no points.`, groupIndex: index });
     }
     if (group.points.length > MAX_POINTS_PER_GROUP) {
       issues.push({
         level: 'error',
         code: 'path.group-too-long',
-        message: `${label} #${index} has ${group.points.length} points, but a single group can hold at most ${MAX_POINTS_PER_GROUP}.`,
+        message: `${label} #${index + 1} has ${group.points.length} points, but a single group can hold at most ${MAX_POINTS_PER_GROUP}.`,
         groupIndex: index,
       });
     }
@@ -516,7 +528,7 @@ export function validatePathGraph<TPoint>(graph: PathGraph<TPoint>): PathGraphIs
       issues.push({
         level: 'error',
         code: 'path.too-many-next-links',
-        message: `${label} #${index} leads to ${group.next.length} groups; at most ${MAX_GROUP_LINKS} are allowed.`,
+        message: `${label} #${index + 1} leads to ${group.next.length} groups; at most ${MAX_GROUP_LINKS} are allowed.`,
         groupIndex: index,
       });
     }
@@ -524,38 +536,38 @@ export function validatePathGraph<TPoint>(graph: PathGraph<TPoint>): PathGraphIs
       issues.push({
         level: 'error',
         code: 'path.too-many-prev-links',
-        message: `${label} #${index} is reached from ${group.prev.length} groups; at most ${MAX_GROUP_LINKS} are allowed.`,
+        message: `${label} #${index + 1} is reached from ${group.prev.length} groups; at most ${MAX_GROUP_LINKS} are allowed.`,
         groupIndex: index,
       });
     }
     for (const link of group.next) {
       if (!graph.groups[link]) {
-        issues.push({ level: 'error', code: 'path.link-out-of-range', message: `${label} #${index} leads to a group that does not exist.`, groupIndex: index });
+        issues.push({ level: 'error', code: 'path.link-out-of-range', message: `${label} #${index + 1} leads to a group that does not exist.`, groupIndex: index });
         continue;
       }
       if (!graph.groups[link].prev.includes(index)) {
         issues.push({
           level: 'warning',
           code: 'path.one-sided-link',
-          message: `${label} #${index} leads to ${label.toLowerCase()} #${link}, but that group does not list it as a source.`,
+          message: `${label} #${index + 1} leads to ${label.toLowerCase()} #${link + 1}, but that group does not list it as a source.`,
           groupIndex: index,
         });
       }
     }
     for (const link of group.prev) {
       if (!graph.groups[link]) {
-        issues.push({ level: 'error', code: 'path.link-out-of-range', message: `${label} #${index} is reached from a group that does not exist.`, groupIndex: index });
+        issues.push({ level: 'error', code: 'path.link-out-of-range', message: `${label} #${index + 1} is reached from a group that does not exist.`, groupIndex: index });
       }
     }
     if (group.next.length === 0) {
-      issues.push({ level: 'warning', code: 'path.dead-end', message: `${label} #${index} is a dead end; nothing follows it.`, groupIndex: index });
+      issues.push({ level: 'warning', code: 'path.dead-end', message: `${label} #${index + 1} is a dead end; nothing follows it.`, groupIndex: index });
     }
   }
 
   const reachable = reachableGroups(graph, 0);
   for (let index = 0; index < groupCount; index++) {
     if (reachable.has(index)) continue;
-    issues.push({ level: 'warning', code: 'path.orphan-group', message: `${label} #${index} can never be reached from the start of the track.`, groupIndex: index });
+    issues.push({ level: 'warning', code: 'path.orphan-group', message: `${label} #${index + 1} can never be reached from the start of the track.`, groupIndex: index });
   }
 
   return issues;
@@ -597,17 +609,65 @@ export function computeLapPathValidity(graph: CheckpointGraph): LapPathValidity 
   }
 
   const seen = new Map<number, number>();
+  for (const type of keyCheckpoints) seen.set(type, (seen.get(type) ?? 0) + 1);
+
+  // Repeating a key number is how a track that splits into parallel routes keeps the lap
+  // counting on both branches, so it is only wrong when a driver would cross both copies on
+  // the same run: in the same group, or in two groups one of which leads to the other. Retail
+  // tracks like Bowser's Castle repeat key numbers across their branches on purpose.
+  const groupOfCheckpoint = (checkpointIndex: number) => {
+    let start = 0;
+    for (let groupIndex = 0; groupIndex < graph.groups.length; groupIndex++) {
+      const length = graph.groups[groupIndex].points.length;
+      if (checkpointIndex < start + length) return groupIndex;
+      start += length;
+    }
+    return -1;
+  };
+  // A checkpoint path is a loop, so plain reachability says everything reaches everything.
+  // What matters is one lap: walk the `next` links but stop at the group the lap starts in.
+  const lapStartGroup = Math.max(0, groupOfCheckpoint(keyed.find(({ checkpoint }) => checkpoint.type === 0)?.index ?? 0));
+  const withinLap = new Map<number, Set<number>>();
+  const canReach = (from: number, to: number) => {
+    if (from === to) return true;
+    let set = withinLap.get(from);
+    if (!set) {
+      set = new Set<number>();
+      const stack = [...(graph.groups[from]?.next ?? [])];
+      while (stack.length > 0) {
+        const group = stack.pop()!;
+        if (group === lapStartGroup || set.has(group) || !graph.groups[group]) continue;
+        set.add(group);
+        stack.push(...graph.groups[group].next);
+      }
+      withinLap.set(from, set);
+    }
+    return set.has(to);
+  };
+
   const duplicateKeyCheckpoints: number[] = [];
-  for (const type of keyCheckpoints) {
-    const count = (seen.get(type) ?? 0) + 1;
-    seen.set(type, count);
-    if (count === 2) duplicateKeyCheckpoints.push(type);
+  for (const [type, count] of seen) {
+    if (count < 2) continue;
+    const groups = keyed.filter(({ checkpoint }) => checkpoint.type === type).map(({ index }) => groupOfCheckpoint(index));
+    const onSameRun = groups.some((a, i) => groups.some((b, j) => i !== j && (a === b || canReach(a, b))));
+    if (onSameRun) duplicateKeyCheckpoints.push(type);
   }
+  duplicateKeyCheckpoints.sort((a, b) => a - b);
   for (const type of duplicateKeyCheckpoints) {
+    // Two lap counters on one run means every driver is shown in first place after crossing
+    // either of them, which is worse than any other repeated key.
+    if (type === 0) {
+      issues.push({
+        level: 'error',
+        code: 'checkpoint.multiple-lap-counters',
+        message: 'More than one checkpoint on the same run through the track is the lap counter, so every driver is shown in first place after crossing any of them.',
+      });
+      continue;
+    }
     issues.push({
       level: 'warning',
       code: 'checkpoint.duplicate-key',
-      message: `Key checkpoint ${type} is used by more than one checkpoint. That is correct when the track splits into parallel routes, but a mistake otherwise.`,
+      message: `Key checkpoint ${type} is used by more than one checkpoint on the same run through the track, so a lap can count early. Repeating a key number is only correct across parallel routes a driver picks between.`,
     });
   }
 
@@ -616,9 +676,11 @@ export function computeLapPathValidity(graph: CheckpointGraph): LapPathValidity 
   for (let i = 0; i <= highest; i++) if (!seen.has(i)) missingKeyCheckpoints.push(i);
   for (const missing of missingKeyCheckpoints) {
     issues.push({
-      level: 'error',
+      // Ported and retail-derived tracks ship gaps here and still count laps: the game only
+      // cares that the numbers rise along the path, not that every number exists.
+      level: 'warning',
       code: 'checkpoint.missing-key',
-      message: `Key checkpoint ${missing} is missing, so the lap will never complete.`,
+      message: `Key checkpoint ${missing} is skipped. The numbering is meant to run 0, 1, 2 … with no gaps.`,
     });
   }
 
@@ -735,4 +797,175 @@ export function addRespawnForCheckpoint(
 /** Creates an empty group; useful when starting a path from scratch. */
 export function createEmptyPathGroup(): KmpPathGroup {
   return createPathGroup();
+}
+
+// ---------------------------------------------------------------------------
+// Point factories and generic path editing
+// ---------------------------------------------------------------------------
+
+/** The three point sections that are organised into groups. */
+export type PathPointSection = 'ENPT' | 'ITPT' | 'CKPT';
+
+/** Default width/deviation for a freshly drawn route point, in game units. */
+export const DEFAULT_PATH_POINT_RANGE = 1000;
+
+/** Default width of a checkpoint drawn without an explicit second endpoint. */
+export const DEFAULT_CHECKPOINT_WIDTH = 2400;
+
+/** A new enemy route point. Copies the behaviour settings of `template` when one is given. */
+export function createEnemyPoint(position: Vec3, template?: KmpEnemyPoint): KmpEnemyPoint {
+  return {
+    position: { ...position },
+    range: template?.range ?? DEFAULT_PATH_POINT_RANGE,
+    setting1: template?.setting1 ?? 0,
+    setting2: template?.setting2 ?? 0,
+    setting3: template?.setting3 ?? 0,
+  };
+}
+
+/** A new item route point. */
+export function createItemPoint(position: Vec3, template?: KmpItemPoint): KmpItemPoint {
+  return {
+    position: { ...position },
+    range: template?.range ?? DEFAULT_PATH_POINT_RANGE,
+    setting1: template?.setting1 ?? 0,
+    setting2: template?.setting2 ?? 0,
+  };
+}
+
+/**
+ * A new checkpoint spanning `left` to `right` on the XZ plane. `prev`/`next` are filled in by
+ * {@link setCheckpointGraph} when the graph is written back, so they start out unset.
+ */
+export function createCheckpoint(left: Vec3, right: Vec3, template?: Partial<KmpCheckpoint>): KmpCheckpoint {
+  return {
+    x1: left.x,
+    z1: left.z,
+    x2: right.x,
+    z2: right.z,
+    respawnIndex: template?.respawnIndex ?? KMP_NULL_INDEX_8,
+    type: template?.type ?? KMP_NULL_INDEX_8,
+    prev: KMP_NULL_INDEX_8,
+    next: KMP_NULL_INDEX_8,
+  };
+}
+
+/**
+ * A checkpoint perpendicular to the direction of travel, centred on `center` and `width` units
+ * across. Used when appending to a path where only the new centre is known.
+ */
+export function createCheckpointAcross(center: Vec3, headingDegrees: number, width = DEFAULT_CHECKPOINT_WIDTH): KmpCheckpoint {
+  // `checkpointHeadingDegrees` uses forward = (z2-z1, -(x2-x1)), so the line itself runs along
+  // (-cos, sin) of the heading. Inverting that keeps a round-trip stable.
+  const radians = (headingDegrees * Math.PI) / 180;
+  const dx = -Math.cos(radians) * (width / 2);
+  const dz = Math.sin(radians) * (width / 2);
+  return createCheckpoint(
+    { x: center.x - dx, y: center.y, z: center.z - dz },
+    { x: center.x + dx, y: center.y, z: center.z + dz },
+  );
+}
+
+/** A path-graph edit that works for any point type (split, merge, link, reverse, delete …). */
+export type PathGraphEdit = <TPoint>(graph: PathGraph<TPoint>) => PathGraph<TPoint>;
+
+/**
+ * Applies a point-type-agnostic edit to one of the three grouped path sections and writes the
+ * result back into the file. Keeps callers from repeating the same three-way switch.
+ */
+export function editPathGraph(file: KmpFile, section: PathPointSection, edit: PathGraphEdit): KmpFile {
+  if (section === 'ENPT') return setEnemyPathGraph(file, edit(getEnemyPathGraph(file)));
+  if (section === 'ITPT') return setItemPathGraph(file, edit(getItemPathGraph(file)));
+  return setCheckpointGraph(file, edit(getCheckpointGraph(file)));
+}
+
+/** How many points a grouped path section holds. */
+export function pathPointCount(file: KmpFile, section: PathPointSection): number {
+  if (section === 'ENPT') return file.enemyPoints.length;
+  if (section === 'ITPT') return file.itemPoints.length;
+  return file.checkpoints.length;
+}
+
+/** The group records of a grouped path section. */
+export function pathGroups(file: KmpFile, section: PathPointSection): KmpPathGroup[] {
+  if (section === 'ENPT') return file.enemyGroups;
+  if (section === 'ITPT') return file.itemGroups;
+  return file.checkpointGroups;
+}
+
+/** `(groupIndex, localIndex)` for a flat point index, read straight from the group records. */
+export function locatePointInFile(
+  file: KmpFile,
+  section: PathPointSection,
+  globalIndex: number,
+): { groupIndex: number; localIndex: number } | null {
+  const groups = pathGroups(file, section);
+  for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+    const group = groups[groupIndex];
+    if (globalIndex >= group.start && globalIndex < group.start + group.length) {
+      return { groupIndex, localIndex: globalIndex - group.start };
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Checkpoint conveniences
+// ---------------------------------------------------------------------------
+
+/**
+ * Renumbers the key checkpoints 0, 1, 2 … in the order drivers reach them, keeping which
+ * checkpoints are keys and which are ordinary. This is the fix for "key checkpoints are out of
+ * order", which otherwise makes laps count early or not at all.
+ */
+export function renumberKeyCheckpoints(graph: CheckpointGraph): CheckpointGraph {
+  let nextKey = 0;
+  return {
+    kind: graph.kind,
+    groups: graph.groups.map((group) => ({
+      ...group,
+      prev: [...group.prev],
+      next: [...group.next],
+      points: group.points.map((checkpoint) =>
+        checkpoint.type === KMP_NULL_INDEX_8 ? { ...checkpoint } : { ...checkpoint, type: Math.min(nextKey++, 0xfe) },
+      ),
+    })),
+  };
+}
+
+/** Index of the respawn point closest to a checkpoint's centre, or null when there are none. */
+export function nearestRespawnIndexForCheckpoint(file: KmpFile, checkpointIndex: number): number | null {
+  const checkpoint = file.checkpoints[checkpointIndex];
+  if (!checkpoint || file.respawnPoints.length === 0) return null;
+  const center = checkpointCenter(checkpoint, 0);
+  let best = 0;
+  let bestDistance = Infinity;
+  file.respawnPoints.forEach((respawn, index) => {
+    const dx = respawn.position.x - center.x;
+    const dz = respawn.position.z - center.z;
+    const distance = dx * dx + dz * dz;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = index;
+    }
+  });
+  return best;
+}
+
+/**
+ * Points checkpoints at their nearest respawn. By default only checkpoints without a valid
+ * respawn are touched; pass `{ all: true }` to redo every checkpoint.
+ */
+export function assignNearestRespawns(file: KmpFile, options: { all?: boolean } = {}): { file: KmpFile; changed: number } {
+  if (file.respawnPoints.length === 0) return { file, changed: 0 };
+  let changed = 0;
+  const checkpoints = file.checkpoints.map((checkpoint, index) => {
+    const valid = checkpoint.respawnIndex < file.respawnPoints.length;
+    if (valid && !options.all) return checkpoint;
+    const nearest = nearestRespawnIndexForCheckpoint(file, index);
+    if (nearest === null || nearest === checkpoint.respawnIndex) return checkpoint;
+    changed++;
+    return { ...checkpoint, respawnIndex: nearest };
+  });
+  return { file: changed > 0 ? { ...file, checkpoints } : file, changed };
 }

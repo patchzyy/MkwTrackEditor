@@ -8,12 +8,14 @@ export const DOCK_RAIL_WIDTH = 40;
 const CONTENT_BROWSER_DEFAULT_HEIGHT = 260;
 const CONTENT_BROWSER_MIN_HEIGHT = 150;
 const WORKSPACE_MIN_HEIGHT = 180;
-// The left dock hosts KMP's asset rail *and* the camera / model / visual outliners, which
-// carry a filter box plus a row of actions. 272px is the narrowest that fits all four
-// without a horizontal scrollbar.
+// The left dock hosts KMP's outliner (section > group > point, three levels deep) and the
+// camera / model / visual outliners, which carry a filter box plus a row of actions. 272px is
+// the narrowest that fits all four without a horizontal scrollbar.
 const PLACE_ASSETS_DEFAULT_WIDTH = 272;
 const PLACE_ASSETS_MIN_WIDTH = 232;
-const INSPECTOR_DEFAULT_WIDTH = 340;
+// Wide enough that a three-column X/Y/Z row shows five-digit track coordinates without
+// clipping; below `INSPECTOR_STACK_VECTORS_WIDTH` the vector rows stack instead.
+const INSPECTOR_DEFAULT_WIDTH = 380;
 const INSPECTOR_MIN_WIDTH = 260;
 const WORKSPACE_MIN_VIEWPORT_WIDTH = 320;
 

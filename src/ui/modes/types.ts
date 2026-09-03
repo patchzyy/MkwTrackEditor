@@ -1,11 +1,14 @@
 import type { ComponentProps, Dispatch, MutableRefObject, ReactNode, SetStateAction } from 'react';
 import type { EditorProjectState } from '../../lib/brresEditor';
 import type { KmpEntity } from '../../lib/kmp';
+import type { TrackIssue } from '../../lib/kmpValidation';
 import type { CommonResourceArchive } from '../../lib/objflow';
 import type { NoclipBrresSummary } from '../../lib/noclipBrres';
 import type { TrackDocument } from '../../lib/track';
 import type { Noclip3DViewport, TransformTool, ViewMode } from '../Noclip3DViewport';
+import type { ObjectOption } from '../objects/objectCatalog';
 import type { EditorModeStub } from '../state/types';
+import type { useClipboard } from '../state/useClipboard';
 import type { useEditorHistory } from '../state/useEditorHistory';
 import type { useKmpEditActions } from '../state/useKmpEditActions';
 import type { useSelection } from '../state/useSelection';
@@ -27,8 +30,17 @@ export interface EditorModeContext {
   selection: ReturnType<typeof useSelection>;
   history: ReturnType<typeof useEditorHistory>;
   editActions: ReturnType<typeof useKmpEditActions>;
+  clipboard: ReturnType<typeof useClipboard>;
   selected: KmpEntity | null;
   selectedEntities: KmpEntity[];
+  /** The shared property sheet for `selected`, already bound to `editActions`. */
+  selectedInspector: ReactNode;
+  /** Pre-export validation for the loaded track, recomputed on every edit. */
+  validation: TrackIssue[];
+  /** Every placeable object type, for the object pickers. */
+  objectOptions: ObjectOption[];
+  /** True when the whole selection is objects, so a batch type swap is meaningful. */
+  canBatchReplaceObjects: boolean;
   entityLabel: (entity: KmpEntity) => string;
   setStatus: Dispatch<SetStateAction<string>>;
   tool: TransformTool;

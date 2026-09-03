@@ -70,6 +70,10 @@ interface EditorOverlayPoint {
     position: { x: number; y: number; z: number; };
     markerText?: string;
     specialColor?: 'bulletBillCantStop';
+    /** Per-item RGB override (0..1). Used to colour path points by their group. */
+    color?: [number, number, number];
+    /** Marker radius override in scene units, for handles that must read bigger than a point. */
+    radius?: number;
     selected: boolean;
     hovered: boolean;
     invalid: boolean;
@@ -78,6 +82,10 @@ interface EditorOverlayPoint {
 interface EditorOverlayLine {
     id: string;
     section: string;
+    /** Per-line RGB override (0..1). Used to colour path segments by their group. */
+    color?: [number, number, number];
+    /** Alpha for the colour override; defaults to fully opaque. */
+    alpha?: number;
     a: { x: number; y: number; z: number; };
     b: { x: number; y: number; z: number; };
 }
@@ -158,7 +166,10 @@ interface EditorOverlayFillBetweenPreview {
 
 interface EditorOverlayRouteDeviationSegment {
     id: string;
-    section: 'ENPT' | 'ITPT';
+    /** `ENPT`/`ITPT` for route width, `CKPT` for the quad between two checkpoints. */
+    section: string;
+    /** Per-quad RGB override (0..1), so path groups keep their colour. */
+    color?: [number, number, number];
     aLeft: { x: number; y: number; z: number; };
     aRight: { x: number; y: number; z: number; };
     bLeft: { x: number; y: number; z: number; };
@@ -169,7 +180,9 @@ interface EditorOverlayRouteDeviationSegment {
 
 interface EditorOverlayRouteDeviationCap {
     id: string;
-    section: 'ENPT' | 'ITPT';
+    section: string;
+    /** Per-cap RGB override (0..1). */
+    color?: [number, number, number];
     position: { x: number; y: number; z: number; };
     radius: number;
     selected: boolean;
@@ -1535,7 +1548,9 @@ class MarioKartWiiRenderer {
             debugDraw.drawLine(
                 this.toScenePosition(this.editorOverlayScratchA, line.a),
                 this.toScenePosition(this.editorOverlayScratchB, line.b),
-                editorOverlayLineColors.get(line.section) ?? White,
+                line.color !== undefined
+                    ? colorNewFromRGBA(line.color[0], line.color[1], line.color[2], line.alpha ?? 0.95)
+                    : editorOverlayLineColors.get(line.section) ?? White,
                 undefined,
                 editorOverlayLineOptions,
             );
@@ -1632,9 +1647,10 @@ class MarioKartWiiRenderer {
                 this.drawEditorTextMarker(point, point.markerText);
                 continue;
             }
+            const pointRadius = point.radius ?? (point.selected ? 18 : point.invalid ? 15 : point.hovered ? 14 : 10);
             debugDraw.drawSphereLine(
                 this.toScenePosition(this.editorOverlayScratchA, point.position),
-                point.selected ? 18 : point.invalid ? 15 : point.hovered ? 14 : 10,
+                pointRadius,
                 point.selected
                     ? White
                     : point.invalid
@@ -1643,7 +1659,9 @@ class MarioKartWiiRenderer {
                             ? editorOverlayHoveredPointColor
                             : point.specialColor === 'bulletBillCantStop'
                                 ? editorOverlayBulletBillCantStopColor
-                                : (editorOverlayPointColors.get(point.section) ?? Red),
+                                : point.color !== undefined
+                                    ? colorNewFromRGBA(point.color[0], point.color[1], point.color[2], 0.95)
+                                    : (editorOverlayPointColors.get(point.section) ?? Red),
                 16,
                 editorOverlayPointOptions,
             );
@@ -1825,7 +1843,9 @@ class MarioKartWiiRenderer {
         const aRight = this.toScenePosition(this.editorOverlayScratchB, segment.aRight);
         const bLeft = this.toScenePosition(this.editorOverlayScratchC, segment.bLeft);
         const bRight = this.toScenePosition(this.editorOverlayScratchD, segment.bRight);
-        const baseColor = editorOverlayLineColors.get(segment.section) ?? White;
+        const baseColor = segment.color !== undefined
+            ? colorNewFromRGBA(segment.color[0], segment.color[1], segment.color[2], 0.95)
+            : editorOverlayLineColors.get(segment.section) ?? White;
         const outlineColor = segment.selected
             ? White
             : segment.hovered
@@ -1844,7 +1864,9 @@ class MarioKartWiiRenderer {
 
     private drawEditorRouteDeviationCap(cap: EditorOverlayRouteDeviationCap): void {
         const center = this.toScenePosition(this.editorOverlayScratchA, cap.position);
-        const baseColor = editorOverlayLineColors.get(cap.section) ?? White;
+        const baseColor = cap.color !== undefined
+            ? colorNewFromRGBA(cap.color[0], cap.color[1], cap.color[2], 0.95)
+            : editorOverlayLineColors.get(cap.section) ?? White;
         const outlineColor = cap.selected
             ? White
             : cap.hovered

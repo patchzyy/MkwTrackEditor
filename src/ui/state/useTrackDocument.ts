@@ -67,6 +67,12 @@ export function useTrackDocument({ setStatus }: { setStatus: Dispatch<SetStateAc
 
   trackRef.current = track;
 
+  // Dev-only read hook, so a browser probe can assert on the document an edit produced instead
+  // of inferring it from the UI. Never present in a production build.
+  if (import.meta.env.DEV && typeof window !== 'undefined') {
+    (window as unknown as { __mkwTrackDocument?: TrackDocument | null }).__mkwTrackDocument = track;
+  }
+
   const objFlow = commonArchive?.objFlow ?? null;
 
   function bindHistory(history: EditorHistory) {

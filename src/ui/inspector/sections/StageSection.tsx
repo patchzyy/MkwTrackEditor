@@ -1,5 +1,63 @@
 import type { KmpEntity, KmpStageField } from '../../../lib/kmp';
+import { RgbaColorField } from '../fields/RgbaColorField';
 
+/** One row per STGI field, in the order a track author cares about them. */
+const STAGE_FIELDS: Array<{
+  field: KmpStageField;
+  label: string;
+  help: string;
+  min: number;
+  max: number;
+  step?: number;
+  options?: Array<{ value: number; label: string }>;
+}> = [
+  { field: 'lapCount', label: 'Laps', help: 'How many laps a race on this track takes. Three is what every retail track uses.', min: 1, max: 9 },
+  {
+    field: 'polePosition',
+    label: 'Pole position',
+    help: 'Which side of the grid the first-place driver starts on.',
+    min: 0,
+    max: 1,
+    options: [
+      { value: 0, label: 'Left' },
+      { value: 1, label: 'Right' },
+    ],
+  },
+  {
+    field: 'driverDistance',
+    label: 'Grid spacing',
+    help: 'How far apart the drivers stand on the starting grid.',
+    min: 0,
+    max: 1,
+    options: [
+      { value: 0, label: 'Normal' },
+      { value: 1, label: 'Narrow' },
+    ],
+  },
+  {
+    field: 'lensFlareFlash',
+    label: 'Lens flare flash',
+    help: 'Turns on the white flash the sun flare makes as it passes the camera.',
+    min: 0,
+    max: 1,
+    options: [
+      { value: 0, label: 'Off' },
+      { value: 1, label: 'On' },
+    ],
+  },
+  {
+    field: 'speedMod',
+    label: 'Speed multiplier',
+    help: 'Scales how fast everything drives. 0 means the normal 1x; the game only keeps the top two bytes of this number.',
+    min: 0,
+    max: 10,
+    step: 0.1,
+  },
+  { field: 'unknown1', label: 'Reserved byte 1', help: 'Unused by the game. Kept so an export matches the original file.', min: 0, max: 255 },
+  { field: 'unknown2', label: 'Reserved byte 2', help: 'Unused by the game. Kept so an export matches the original file.', min: 0, max: 255 },
+];
+
+/** Track-wide settings (STGI): laps, grid layout, lens flare and the global speed multiplier. */
 export function StageSection({
   entity,
   onChangeStageField,
@@ -9,58 +67,60 @@ export function StageSection({
   onChangeStageField: (field: KmpStageField, value: number) => void;
   onChangeStageFlareColor: (channelIndex: number, value: number) => void;
 }) {
+  const stage = entity.stage;
+  if (!stage) return null;
   return (
     <>
-      {entity.stage && (
-        <>
-          <label>
-            Track Settings
-            <div className="settingInputs">
-              {(Object.entries(entity.stage).filter(([field]) => field !== 'flareColor') as Array<[KmpStageField, number]>).map(([field, value]) => {
-                const speedField = field === 'speedMod';
-                return (
-                  <input
-                    key={field}
-                    aria-label={field}
-                    title={field}
-                    type="number"
-                    min={speedField ? 0 : 0}
-                    max={speedField ? undefined : 255}
-                    step={speedField ? 0.1 : 1}
-                    value={Number.isFinite(value) ? Number(value.toFixed(speedField ? 3 : 0)) : 0}
-                    onChange={(event) => {
-                      const next = Number(event.currentTarget.value);
-                      if (!Number.isFinite(next)) return;
-                      if (speedField) onChangeStageField(field, next);
-                      else onChangeStageField(field, Math.max(0, Math.min(0xff, Math.trunc(next))));
-                    }}
-                  />
-                );
-              })}
-            </div>
+      {STAGE_FIELDS.map((meta) => {
+        const value = stage[meta.field];
+        return (
+          <label key={meta.field}>
+            {meta.label}
+            {meta.options ? (
+              <select
+                aria-label={meta.label}
+                title={meta.help}
+                value={String(meta.options.some((option) => option.value === value) ? value : meta.options[0].value)}
+                onChange={(event) => onChangeStageField(meta.field, Number(event.currentTarget.value))}
+              >
+                {meta.options.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                aria-label={meta.label}
+                title={meta.help}
+                type="number"
+                min={meta.min}
+                max={meta.max}
+                step={meta.step ?? 1}
+                value={Number.isFinite(value) ? Number(value.toFixed(meta.step ? 3 : 0)) : 0}
+                onChange={(event) => {
+                  const next = Number(event.currentTarget.value);
+                  if (!Number.isFinite(next)) return;
+                  onChangeStageField(meta.field, meta.step ? next : Math.max(meta.min, Math.min(meta.max, Math.trunc(next))));
+                }}
+              />
+            )}
+            <span>{meta.field === 'speedMod' && value === 0 ? 'Currently the normal 1x speed.' : meta.help}</span>
           </label>
-          <label>
-            Lens Flare RGBA
-            <div className="settingInputs">
-              {entity.stage.flareColor.map((channel, index) => (
-                <input
-                  key={index}
-                  aria-label={`Lens flare channel ${index + 1}`}
-                  title={['red', 'green', 'blue', 'alpha'][index]}
-                  type="number"
-                  min="0"
-                  max="255"
-                  value={channel}
-                  onChange={(event) => {
-                    const next = Number(event.currentTarget.value);
-                    if (Number.isFinite(next)) onChangeStageFlareColor(index, Math.max(0, Math.min(0xff, Math.trunc(next))));
-                  }}
-                />
-              ))}
-            </div>
-          </label>
-        </>
-      )}
+        );
+      })}
+      <label>
+        Lens flare colour
+        <RgbaColorField
+          value={[stage.flareColor[0] ?? 0, stage.flareColor[1] ?? 0, stage.flareColor[2] ?? 0, stage.flareColor[3] ?? 0]}
+          onChange={(next) => {
+            for (let channel = 0; channel < 4; channel++) {
+              if (next[channel] !== stage.flareColor[channel]) onChangeStageFlareColor(channel, next[channel]);
+            }
+          }}
+        />
+        <span>The colour and strength of the sun flare drawn over the track.</span>
+      </label>
     </>
   );
 }

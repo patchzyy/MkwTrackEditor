@@ -173,6 +173,21 @@ export function App() {
   const clipboard = useClipboard({ track, selected, selectedEntities, selection, history, setStatus, entityLabel });
   const { downloadExport } = useTrackExport({ track, commonArchive, setStatus });
 
+  const selectedInspectorSection: InspectorSection = selected?.section === 'STGI' ? 'track' : 'object';
+  const selectedInspector = selected ? (
+    <SelectedEntityInspector
+      entity={selected}
+      pathInfo={selectedPathInfo}
+      cameraHeader={cameraHeader}
+      referenceCounts={referenceCounts}
+      areaInspectorResources={areaInspectorResources}
+      objectProfile={selectedObjectProfile}
+      objectOptions={objectOptions}
+      objectVariantOptions={selectedObjectVariantOptions}
+      actions={editActions}
+    />
+  ) : null;
+
   // Each editor mode contributes its own panels and viewport props. All four hooks run every
   // render (hook rules); only the active one returns anything.
   const modeContext: EditorModeContext = {
@@ -186,8 +201,13 @@ export function App() {
     selection,
     history,
     editActions,
+    clipboard,
     selected,
     selectedEntities,
+    selectedInspector,
+    validation,
+    objectOptions,
+    canBatchReplaceObjects,
     entityLabel,
     setStatus,
     tool,
@@ -331,21 +351,6 @@ export function App() {
     },
     [],
   );
-
-  const selectedInspectorSection: InspectorSection = selected?.section === 'STGI' ? 'track' : 'object';
-  const selectedInspector = selected ? (
-    <SelectedEntityInspector
-      entity={selected}
-      pathInfo={selectedPathInfo}
-      cameraHeader={cameraHeader}
-      referenceCounts={referenceCounts}
-      areaInspectorResources={areaInspectorResources}
-      objectProfile={selectedObjectProfile}
-      objectOptions={objectOptions}
-      objectVariantOptions={selectedObjectVariantOptions}
-      actions={editActions}
-    />
-  ) : null;
 
   return (
     <ToastProvider value={toasts}>
