@@ -183,7 +183,7 @@ function validateCheckpoints(file: KmpFile): TrackIssue[] {
       issues.push({
         level: 'warning',
         code: 'checkpoint.no-respawn',
-        message: `Checkpoint #${index} has no respawn point, so drivers who fall here are sent to the first respawn point instead.`,
+        message: `Checkpoint #${index + 1} has no respawn point, so drivers who fall here are sent to the first respawn point instead.`,
         entityId: `CKPT-${index}`,
       });
       continue;
@@ -192,7 +192,7 @@ function validateCheckpoints(file: KmpFile): TrackIssue[] {
       issues.push({
         level: 'error',
         code: 'checkpoint.respawn-out-of-range',
-        message: `Checkpoint #${index} points at respawn point #${checkpoint.respawnIndex}, which does not exist.`,
+        message: `Checkpoint #${index + 1} points at respawn point #${checkpoint.respawnIndex + 1}, which does not exist.`,
         entityId: `CKPT-${index}`,
       });
     }
@@ -238,14 +238,14 @@ function validateRoutes(file: KmpFile): TrackIssue[] {
   for (let index = 0; index < file.routes.length; index++) {
     const route = file.routes[index];
     if (route.points.length === 0) {
-      issues.push({ level: 'error', code: 'route.empty', message: `Route #${index} has no points.`, entityId: `POTI-${index}-0` });
+      issues.push({ level: 'error', code: 'route.empty', message: `Route #${index + 1} has no points.`, entityId: `POTI-${index}-0` });
       continue;
     }
     if (route.smooth === 1 && route.points.length <= 2) {
       issues.push({
         level: 'error',
         code: 'route.smooth-too-short',
-        message: `Route #${index} uses smooth motion but only has ${route.points.length} point${route.points.length === 1 ? '' : 's'}; the game freezes on smooth routes with two points or fewer.`,
+        message: `Route #${index + 1} uses smooth motion but only has ${route.points.length} point${route.points.length === 1 ? '' : 's'}; the game freezes on smooth routes with two points or fewer.`,
         entityId: `POTI-${index}-0`,
       });
     }
@@ -271,15 +271,15 @@ function validateObjects(file: KmpFile, options: ValidateKmpOptions): TrackIssue
     const object = file.objects[index];
     const entityId = `GOBJ-${index}`;
     const name = lookup?.objectName(object.objectId) ?? null;
-    const label = name ? `Object #${index} (${name})` : `Object #${index}`;
+    const label = name ? `Object #${index + 1} (${name})` : `Object #${index + 1}`;
 
     if (object.objectId === 0) {
-      issues.push({ level: 'warning', code: 'object.disabled', message: `Object #${index} has no type set and will not appear in game.`, entityId });
+      issues.push({ level: 'warning', code: 'object.disabled', message: `Object #${index + 1} has no type set and will not appear in game.`, entityId });
     } else if (lookup && !name) {
       issues.push({
         level: 'warning',
         code: 'object.unknown-id',
-        message: `Object #${index} uses a type the game does not know about and will not appear.`,
+        message: `Object #${index + 1} uses a type the game does not know about and will not appear.`,
         entityId,
       });
     }
@@ -289,14 +289,14 @@ function validateObjects(file: KmpFile, options: ValidateKmpOptions): TrackIssue
         issues.push({
           level: 'error',
           code: 'object.route-out-of-range',
-          message: `${label} follows route #${object.routeIndex}, which does not exist.`,
+          message: `${label} follows route #${object.routeIndex + 1}, which does not exist.`,
           entityId,
         });
       } else if (file.routes[object.routeIndex].points.length < 2) {
         issues.push({
           level: 'error',
           code: 'object.route-too-short',
-          message: `${label} follows route #${object.routeIndex}, which has fewer than two points and cannot define a path.`,
+          message: `${label} follows route #${object.routeIndex + 1}, which has fewer than two points and cannot define a path.`,
           entityId,
         });
       }
@@ -346,12 +346,12 @@ function validateAreas(file: KmpFile): TrackIssue[] {
     const entityId = `AREA-${index}`;
     if (area.type === AREA_TYPE_CAMERA) {
       if (area.cameraIndex === KMP_NULL_INDEX_8) {
-        issues.push({ level: 'error', code: 'area.camera-missing', message: `Area #${index} is a camera trigger but no camera is assigned to it.`, entityId });
+        issues.push({ level: 'error', code: 'area.camera-missing', message: `Area #${index + 1} is a camera trigger but no camera is assigned to it.`, entityId });
       } else if (area.cameraIndex >= file.cameras.length) {
         issues.push({
           level: 'error',
           code: 'area.camera-out-of-range',
-          message: `Area #${index} triggers camera #${area.cameraIndex}, which does not exist.`,
+          message: `Area #${index + 1} triggers camera #${area.cameraIndex + 1}, which does not exist.`,
           entityId,
         });
       }
@@ -359,13 +359,13 @@ function validateAreas(file: KmpFile): TrackIssue[] {
     // Only the area types documented as reading these fields are checked; other types leave
     // stale values in them, and flagging those would be noise.
     if (area.type === AREA_TYPE_MOVING_ROAD && area.routeIndex !== KMP_NULL_INDEX_8 && area.routeIndex >= file.routes.length) {
-      issues.push({ level: 'error', code: 'area.route-out-of-range', message: `Area #${index} uses route #${area.routeIndex}, which does not exist.`, entityId });
+      issues.push({ level: 'error', code: 'area.route-out-of-range', message: `Area #${index + 1} uses route #${area.routeIndex + 1}, which does not exist.`, entityId });
     }
     if (area.type === AREA_TYPE_CPU_DESTINATION && area.enemyPointIndex !== KMP_NULL_INDEX_8 && area.enemyPointIndex >= file.enemyPoints.length) {
       issues.push({
         level: 'error',
         code: 'area.enemy-point-out-of-range',
-        message: `Area #${index} sends computer drivers to enemy route point #${area.enemyPointIndex}, which does not exist.`,
+        message: `Area #${index + 1} sends computer drivers to enemy route point #${area.enemyPointIndex + 1}, which does not exist.`,
         entityId,
       });
     }
@@ -373,12 +373,12 @@ function validateAreas(file: KmpFile): TrackIssue[] {
       issues.push({
         level: 'error',
         code: 'area.cannon-out-of-range',
-        message: `Area #${index} teleports to cannon point #${area.setting2}, which does not exist.`,
+        message: `Area #${index + 1} teleports to cannon point #${area.setting2 + 1}, which does not exist.`,
         entityId,
       });
     }
     if (area.scale.x === 0 || area.scale.y === 0 || area.scale.z === 0) {
-      issues.push({ level: 'warning', code: 'area.zero-size', message: `Area #${index} has zero size in at least one direction and can never be entered.`, entityId });
+      issues.push({ level: 'warning', code: 'area.zero-size', message: `Area #${index + 1} has zero size in at least one direction and can never be entered.`, entityId });
     }
   }
   return issues;
@@ -393,26 +393,26 @@ function validateCameras(file: KmpFile): TrackIssue[] {
       issues.push({
         level: 'error',
         code: 'camera.next-out-of-range',
-        message: `Camera #${index} hands over to camera #${camera.nextIndex}, which does not exist.`,
+        message: `Camera #${index + 1} hands over to camera #${camera.nextIndex + 1}, which does not exist.`,
         entityId,
       });
     }
     if (camera.nextIndex === index) {
-      issues.push({ level: 'error', code: 'camera.next-self', message: `Camera #${index} hands over to itself, which locks the opening pan.`, entityId });
+      issues.push({ level: 'error', code: 'camera.next-self', message: `Camera #${index + 1} hands over to itself, which locks the opening pan.`, entityId });
     }
     if (camera.routeIndex !== KMP_NULL_INDEX_8) {
       if (camera.routeIndex >= file.routes.length) {
         issues.push({
           level: 'error',
           code: 'camera.route-out-of-range',
-          message: `Camera #${index} follows route #${camera.routeIndex}, which does not exist.`,
+          message: `Camera #${index + 1} follows route #${camera.routeIndex + 1}, which does not exist.`,
           entityId,
         });
       } else if (file.routes[camera.routeIndex].points.length < 2) {
         issues.push({
           level: 'error',
           code: 'camera.route-too-short',
-          message: `Camera #${index} follows route #${camera.routeIndex}, which has fewer than two points.`,
+          message: `Camera #${index + 1} follows route #${camera.routeIndex + 1}, which has fewer than two points.`,
           entityId,
         });
       }
@@ -420,7 +420,7 @@ function validateCameras(file: KmpFile): TrackIssue[] {
       issues.push({
         level: 'warning',
         code: 'camera.route-missing',
-        message: `Camera #${index} is set up to travel along a route but no route is assigned.`,
+        message: `Camera #${index + 1} is set up to travel along a route but no route is assigned.`,
         entityId,
       });
     }
@@ -431,14 +431,14 @@ function validateCameras(file: KmpFile): TrackIssue[] {
       issues.push({
         level: 'error',
         code: 'camera.opening-out-of-range',
-        message: `The opening pan starts at camera #${file.firstOpeningCamera}, which does not exist.`,
+        message: `The opening pan starts at camera #${file.firstOpeningCamera + 1}, which does not exist.`,
       });
     }
     if (file.firstSelectionCamera >= file.cameras.length && file.firstSelectionCamera !== KMP_NULL_INDEX_8) {
       issues.push({
         level: 'error',
         code: 'camera.selection-out-of-range',
-        message: `The character-selection pan starts at camera #${file.firstSelectionCamera}, which does not exist.`,
+        message: `The character-selection pan starts at camera #${file.firstSelectionCamera + 1}, which does not exist.`,
       });
     }
     // Walk the opening chain and stop if it loops.
@@ -480,7 +480,7 @@ function validateChainDurations(file: KmpFile, openingChain: ReadonlySet<number>
     issues.push({
       level: 'error',
       code: 'camera.zero-duration',
-      message: `Camera #${index} is part of the opening pan but lasts 0 frames and has nothing to animate, so the pan stops on it.`,
+      message: `Camera #${index + 1} is part of the opening pan but lasts 0 frames and has nothing to animate, so the pan stops on it.`,
       entityId: `CAME-${index}`,
     });
   }

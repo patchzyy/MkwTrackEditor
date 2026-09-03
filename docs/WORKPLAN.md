@@ -163,3 +163,41 @@ browser pass over `Z0.szs` and `nintendo_1.szs` (`scripts/probe-model-ui.mjs` +
 Known gap: a mesh whose vertices are shared between two connected components moves its neighbours
 too. The exporter detects this and warns rather than silently corrupting the shape; splitting the
 vertex data per component would be the fix.
+
+### KMP mode — complete (agent J)
+
+KMP mode is now a real track-data editor rather than a property sheet bolted to a picker.
+
+- **Outliner** (`src/ui/kmp/KmpOutliner.tsx`): the whole track as a tree of sections, groups and
+  points, with friendly names only — the twelve headings are "Start points", "Enemy routes",
+  "Checkpoints", "Track settings" and so on, never `KTPT`/`ENPH`/`STGI`. Search, expand/collapse,
+  per-section eye toggles wired to the same visibility state the viewport uses, group colour dots,
+  validation badges that roll up from a point to its group and section, click to select a whole
+  group, ctrl-click to add, shift-click for a range, double-click to frame.
+- **Tool inspector** (`KmpInspector.tsx`): the buttons that apply to what is selected. Path graphs
+  get insert before/after, delete point, split, join, reverse group, reverse path, delete group and
+  a prev/next connection editor that respects the six-link limit. Checkpoints get finish
+  line/key/ordinary, key renumbering in driving order, nearest-respawn assignment and "new respawn
+  here". Routes get append and reverse. A multi-selection gets batch move and batch object-type
+  replacement. Everything is one undo step.
+- **Viewport gestures** (`KmpToolsOverlay.tsx`): drag a group's end handle onto another group to
+  connect it, or onto a group it already leads to, to disconnect it; drag across the track to draw
+  a checkpoint; group colours and the checkpoint corridor as overlay switches. F frames, H hides
+  the selection's layer, the numpad switches views.
+- **Validation** is in the mode's own panel, each message clickable to select and frame the record
+  it is about, with a one-click repair where one exists (drop a broken route or camera link, show a
+  hidden object, create a route, assign respawns, renumber key checkpoints).
+
+Three real bugs came out of it. `writePathGraph` left a group record's six link slots unpadded, so
+an edited `KmpFile` no longer matched a parsed one and the UI printed the 0xFF null slots as
+"group 256". Path-graph validation issues carried an entity id (`ENPH-2`) that no entity has, so
+they could never select anything. And every message numbered records from 0 while the UI numbered
+them from 1 — the whole app is 1-based now. Two gaps were filled: the start point's player index
+had no editor at all, and the track settings were an unlabelled row of raw bytes.
+
+Verified with `npx tsc --noEmit -p tsconfig.json` (clean), `npx vitest run` (505 passed, 1
+skipped), `npx vite build` (ok), a new round-trip test that drives insert/split/link/renumber/
+respawn edits over all 338 real tracks on this machine (`src/lib/kmpEditRoundTrip.test.ts`:
+byte-stable untouched, byte- and model-stable after editing, no new validation errors), and a
+browser pass over `Z0.szs` and `Z13.szs` (`scripts/kmp-ui-probe.mjs` +
+`scripts/probe-kmp-mode-ui.js`). Screenshots: `docs/screenshots/kmp-ui-*.png`.

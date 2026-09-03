@@ -285,12 +285,14 @@ export function buildKmpOutliner({ file, objectName, issues = [] }: BuildKmpOutl
         localIndex: null,
         accent: null,
         issueLevel: null,
-        children: entries.map((entry) =>
+        // Numbered within their own kind: the fourth item box reads "Item Box 4", not
+        // "Item Box 87" because it happens to be the 87th object record in the file.
+        children: entries.map((entry, position) =>
           makeNode({
             id: `entity:GOBJ-${entry.index}`,
             kind: 'entity',
             section: 'object',
-            label: `${name} ${entry.index + 1}`,
+            label: `${name} ${position + 1}`,
             detail: entry.detail,
             entityId: `GOBJ-${entry.index}`,
             groupIndex: null,
@@ -537,4 +539,25 @@ export function computeKeyCheckpointHints(file: KmpFile | null): KeyCheckpointHi
     hints.push({ checkpointIndex, keyNumber: checkpoint.type, outOfOrder, duplicate: duplicates.has(checkpoint.type) });
   });
   return hints;
+}
+
+/**
+ * `entityId -> friendly name`, taken straight from the tree, so the inspector, the status bar
+ * and the outliner all call the same record the same thing.
+ */
+export function kmpOutlinerLabels(sections: KmpOutlinerNode[]): Map<string, string> {
+  const labels = new Map<string, string>();
+  // Only a real group qualifies the name ("Group 2 · Point 3"). Sitting directly under a
+  // section heading adds nothing, because the name already says what it is.
+  const walk = (node: KmpOutlinerNode, groupLabel: string | null) => {
+    if (node.kind === 'entity' && node.entityId) {
+      // Object buckets are named after the object, and so are their children, so "Goomba ·
+      // Goomba 1" would just stutter.
+      const qualify = groupLabel !== null && !node.label.startsWith(groupLabel);
+      labels.set(node.entityId, qualify ? `${groupLabel} · ${node.label}` : node.label);
+    }
+    for (const child of node.children) walk(child, node.kind === 'group' ? node.label : groupLabel);
+  };
+  for (const section of sections) walk(section, null);
+  return labels;
 }

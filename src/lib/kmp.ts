@@ -775,6 +775,17 @@ export function patchKmpStageField(document: KmpDocument, entity: KmpEntity, fie
   return out;
 }
 
+/**
+ * Sets a start point's player index: -1 means "any player", 0..11 pins the start to one grid
+ * slot (only battle arenas use that).
+ */
+export function patchKmpKtptPlayerIndex(document: KmpDocument, entity: KmpEntity, playerIndex: number): Uint8Array {
+  if (entity.section !== 'KTPT' || entity.recordSize < 0x1a) return document.original;
+  const out = new Uint8Array(document.original);
+  new DataView(out.buffer).setInt16(entity.rawOffset + 0x18, Math.max(-1, Math.min(11, Math.trunc(playerIndex))), false);
+  return out;
+}
+
 export function patchKmpStageFlareColor(document: KmpDocument, entity: KmpEntity, channelIndex: number, value: number): Uint8Array {
   if (entity.section !== 'STGI' || entity.recordSize < 0x09 || channelIndex < 0 || channelIndex >= 4) return document.original;
   const out = new Uint8Array(document.original);

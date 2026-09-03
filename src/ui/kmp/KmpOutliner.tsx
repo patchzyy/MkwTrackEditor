@@ -120,6 +120,18 @@ export function KmpOutliner({
             {totalCount === 0 ? 'Load a track to see its layout data.' : `${totalCount} item${totalCount === 1 ? '' : 's'} across ${sections.filter((section) => section.count > 0).length} sections.`}
           </p>
         </div>
+      </div>
+
+      <div className="kmpPanelBody">
+        <input
+          className="browserSearchInput kmpFilter"
+          type="search"
+          placeholder="Search the track"
+          aria-label="Search track data"
+          value={query}
+          onChange={(event) => setQuery(event.currentTarget.value)}
+        />
+
         <div className="kmpTreeToolbar">
           <button
             type="button"
@@ -135,23 +147,12 @@ export function KmpOutliner({
               setExpanded(all);
             }}
           >
-            Expand
+            Expand all
           </button>
           <button type="button" className="button" title="Collapse every section" onClick={() => setExpanded(new Set())}>
-            Collapse
+            Collapse all
           </button>
         </div>
-      </div>
-
-      <div className="kmpPanelBody">
-        <input
-          className="browserSearchInput kmpFilter"
-          type="search"
-          placeholder="Search the track (name, position, section)"
-          aria-label="Search track data"
-          value={query}
-          onChange={(event) => setQuery(event.currentTarget.value)}
-        />
 
         <div className="kmpTree" role="tree" aria-label="Track data" ref={listRef}>
           {rows.length === 0 && <p className="kmpTreeEmpty">Nothing matches that search.</p>}

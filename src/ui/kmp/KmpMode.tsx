@@ -10,7 +10,7 @@ import { browserObjectTitle } from '../objects/objectCatalog';
 import { KmpInspector, type KmpQuickFix } from './KmpInspector';
 import { KmpOutliner } from './KmpOutliner';
 import { KmpToolsOverlay } from './KmpToolsOverlay';
-import { buildKmpOutliner } from './kmpOutlinerModel';
+import { buildKmpOutliner, kmpOutlinerLabels } from './kmpOutlinerModel';
 import { createVisibilityState, type KmpVisibilityKey, type KmpVisibilityState } from './kmpSections';
 import { getKmpSelectionContext } from './kmpSelectionContext';
 import { useKmpGraphActions } from './useKmpGraphActions';
@@ -49,6 +49,13 @@ export function useKmpMode(ctx: EditorModeContext): ModeUi {
   );
 
   const context = useMemo(() => getKmpSelectionContext(file, selection.selectedId), [file, selection.selectedId]);
+  // The tree is the single source of naming, so the inspector never says "checkpoint #0" for a
+  // row the outliner calls "Group 1 · Checkpoint 1".
+  const labels = useMemo(() => kmpOutlinerLabels(sections), [sections]);
+  const labelFor = useCallback(
+    (entity: { id: string }) => labels.get(entity.id) ?? ctx.entityLabel(entity as never),
+    [ctx, labels],
+  );
 
   // Leaving the mode must not leave a gesture armed; Escape drops out of one on demand.
   useEffect(() => {
@@ -180,7 +187,7 @@ export function useKmpMode(ctx: EditorModeContext): ModeUi {
       <KmpInspector
         entity={ctx.selected}
         entities={ctx.selectedEntities}
-        entityLabel={ctx.entityLabel}
+        entityLabel={labelFor}
         selectedInspector={ctx.selectedInspector}
         context={context}
         issues={ctx.validation}

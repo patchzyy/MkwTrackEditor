@@ -171,7 +171,8 @@ describe('KMP validation', () => {
     const issue = validateKmpFile(file).find((candidate) => candidate.code === 'checkpoint.respawn-out-of-range');
     expect(issue?.level).toBe('error');
     expect(issue?.entityId).toBe('CKPT-1');
-    expect(issue?.message).toContain('#7');
+    // Records are numbered from 1 in every message, matching the outliner.
+    expect(issue?.message).toBe('Checkpoint #2 points at respawn point #8, which does not exist.');
   });
 
   it('reports a checkpoint with no respawn point assigned', () => {

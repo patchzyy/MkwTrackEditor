@@ -50,6 +50,7 @@ function renderInspector(entity: KmpEntity, pathInfo: PathInfo | null = null): s
       onChangeBattleFinishField={noop}
       onChangeStageField={noop}
       onChangeStageFlareColor={noop}
+      onChangeStartPlayerIndex={noop}
       onChangeRotation={noop}
       onChangeScale={noop}
       onChangeObjectId={noop}

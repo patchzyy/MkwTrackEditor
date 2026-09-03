@@ -9,6 +9,7 @@ import {
   expansionPathForEntity,
   filterKmpOutliner,
   flattenKmpOutliner,
+  kmpOutlinerLabels,
   outlinerRangeSelection,
   type KmpOutlinerNode,
 } from './kmpOutlinerModel';
@@ -316,5 +317,35 @@ describe('kmpSections', () => {
       expect(channel).toBeLessThanOrEqual(1);
     }
     expect(pathGroupColorRgb(1)).not.toEqual(pathGroupColorRgb(0));
+  });
+});
+
+describe('friendly names', () => {
+  it('numbers objects within their own kind, not by their record index', () => {
+    const sections = buildKmpOutliner({ file: sampleFile(), objectName });
+    const objects = findNode(sections, 'section:object')!;
+    const itemBoxes = objects.children.find((child) => child.label === 'Item Box')!;
+    expect(itemBoxes.children.map((child) => child.label)).toEqual(['Item Box 1', 'Item Box 2']);
+    // The third object is a Goomba, so it is the first of its kind even though it is record 3.
+    const goombas = objects.children.find((child) => child.label === 'Goomba')!;
+    expect(goombas.children.map((child) => child.label)).toEqual(['Goomba 1']);
+    expect(goombas.children[0].entityId).toBe('GOBJ-2');
+  });
+
+  it('qualifies a grouped point with its group, and leaves flat records alone', () => {
+    const labels = kmpOutlinerLabels(buildKmpOutliner({ file: sampleFile(), objectName }));
+    expect(labels.get('ENPT-0')).toBe('Group 1 · Point 1');
+    expect(labels.get('ENPT-2')).toBe('Group 2 · Point 1');
+    expect(labels.get('CKPT-1')).toBe('Group 1 · Checkpoint 2');
+    expect(labels.get('JGPT-0')).toBe('Respawn 1');
+    expect(labels.get('GOBJ-2')).toBe('Goomba 1');
+    expect(labels.get('POTI-0-1')).toBe('Route 1 · Point 2');
+  });
+
+  it('never falls back to a raw section code', () => {
+    const labels = kmpOutlinerLabels(buildKmpOutliner({ file: sampleFile(), objectName }));
+    for (const label of labels.values()) {
+      expect(label).not.toMatch(/KTPT|ENPT|ITPT|CKPT|GOBJ|POTI|JGPT|CNPT|MSPT|STGI/);
+    }
   });
 });

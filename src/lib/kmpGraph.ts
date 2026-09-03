@@ -514,13 +514,13 @@ export function validatePathGraph<TPoint>(graph: PathGraph<TPoint>): PathGraphIs
   for (let index = 0; index < groupCount; index++) {
     const group = graph.groups[index];
     if (group.points.length === 0) {
-      issues.push({ level: 'error', code: 'path.empty-group', message: `${label} #${index} has no points.`, groupIndex: index });
+      issues.push({ level: 'error', code: 'path.empty-group', message: `${label} #${index + 1} has no points.`, groupIndex: index });
     }
     if (group.points.length > MAX_POINTS_PER_GROUP) {
       issues.push({
         level: 'error',
         code: 'path.group-too-long',
-        message: `${label} #${index} has ${group.points.length} points, but a single group can hold at most ${MAX_POINTS_PER_GROUP}.`,
+        message: `${label} #${index + 1} has ${group.points.length} points, but a single group can hold at most ${MAX_POINTS_PER_GROUP}.`,
         groupIndex: index,
       });
     }
@@ -528,7 +528,7 @@ export function validatePathGraph<TPoint>(graph: PathGraph<TPoint>): PathGraphIs
       issues.push({
         level: 'error',
         code: 'path.too-many-next-links',
-        message: `${label} #${index} leads to ${group.next.length} groups; at most ${MAX_GROUP_LINKS} are allowed.`,
+        message: `${label} #${index + 1} leads to ${group.next.length} groups; at most ${MAX_GROUP_LINKS} are allowed.`,
         groupIndex: index,
       });
     }
@@ -536,38 +536,38 @@ export function validatePathGraph<TPoint>(graph: PathGraph<TPoint>): PathGraphIs
       issues.push({
         level: 'error',
         code: 'path.too-many-prev-links',
-        message: `${label} #${index} is reached from ${group.prev.length} groups; at most ${MAX_GROUP_LINKS} are allowed.`,
+        message: `${label} #${index + 1} is reached from ${group.prev.length} groups; at most ${MAX_GROUP_LINKS} are allowed.`,
         groupIndex: index,
       });
     }
     for (const link of group.next) {
       if (!graph.groups[link]) {
-        issues.push({ level: 'error', code: 'path.link-out-of-range', message: `${label} #${index} leads to a group that does not exist.`, groupIndex: index });
+        issues.push({ level: 'error', code: 'path.link-out-of-range', message: `${label} #${index + 1} leads to a group that does not exist.`, groupIndex: index });
         continue;
       }
       if (!graph.groups[link].prev.includes(index)) {
         issues.push({
           level: 'warning',
           code: 'path.one-sided-link',
-          message: `${label} #${index} leads to ${label.toLowerCase()} #${link}, but that group does not list it as a source.`,
+          message: `${label} #${index + 1} leads to ${label.toLowerCase()} #${link + 1}, but that group does not list it as a source.`,
           groupIndex: index,
         });
       }
     }
     for (const link of group.prev) {
       if (!graph.groups[link]) {
-        issues.push({ level: 'error', code: 'path.link-out-of-range', message: `${label} #${index} is reached from a group that does not exist.`, groupIndex: index });
+        issues.push({ level: 'error', code: 'path.link-out-of-range', message: `${label} #${index + 1} is reached from a group that does not exist.`, groupIndex: index });
       }
     }
     if (group.next.length === 0) {
-      issues.push({ level: 'warning', code: 'path.dead-end', message: `${label} #${index} is a dead end; nothing follows it.`, groupIndex: index });
+      issues.push({ level: 'warning', code: 'path.dead-end', message: `${label} #${index + 1} is a dead end; nothing follows it.`, groupIndex: index });
     }
   }
 
   const reachable = reachableGroups(graph, 0);
   for (let index = 0; index < groupCount; index++) {
     if (reachable.has(index)) continue;
-    issues.push({ level: 'warning', code: 'path.orphan-group', message: `${label} #${index} can never be reached from the start of the track.`, groupIndex: index });
+    issues.push({ level: 'warning', code: 'path.orphan-group', message: `${label} #${index + 1} can never be reached from the start of the track.`, groupIndex: index });
   }
 
   return issues;

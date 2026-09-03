@@ -806,6 +806,7 @@ export function Noclip3DViewport({
   const hoveredHandleRef = useRef<GizmoHandleKey | null>(null);
   const activeHandleRef = useRef<GizmoHandleKey | null>(null);
   const overlayCameraPositionRef = useRef<Vec3 | null>(null);
+  const currentSceneOverlayDataRef = useRef<((track: TrackDocument | null, selectedId: string | null) => SceneOverlayData) | null>(null);
   const draggingEntityRef = useRef<ActiveDragState | null>(null);
   const pendingEntityDragRef = useRef<PendingEntityDragState | null>(null);
   const cameraLookDragRef = useRef<CameraLookDragState | null>(null);
@@ -1580,6 +1581,21 @@ export function Noclip3DViewport({
           hoveredId: hoveredIdRef.current,
         }),
       getCameras: () => cameraPreviewDefsRef.current,
+      /**
+       * What the KMP overlay is currently drawing, so a probe can check that a layer toggle or a
+       * path-graph edit actually changed the scene instead of only the DOM.
+       */
+      getKmpOverlay: () => {
+        const overlay = currentSceneOverlayDataRef.current!(trackRef.current, selectedIdRef.current);
+        return {
+          points: overlay.points.length,
+          lines: overlay.lines.length,
+          checkpointWalls: overlay.checkpointWalls.length,
+          areaVolumes: overlay.areaVolumes.length,
+          routeDeviationSegments: overlay.routeDeviationSegments.length,
+          sections: [...new Set(overlay.points.map((point) => point.section))].sort(),
+        };
+      },
       /** The overlay handle under a screen point — how probes locate a camera view-point handle. */
       pickHandleAt: (clientX: number, clientY: number) =>
         canvasRef.current ? pickSceneHandle(sceneRef.current, clientX, clientY, canvasRef.current) : null,
@@ -3028,19 +3044,15 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
 
   //#endregion
 
-  function syncSceneOverlay(nextTrack: TrackDocument | null, nextSelectedId: string | null) {
-    const scene = sceneRef.current as SceneGfx & {
-      setEditorOverlayData?: (data: SceneOverlayData) => void;
-    } | null;
-    overlayCameraPositionRef.current = getViewerCameraPosition(viewerRef.current);
+  /** The overlay the scene should be drawing right now. Shared by the renderer and the dev hook. */
+  function currentSceneOverlayData(nextTrack: TrackDocument | null, nextSelectedId: string | null): SceneOverlayData {
     const cameraOverlay = modeRef.current === 'camera'
       ? buildCameraOverlay(nextTrack?.kmp ?? null, {
           selectedIds: new Set([...(selectedIdsRef.current ?? []), ...(nextSelectedId ? [nextSelectedId] : [])]),
           hoveredId: hoveredIdRef.current,
         })
       : { cameraGizmos: [], cameraChainLinks: [] };
-    scene?.setEditorOverlayData?.(
-      buildSceneOverlayData(
+    return buildSceneOverlayData(
         nextTrack,
         nextSelectedId,
         selectedIdsRef.current,
@@ -3068,8 +3080,19 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
           pathLinkDrag: pathLinkDragRef.current,
           checkpointDraw: checkpointDrawRef.current,
         },
-      ),
     );
+  }
+
+  // The dev hook is installed once per scene, so it has to reach the newest builder through a
+  // ref; calling the one it captured would report the overlay as it looked on first render.
+  currentSceneOverlayDataRef.current = currentSceneOverlayData;
+
+  function syncSceneOverlay(nextTrack: TrackDocument | null, nextSelectedId: string | null) {
+    const scene = sceneRef.current as SceneGfx & {
+      setEditorOverlayData?: (data: SceneOverlayData) => void;
+    } | null;
+    overlayCameraPositionRef.current = getViewerCameraPosition(viewerRef.current);
+    scene?.setEditorOverlayData?.(currentSceneOverlayData(nextTrack, nextSelectedId));
   }
 
   function updateHoveredEntity(clientX: number, clientY: number, canvas: HTMLCanvasElement) {

@@ -5,7 +5,8 @@ const CONTENT_BROWSER_DEFAULT_HEIGHT = 248;
 const CONTENT_BROWSER_MIN_HEIGHT = 140;
 const WORKSPACE_MIN_HEIGHT = 160;
 const PLACE_ASSETS_COLLAPSED_WIDTH = 52;
-const PLACE_ASSETS_DEFAULT_WIDTH = 220;
+// Wide enough for the KMP outliner's deepest rows (section > group > point) to stay readable.
+const PLACE_ASSETS_DEFAULT_WIDTH = 268;
 const PLACE_ASSETS_MIN_WIDTH = 160;
 const INSPECTOR_DEFAULT_WIDTH = 320;
 const INSPECTOR_MIN_WIDTH = 220;

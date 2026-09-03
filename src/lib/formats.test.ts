@@ -37,6 +37,7 @@ import {
   patchKmpPotiPointSetting,
   patchKmpPotiRouteSetting,
   patchKmpRespawnField,
+  patchKmpKtptPlayerIndex,
   patchKmpStageField,
   patchKmpStageFlareColor,
   splitKmpPathGroup,
@@ -367,7 +368,8 @@ describe('MKW track loading', () => {
       };
       const cameraHeaderIssues = validateTrack(invalidCameraHeaderTrack);
       expect(cameraHeaderIssues.map((item) => item.code)).toContain('camera.opening-out-of-range');
-      expect(cameraHeaderIssues.find((item) => item.code === 'camera.opening-out-of-range')?.message).toContain('#254');
+      // Messages number records the way the outliner does: from 1, not from 0.
+      expect(cameraHeaderIssues.find((item) => item.code === 'camera.opening-out-of-range')?.message).toContain('#255');
     }
     if (camera?.camera) {
       const movedCamera = parseKmp(patchKmpEntityPosition(kmp, camera, { x: camera.position.x + 10, y: camera.position.y + 20, z: camera.position.z + 30 })).entities.find((entity) => entity.id === camera.id);
@@ -416,6 +418,18 @@ describe('MKW track loading', () => {
       expect(editedStage?.stage?.lapCount).toBe(5);
       expect(editedStage?.stage?.flareColor[2]).toBe(0xaa);
     }
+    const startPoint = kmp.entities.find((entity) => entity.section === 'KTPT' && entity.ktptPlayerIndex !== undefined);
+    if (startPoint) {
+      const pinned = parseKmp(patchKmpKtptPlayerIndex(kmp, startPoint, 3)).entities.find((entity) => entity.id === startPoint.id);
+      expect(pinned?.ktptPlayerIndex).toBe(3);
+      // -1 is the "any driver" marker every race track uses, and it has to survive a round trip.
+      const anyDriver = parseKmp(patchKmpKtptPlayerIndex(kmp, startPoint, -1)).entities.find((entity) => entity.id === startPoint.id);
+      expect(anyDriver?.ktptPlayerIndex).toBe(-1);
+      // Out-of-range values are clamped rather than written as garbage.
+      const clamped = parseKmp(patchKmpKtptPlayerIndex(kmp, startPoint, 99)).entities.find((entity) => entity.id === startPoint.id);
+      expect(clamped?.ktptPlayerIndex).toBe(11);
+    }
+
     const originalObjectCount = kmp.sections.find((section) => section.name === 'GOBJ')?.count ?? 0;
     const editedKmp = parseKmp(appendKmpGobj(kmp, 0x65, { x: 10, y: 20, z: 30 }));
     const editedObjects = editedKmp.sections.find((section) => section.name === 'GOBJ');
