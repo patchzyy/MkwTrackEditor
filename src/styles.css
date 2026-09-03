@@ -323,10 +323,6 @@ h4 {
 }
 
 /* Legacy status slot: the message now lives in the bottom status bar. */
-.status {
-  display: none;
-}
-
 /* ------------------------------------------------------------ docks */
 
 .shellBody {
@@ -343,7 +339,7 @@ h4 {
   display: grid;
   grid-column: 1;
   grid-row: 1;
-  grid-template-columns: var(--place-assets-width, 232px) minmax(0, 1fr);
+  grid-template-columns: var(--place-assets-width, 272px) minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
 }
@@ -382,7 +378,7 @@ h4 {
 }
 
 .dockHandleLeft {
-  left: calc(var(--place-assets-width, 232px) - 4px);
+  left: calc(var(--place-assets-width, 272px) - 4px);
 }
 
 .sidebarResizeHandleRight {
@@ -509,40 +505,22 @@ h4 {
   white-space: nowrap;
 }
 
-/* Collapsed left dock: a slim icon rail. The dock keeps its grid slot so nothing shifts. */
-.dockRail {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
-  overflow: hidden;
-  padding: var(--space-2) 0;
+/*
+ * Collapsed docks. `PanelRail` renders the slim icon strip; the dock keeps its grid slot so
+ * collapsing one never reflows the viewport contents.
+ */
+.workspace > .uiPanelRail {
+  grid-column: 1;
+  grid-row: 1;
   border-right: 1px solid var(--border);
   background: var(--surface-1);
 }
 
-.dockRailRight {
-  border-right: 0;
+.shellBody > .uiPanelRail {
+  grid-column: 2;
+  grid-row: 1 / span 2;
   border-left: 1px solid var(--border);
-}
-
-.dockRailLabel {
-  color: var(--text-dim);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  writing-mode: vertical-rl;
-}
-
-.dockRailRight .dockRailLabel {
-  transform: rotate(180deg);
-}
-
-.placeAssetsCollapsed .placeAssetsPanel {
-  overflow: hidden;
+  background: var(--surface-1);
 }
 
 /* ------------------------------------------------------------ status bar host */
@@ -1522,76 +1500,19 @@ h4 {
   cursor: pointer;
 }
 
-/* Body: folder column on the left, tile grid on the right. */
+/* Body: folder tree, tile grid, details pane. */
 .browserBody {
   display: grid;
-  grid-template-columns: 172px minmax(0, 1fr);
+  grid-template-columns: 186px minmax(0, 1fr) 232px;
   min-height: 0;
   overflow: hidden;
 }
 
 .browserFolders {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
   min-height: 0;
-  overflow: auto;
   padding: var(--space-2);
   border-right: 1px solid var(--border-subtle);
   background: var(--surface-2);
-}
-
-.browserFolder {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  padding: 5px var(--space-2);
-  border: 0;
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-}
-
-.browserFolder svg {
-  grid-row: 1 / span 2;
-  color: var(--text-dim);
-}
-
-.browserFolder strong,
-.browserFolder span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.browserFolder strong {
-  color: inherit;
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-}
-
-.browserFolder span {
-  color: var(--text-dim);
-  font-size: 10.5px;
-}
-
-.browserFolder:hover {
-  color: var(--text);
-  background: var(--surface-hover);
-}
-
-.browserFolder.active {
-  color: var(--text);
-  background: var(--selection);
-}
-
-.browserFolder.active svg {
-  color: var(--accent);
 }
 
 .assetStrip {
@@ -1640,8 +1561,14 @@ h4 {
   opacity: 0.6;
 }
 
+/*
+ * Thumbnails are rendered square (128x128) by `src/lib/thumbnail`, so the slot is square
+ * too: `object-fit: contain` into a wide slot letterboxes the model and leaves visible bars,
+ * which is what made the old previews read as grey blobs.
+ */
 .assetTile .thumbnail {
-  height: calc(var(--tile-size, 132px) * 0.52);
+  height: auto;
+  aspect-ratio: 1;
 }
 
 /* Hover zoom on the thumbnail only, so the tile itself never moves. */
@@ -1729,7 +1656,6 @@ h4 {
   background: linear-gradient(140deg, rgb(239 176 47 / 12%), transparent 55%), var(--surface-input);
 }
 
-.previewId,
 .previewModel {
   position: absolute;
   z-index: 1;
@@ -1738,12 +1664,6 @@ h4 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.previewId {
-  top: 4px;
-  color: var(--accent-text);
-  font-size: 10px;
 }
 
 .previewModel {
@@ -1783,6 +1703,87 @@ h4 {
   background: rgb(74 201 140 / 26%);
 }
 
+/* Details pane: what the focused tile actually is, in words. */
+.browserDetails {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-3);
+  border-left: 1px solid var(--border-subtle);
+  background: var(--surface-2);
+}
+
+.thumbnailLarge {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 100%;
+  max-width: 148px;
+  height: auto;
+  aspect-ratio: 1;
+}
+
+.browserDetailsTitle {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+}
+
+.browserDetailsCaption {
+  margin: -4px 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.browserDetailsFacts {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.browserDetailsFact {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.browserDetailsFact dt {
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.browserDetailsFact dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.browserDetailsHint {
+  margin: auto 0 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  color: var(--accent-text);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.browserDetailsHint--muted {
+  color: var(--text-dim);
+}
+
 /* Collapsed content browser: only the header strip remains. */
 .contentBrowser.collapsed {
   height: var(--panel-header-height);
@@ -1792,28 +1793,23 @@ h4 {
   display: none;
 }
 
-/* Legacy quick-object strip, still referenced by older CSS consumers. */
-.quickObjectsRow {
-  display: flex;
-  gap: var(--space-3);
-  overflow: auto hidden;
-  padding: 0 var(--space-4) var(--space-3);
-}
-
-.quickObjectChip {
-  display: grid;
-  gap: var(--space-2);
-  min-width: 104px;
-  width: 104px;
-  padding: var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  background: var(--surface-2);
-  cursor: grab;
-}
-
 /* ============================================================ 7. responsive */
+
+@media (max-width: 1280px) {
+  .browserBody {
+    grid-template-columns: 172px minmax(0, 1fr) 200px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .browserDetails {
+    display: none;
+  }
+
+  .browserBody {
+    grid-template-columns: 172px minmax(0, 1fr);
+  }
+}
 
 @media (max-width: 980px) {
   .topBarTrackName,
@@ -1853,5 +1849,9 @@ h4 {
 
   .browserBody {
     grid-template-columns: 130px minmax(0, 1fr);
+  }
+
+  .browserDetails {
+    display: none;
   }
 }

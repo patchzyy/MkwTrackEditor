@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Boxes, Layers, Route as RouteIcon, Shapes, Video } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getKmpCameraHeader, type KmpEntity, type Vec3 } from '../lib/kmp';
 import { getPathInfo, getReferenceCounts } from '../lib/kmpEdit';
 import { describeEntity, validateTrack } from '../lib/track';
@@ -32,6 +33,12 @@ import { useSmokeHarness } from './state/useSmokeHarness';
 import { useTrackDocument } from './state/useTrackDocument';
 import { useTrackExport } from './state/useTrackExport';
 import { TopBar } from './topbar/TopBar';
+import { clearRecentTracks, readRecentTracks, rememberRecentTrack, type RecentTrack } from './topbar/recentFiles';
+import { PanelRail } from './components/Panel';
+import { ShortcutOverlay } from './components/ShortcutOverlay';
+import { StatusBar, useFrameRate, type StatusBarStat } from './components/StatusBar';
+import { shouldToastStatus, classifyStatusMessage, splitStatusMessage } from './components/statusMessage';
+import { ToastProvider, ToastViewport, useToastStore } from './components/Toast';
 
 /**
  * Editor shell. All state lives in the `state/` hooks and every panel is its own component; this
@@ -50,6 +57,10 @@ export function App() {
   const [batchObjectId, setBatchObjectId] = useState<number | null>(null);
   const [fillBetweenCount, setFillBetweenCount] = useState(3);
   const [fillBetweenPanelOpen, setFillBetweenPanelOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [dragTarget, setDragTarget] = useState(false);
+  const [recentTracks, setRecentTracks] = useState<RecentTrack[]>(readRecentTracks);
+  const toasts = useToastStore();
 
   const trackDocument = useTrackDocument({ setStatus });
   const history = useEditorHistory({ selection, trackDocument, setStatus });
@@ -89,10 +100,6 @@ export function App() {
   const areaInspectorResources = useMemo(() => getAreaInspectorResources(analysisTrack), [analysisTrack]);
   const postEffectResources = useMemo(() => getTrackPostEffectResources(analysisTrack), [analysisTrack]);
   const selectedObjectProfile = useMemo(() => (selected?.section === 'GOBJ' ? getObjectInspectorProfile(selected, objFlow) : null), [objFlow, selected]);
-  const selectedArchiveNode = useMemo(
-    () => projectState?.archiveNodes.find((node) => node.id === selectedId) ?? null,
-    [projectState, selectedId],
-  );
   const validationCounts = useMemo(() => {
     const errorCount = validation.filter((item) => item.level === 'error').length;
     const warningCount = validation.filter((item) => item.level === 'warning').length + (track?.warnings.length ?? 0);
@@ -144,7 +151,7 @@ export function App() {
     return `${title} #${entity.index}`;
   }
 
-  const browser = useBrowserFolders({ track, projectState, objFlow, commonArchive, courseAssetDb });
+  const browser = useBrowserFolders({ track, objFlow, commonArchive, courseAssetDb });
   const editActions = useKmpEditActions({
     track,
     trackRef,
@@ -246,6 +253,85 @@ export function App() {
     redoEdit: history.redoEdit,
   });
 
+  // ---------------------------------------------------------------- shell chrome
+
+  const trackName = track?.fileName ?? null;
+  const { trackUrl, smokeTrackUrl } = trackDocument;
+
+  // A track can only be re-opened later if it came from a URL; file-picked tracks are
+  // remembered by name only (browsers never hand a page back a path).
+  useEffect(() => {
+    if (!trackName) return;
+    const startupUrl = trackUrl ?? smokeTrackUrl;
+    const url = startupUrl && decodeURIComponent(startupUrl).endsWith(trackName) ? startupUrl : undefined;
+    setRecentTracks(rememberRecentTrack({ name: trackName, url }));
+  }, [smokeTrackUrl, trackName, trackUrl]);
+
+  // The status line is the shell's only free-text channel. Failures and finished long jobs
+  // also get a toast so they survive the next status update.
+  const lastToastedStatus = useRef('');
+  const { showToast } = toasts;
+  useEffect(() => {
+    if (status === lastToastedStatus.current || !shouldToastStatus(status)) return;
+    lastToastedStatus.current = status;
+    const { summary, detail } = splitStatusMessage(status);
+    showToast({ tone: classifyStatusMessage(status), title: summary, detail: detail || undefined });
+  }, [showToast, status]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== '?' || event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target?.tagName ?? '')) return;
+      event.preventDefault();
+      setShortcutsOpen((value) => !value);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  const fps = useFrameRate(track !== null);
+  const statusStats = useMemo<StatusBarStat[]>(() => {
+    const stats: StatusBarStat[] = [];
+    if (trackSummary) {
+      stats.push({ id: 'entities', label: 'Records', value: String(trackSummary.entityCount), title: `${trackSummary.entityCount} editable track records` });
+      stats.push({ id: 'routes', label: 'Routes', value: String(trackSummary.routeCount), title: `${trackSummary.routeCount} movement routes` });
+    }
+    if (selectedIds.length > 0) {
+      stats.push({ id: 'selection', label: 'Selected', value: String(selectedIds.length) });
+    }
+    if (track) {
+      stats.push({
+        id: 'issues',
+        label: 'Issues',
+        value: `${validationCounts.errorCount} / ${validationCounts.warningCount}`,
+        tone: validationCounts.errorCount > 0 ? 'error' : validationCounts.warningCount > 0 ? 'warning' : 'default',
+        title: `${validationCounts.errorCount} errors, ${validationCounts.warningCount} warnings — see the Track tab`,
+      });
+    }
+    if (fps !== null) stats.push({ id: 'fps', label: 'FPS', value: String(fps), title: 'Viewport frames per second' });
+    return stats;
+  }, [fps, selectedIds.length, track, trackSummary, validationCounts]);
+
+  // The left dock hosts a different panel per mode, so its collapsed rail is labelled per mode.
+  const leftDock = useMemo(() => {
+    if (editorMode === 'camera') return { title: 'Cameras', icon: <Video size={15} /> };
+    if (editorMode === 'model') return { title: 'Outliner', icon: <Boxes size={15} /> };
+    if (editorMode === 'visual') return { title: 'Archives', icon: <Layers size={15} /> };
+    return { title: 'Place Assets', icon: <Shapes size={15} /> };
+  }, [editorMode]);
+
+  const openRecent = useCallback(
+    (entry: RecentTrack) => {
+      if (!entry.url) return;
+      const url = new URL(window.location.href);
+      url.searchParams.delete('smokeTrack');
+      url.searchParams.set('track', entry.url);
+      window.location.href = url.toString();
+    },
+    [],
+  );
+
   const selectedInspectorSection: InspectorSection = selected?.section === 'STGI' ? 'track' : 'object';
   const selectedInspector = selected ? (
     <SelectedEntityInspector
@@ -262,42 +348,72 @@ export function App() {
   ) : null;
 
   return (
+    <ToastProvider value={toasts}>
     <main
       ref={layout.appShellRef}
-      className="appShell"
-      onDragOver={(event) => event.preventDefault()}
+      className={dragTarget ? 'appShell isDragTarget' : 'appShell'}
+      onDragOver={(event) => {
+        event.preventDefault();
+        if (event.dataTransfer.types.includes('Files')) setDragTarget(true);
+      }}
+      onDragLeave={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+        setDragTarget(false);
+      }}
       onDrop={(event) => {
         event.preventDefault();
-        void trackDocument.openFiles(event.dataTransfer.files);
+        setDragTarget(false);
+        if (event.dataTransfer.files.length > 0) void trackDocument.openFiles(event.dataTransfer.files);
       }}
     >
       <TopBar
         topBarRef={layout.topBarRef}
         historyState={history.historyState}
-        status={status}
         editorMode={editorMode}
         inspectorOpen={layout.inspectorOpen}
+        leftDockOpen={layout.placeAssetsOpen}
+        browserOpen={layout.browserOpen}
         canExport={track !== null}
+        trackName={trackName}
+        recentTracks={recentTracks}
         onOpenFiles={(files) => void trackDocument.openFiles(files)}
         onImportCommonArchive={(files) => void trackDocument.importCommonArchive(files)}
+        onOpenRecent={openRecent}
+        onClearRecent={() => setRecentTracks(clearRecentTracks())}
         onUndo={history.undoEdit}
         onRedo={history.redoEdit}
         onToggleInspector={() => layout.setInspectorOpen((value) => !value)}
+        onToggleLeftDock={() => layout.setPlaceAssetsOpen((value) => !value)}
+        onToggleBrowser={() => layout.setBrowserOpen((value) => !value)}
+        onShowShortcuts={() => setShortcutsOpen(true)}
         onExport={downloadExport}
         onChangeEditorMode={setEditorMode}
       />
 
       <div ref={layout.shellBodyRef} className={layout.inspectorOpen ? 'shellBody' : 'shellBody inspectorCollapsed'} style={layout.workspaceStyle}>
         <div ref={layout.workspaceRef} className={layout.placeAssetsOpen ? 'workspace' : 'workspace placeAssetsCollapsed'}>
-          {modeUi.leftPanel ?? (
-            <PlaceAssetsRail
-              open={layout.placeAssetsOpen}
-              onToggle={() => layout.setPlaceAssetsOpen((value) => !value)}
-              onBeginResize={(event) => layout.beginSidebarResize('placeAssets', event)}
-              quickObjectOptions={quickObjectOptions}
-              objFlow={objFlow}
-              commonArchive={commonArchive}
-              commonBrresSummaries={commonBrresSummaries}
+          {layout.placeAssetsOpen ? (
+            modeUi.leftPanel ?? (
+              <PlaceAssetsRail
+                onToggle={() => layout.setPlaceAssetsOpen(false)}
+                quickObjectOptions={quickObjectOptions}
+                objFlow={objFlow}
+                commonArchive={commonArchive}
+                commonBrresSummaries={commonBrresSummaries}
+              />
+            )
+          ) : (
+            <PanelRail title={leftDock.title} icon={leftDock.icon} onExpand={() => layout.setPlaceAssetsOpen(true)} />
+          )}
+          {layout.placeAssetsOpen && (
+            <div
+              className={layout.sidebarResizing === 'placeAssets' ? 'dockHandle dockHandleLeft isActive' : 'dockHandle dockHandleLeft'}
+              onPointerDown={(event) => layout.beginSidebarResize('placeAssets', event)}
+              onDoubleClick={() => layout.resetSidebarSize('placeAssets')}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={`Resize ${leftDock.title.toLowerCase()} panel`}
+              title="Drag to resize · double-click to reset"
             />
           )}
           <Noclip3DViewport
@@ -352,9 +468,11 @@ export function App() {
           />
         </div>
 
+        {layout.inspectorOpen ? (
         <InspectorPanel
           inspectorOpen={layout.inspectorOpen}
           onBeginResize={(event) => layout.beginSidebarResize('inspector', event)}
+          onResetSize={() => layout.resetSidebarSize('inspector')}
           onClose={() => layout.setInspectorOpen(false)}
           inspectorSection={inspectorSection}
           onChangeInspectorSection={setInspectorSection}
@@ -364,7 +482,6 @@ export function App() {
           trackSummary={trackSummary}
           selected={selected}
           selectedEntities={selectedEntities}
-          selectedArchiveNode={selectedArchiveNode}
           selectedInspector={selectedInspector}
           selectedInspectorSection={selectedInspectorSection}
           entityLabel={entityLabel}
@@ -383,6 +500,14 @@ export function App() {
           validation={validation}
           validationCounts={validationCounts}
         />
+        ) : (
+          <PanelRail
+            side="right"
+            title="Inspector"
+            icon={<RouteIcon size={15} />}
+            onExpand={() => layout.setInspectorOpen(true)}
+          />
+        )}
 
         <ContentBrowser
           open={layout.browserOpen}
@@ -390,6 +515,7 @@ export function App() {
           collapsedHeight={CONTENT_BROWSER_COLLAPSED_HEIGHT}
           resizing={layout.browserResizing}
           onBeginResize={layout.beginBrowserResize}
+          onResetSize={layout.resetBrowserSize}
           onToggleOpen={() => layout.setBrowserOpen((value) => !value)}
           folders={browser.browserFolders}
           activeFolderId={browser.activeBrowserFolder?.id}
@@ -398,16 +524,15 @@ export function App() {
           onChangeQuery={browser.setBrowserQuery}
           onChangeFolder={browser.setBrowserFolder}
           track={track}
-          objFlow={objFlow}
           commonArchive={commonArchive}
           commonBrresSummaries={commonBrresSummaries}
-          selectedId={selectedId}
-          onSelectArchiveNode={(nodeId) => {
-            setEditorMode('model');
-            selection.selectOnly(nodeId);
-          }}
         />
       </div>
+
+      <StatusBar message={status} stats={statusStats} />
+      <ToastViewport toasts={toasts.toasts} onDismiss={toasts.dismissToast} />
+      <ShortcutOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
     </main>
+    </ToastProvider>
   );
 }

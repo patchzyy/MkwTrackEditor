@@ -8,13 +8,16 @@ export const DOCK_RAIL_WIDTH = 40;
 const CONTENT_BROWSER_DEFAULT_HEIGHT = 260;
 const CONTENT_BROWSER_MIN_HEIGHT = 150;
 const WORKSPACE_MIN_HEIGHT = 180;
-const PLACE_ASSETS_DEFAULT_WIDTH = 232;
-const PLACE_ASSETS_MIN_WIDTH = 180;
+// The left dock hosts KMP's asset rail *and* the camera / model / visual outliners, which
+// carry a filter box plus a row of actions. 272px is the narrowest that fits all four
+// without a horizontal scrollbar.
+const PLACE_ASSETS_DEFAULT_WIDTH = 272;
+const PLACE_ASSETS_MIN_WIDTH = 232;
 const INSPECTOR_DEFAULT_WIDTH = 340;
 const INSPECTOR_MIN_WIDTH = 260;
 const WORKSPACE_MIN_VIEWPORT_WIDTH = 320;
 
-const STORAGE_KEY = 'mkw.editor.layout.v1';
+const STORAGE_KEY = 'mkw.editor.layout.v2';
 
 export type SidebarSide = 'placeAssets' | 'inspector';
 

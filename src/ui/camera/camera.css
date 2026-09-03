@@ -2,6 +2,10 @@
  * Camera-mode styles. Imported by `CameraMode.tsx`, so they only load with the mode.
  * Everything is scoped under a `camera*` class name; the shared shell styles in
  * `src/styles.css` are not touched.
+ *
+ * Colours, spacing, radii and type all come from the design tokens declared in the `:root`
+ * block of `src/styles.css`. Raw values survive only where the token scale has no matching
+ * step and snapping would change layout; each of those is commented.
  */
 
 .cameraPanel .placeAssetsHeader {
@@ -9,13 +13,13 @@
      the camera count spills over the list below it. */
   flex: 0 0 auto;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .cameraAddButton {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-2);
   white-space: nowrap;
 }
 
@@ -23,9 +27,9 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 0 10px 12px;
+  padding: 0 var(--space-3) var(--space-4);
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
   align-content: start;
 }
 
@@ -37,16 +41,16 @@
    has an automatic minimum size of zero and its auto track collapses. The whole panel scrolls. */
 .cameraList {
   display: grid;
-  gap: 3px;
+  gap: var(--space-1);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .cameraListEmpty {
-  padding: 10px 2px;
-  color: #9faaba;
-  font-size: 12px;
+  padding: var(--space-3) var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
   line-height: 1.4;
 }
 
@@ -54,46 +58,46 @@
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
   align-items: start;
-  gap: 8px;
+  gap: var(--space-3);
   width: 100%;
-  padding: 7px 8px;
+  padding: var(--space-3);
   border: 1px solid transparent;
-  border-radius: 4px;
-  color: #dbe3ef;
-  background: #171d25;
+  border-radius: var(--radius-md);
+  color: var(--text);
+  background: var(--surface-2);
   text-align: left;
   cursor: pointer;
 }
 
 .cameraRow:hover {
-  border-color: #3a4553;
-  background: #1c232d;
+  border-color: var(--border-strong);
+  background: var(--surface-3);
 }
 
 .cameraRow.isSelected {
-  border-color: #5fd6ff;
-  background: rgba(95, 214, 255, 0.12);
+  border-color: var(--selection-border);
+  background: var(--selection);
 }
 
 .cameraRowIcon {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding-top: 2px;
+  padding-top: var(--space-1);
 }
 
 .cameraRowText {
   display: grid;
-  gap: 4px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
 .cameraRowTitle {
   display: flex;
   align-items: baseline;
-  gap: 7px;
+  gap: var(--space-3);
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
 }
 
@@ -104,8 +108,8 @@
 .cameraRowType {
   min-width: 0;
   overflow: hidden;
-  color: #9faaba;
-  font-size: 11px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
   font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -114,47 +118,52 @@
 .cameraRowBadges {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .cameraBadge {
-  padding: 1px 6px;
-  border: 1px solid #34404f;
-  border-radius: 999px;
-  color: #b9c5d5;
-  font-size: 10px;
+  /* 1px and 15px are pill metrics rather than spacing: together they keep the badge exactly one
+     line tall around the 11px label. Neither has a step on the spacing scale. */
+  padding: 1px var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
   line-height: 15px;
   white-space: nowrap;
 }
 
 .cameraBadge.isOpening {
-  border-color: rgba(255, 158, 89, 0.6);
-  color: #ffc79b;
-  background: rgba(255, 158, 89, 0.14);
+  border-color: var(--warning-border);
+  color: var(--warning-text);
+  background: var(--warning-soft);
 }
 
+/* Purple has no design token, and it is load-bearing here: this is the third badge hue, so
+   collapsing it onto --accent would make `.isSelection` indistinguishable from `.isArea`
+   directly below. These three literals are deliberate. */
 .cameraBadge.isSelection {
-  border-color: rgba(191, 122, 255, 0.6);
+  border-color: rgb(191 122 255 / 60%);
   color: #d9b9ff;
-  background: rgba(191, 122, 255, 0.14);
+  background: rgb(191 122 255 / 14%);
 }
 
 .cameraBadge.isArea {
-  border-color: rgba(95, 214, 255, 0.5);
-  color: #b6e9ff;
-  background: rgba(95, 214, 255, 0.12);
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+  background: var(--accent-soft);
 }
 
 .cameraRowActions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .cameraRowActions .button {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-2);
   flex: 1 1 auto;
   justify-content: center;
 }
@@ -163,34 +172,34 @@
 
 .cameraChain {
   display: grid;
-  gap: 6px;
-  padding: 9px 10px 10px;
-  border: 1px solid #272f3a;
-  border-radius: 5px;
-  background: #141a22;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
 }
 
 .cameraChainHeader {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .cameraChainHeader strong {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .cameraChainEmpty {
   margin: 0;
-  color: #9faaba;
-  font-size: 11px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
   line-height: 1.4;
 }
 
 .cameraChainList {
   display: grid;
-  gap: 3px;
+  gap: var(--space-1);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -200,30 +209,31 @@
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) 22px;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   border: 1px solid transparent;
-  border-radius: 4px;
-  background: #191f28;
+  border-radius: var(--radius-md);
+  /* One surface step lighter than the `.cameraChain` card it sits inside. */
+  background: var(--surface-3);
 }
 
 .cameraChainItem.isSelected {
-  border-color: #5fd6ff;
+  border-color: var(--selection-border);
 }
 
 .cameraChainItem.isDropTarget {
-  border-color: #ffb066;
-  background: rgba(255, 176, 102, 0.14);
+  border-color: var(--warning);
+  background: var(--warning-soft);
 }
 
 .cameraChainItem.hasWarning {
-  border-color: rgba(255, 176, 102, 0.45);
+  border-color: var(--warning-border);
 }
 
 .cameraChainGrip {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #6c7889;
+  color: var(--text-dim);
   cursor: grab;
 }
 
@@ -231,39 +241,39 @@
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
-  padding: 6px 2px;
+  padding: var(--space-2) var(--space-1);
   border: 0;
-  color: #dbe3ef;
+  color: var(--text);
   background: transparent;
   text-align: left;
   cursor: pointer;
 }
 
 .cameraChainOrder {
-  color: #ffc79b;
-  font-size: 11px;
+  color: var(--warning-text);
+  font-size: var(--font-size-xs);
   font-weight: 700;
 }
 
 .cameraChainName {
   display: grid;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .cameraChainType {
   overflow: hidden;
-  color: #9faaba;
-  font-size: 10px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .cameraChainTime {
-  color: #9faaba;
-  font-size: 11px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 
 .cameraChainRemove {
@@ -273,17 +283,17 @@
 
 .cameraChainTotal {
   margin: 0;
-  color: #b9c5d5;
-  font-size: 11px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
 }
 
 .cameraChainWarning {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--space-2);
   margin: 0;
-  color: #ffc79b;
-  font-size: 11px;
+  color: var(--warning-text);
+  font-size: var(--font-size-xs);
   line-height: 1.4;
 }
 
@@ -291,43 +301,43 @@
 
 .cameraInspector {
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .cameraInspectorActions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .cameraInspectorActions .button {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-2);
 }
 
 .cameraIssues {
   display: grid;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .cameraIssue {
   display: flex;
   align-items: flex-start;
-  gap: 7px;
-  padding: 7px 9px;
-  border: 1px solid rgba(255, 176, 102, 0.4);
-  border-radius: 4px;
-  color: #ffc79b;
-  background: rgba(255, 176, 102, 0.1);
-  font-size: 12px;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-md);
+  color: var(--warning-text);
+  background: var(--warning-soft);
+  font-size: var(--font-size-sm);
   line-height: 1.4;
 }
 
 .cameraIssue.isError {
-  border-color: rgba(255, 120, 120, 0.45);
-  color: #ffb3b3;
-  background: rgba(255, 120, 120, 0.1);
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+  background: var(--danger-soft);
 }
 
 .cameraIssue span {
@@ -337,15 +347,16 @@
 .cameraFields {
   display: grid;
   gap: 0;
-  border-top: 1px solid #232b35;
+  /* Field rules use --border-subtle so this grid reads the same as the shell `.propertyGrid`. */
+  border-top: 1px solid var(--border-subtle);
 }
 
 .cameraFields .detailsSectionHeader {
-  margin-top: 12px;
-  padding: 12px 0 8px;
-  border-top: 1px solid #232b35;
-  color: #aeb8c7;
-  font-size: 11px;
+  margin-top: var(--space-4);
+  padding: var(--space-4) 0 var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -353,7 +364,7 @@
 
 .cameraFields .detailsSectionHeader:first-child {
   margin-top: 0;
-  padding-top: 8px;
+  padding-top: var(--space-3);
   border-top: 0;
 }
 
@@ -361,29 +372,29 @@
   display: grid;
   grid-template-columns: minmax(120px, 42%) minmax(0, 1fr);
   align-items: start;
-  gap: 6px 12px;
-  padding: 9px 0;
-  border-bottom: 1px solid #232b35;
-  color: #9faaba;
-  font-size: 12px;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
 }
 
 /* Three-axis rows need the whole panel width, so the control drops under the label instead of
    fighting it for the 42% column. */
 .cameraField.isWide {
   grid-template-columns: minmax(0, 1fr);
-  gap: 7px;
+  gap: var(--space-3);
 }
 
 .cameraFieldLabel {
   display: grid;
-  gap: 3px;
-  color: #dbe3ef;
+  gap: var(--space-2);
+  color: var(--text);
 }
 
 .cameraFieldHint {
-  color: #8a95a5;
-  font-size: 10px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
   font-weight: 400;
   line-height: 1.35;
 }
@@ -392,30 +403,33 @@
 .cameraField select {
   min-width: 0;
   width: 100%;
-  height: 28px;
-  border: 1px solid #343d4a;
+  height: var(--control-height);
+  border: 1px solid var(--border-strong);
+  /* Square on purpose: `.cameraAxisLetter` butts up against the input's left edge. */
   border-radius: 0;
   padding: 0 7px;
-  color: #eef3fb;
-  background: #11161d;
+  color: var(--text);
+  background: var(--surface-input);
 }
 
 .cameraField input:focus,
 .cameraField select:focus {
-  border-color: #5fd6ff;
+  /* The field shares an edge with the axis letter, so focus recolours the border rather than
+     drawing an outline that would sit on top of it. */
+  border-color: var(--accent);
   outline: none;
 }
 
 .cameraField select:disabled,
 .cameraField input:disabled {
-  color: #79838f;
-  background: #171b21;
+  color: var(--text-disabled);
+  background: var(--surface-2);
 }
 
 .cameraVectorInputs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .cameraAxisInput {
@@ -424,58 +438,59 @@
   align-items: center;
 }
 
-/* Track coordinates run to five digits plus a sign, so these boxes give the number every pixel. */
+/* Track coordinates run to five digits plus a sign, so these boxes give the number every pixel.
+   3px is deliberately below the spacing scale. */
 .cameraAxisInput input {
   padding: 0 3px;
 }
 
 .cameraAxisLetter {
-  height: 28px;
-  border: 1px solid #343d4a;
+  height: var(--control-height);
+  border: 1px solid var(--border-strong);
   border-right: 0;
-  color: #8a95a5;
-  font-size: 10px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
   font-weight: 700;
-  line-height: 28px;
+  line-height: var(--control-height);
   text-align: center;
-  background: #171b21;
+  background: var(--surface-2);
 }
 
 .cameraAxisInput:focus-within .cameraAxisLetter {
-  border-color: #5fd6ff;
-  color: #b6e9ff;
+  border-color: var(--accent);
+  color: var(--accent-text);
 }
 
 .cameraNumberWithSuffix {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .cameraFieldSuffix {
-  color: #8a95a5;
-  font-size: 10px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
   white-space: nowrap;
 }
 
 .cameraTypeDescription {
   margin: 0;
-  padding: 8px 0;
-  border-bottom: 1px solid #232b35;
-  color: #9faaba;
-  font-size: 11px;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
   line-height: 1.45;
 }
 
 .cameraAdvanced {
-  margin: 12px 0 0;
+  margin: var(--space-4) 0 0;
 }
 
 .cameraFieldsFooter {
-  margin: 10px 0 0;
-  color: #9faaba;
-  font-size: 11px;
+  margin: var(--space-3) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 
 /* --- Playback HUD -------------------------------------------------------- */
@@ -486,33 +501,33 @@
 }
 
 .cameraPlaybackClock {
-  color: #b6e9ff;
-  font-size: 11px;
+  color: var(--accent-text);
+  font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
 }
 
 .cameraPlaybackScrub {
   width: 100%;
-  accent-color: #5fd6ff;
+  accent-color: var(--accent);
 }
 
 .cameraPlaybackButtons {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .cameraPlaybackButtons .button {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-2);
   flex: 1 1 auto;
   justify-content: center;
 }
 
 .cameraPlaybackButtons .button.isActive {
-  border-color: #5fd6ff;
-  background: rgba(95, 214, 255, 0.16);
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
 }
 
 .cameraPlaybackOpening {

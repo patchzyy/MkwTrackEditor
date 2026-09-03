@@ -1,5 +1,8 @@
 /* Visual mode: left panel groups, texture previews and the view-preset overlay.
-   Scoped to `.visual*` class names so nothing here leaks into the other editor modes. */
+   Scoped to `.visual*` class names so nothing here leaks into the other editor modes.
+
+   Colours, spacing, radii and type come from the design tokens in the `:root` block of
+   `src/styles.css`; the few remaining literals are commented where they appear. */
 
 .visualPanel {
   position: relative;
@@ -7,8 +10,10 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #272d37;
-  background: #141920;
+  /* The element also carries `.placeAssetsPanel`; these repeat the dock's own chrome so the
+     two stay in step. */
+  border-right: 1px solid var(--border);
+  background: var(--surface-1);
   overflow: hidden;
 }
 
@@ -25,42 +30,42 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0 0 12px;
+  padding: 0 0 var(--space-4);
 }
 
 .visualArchivePicker {
   display: grid;
-  gap: 4px;
-  padding: 8px 10px 10px;
-  border-bottom: 1px solid #232b35;
-  color: #9faaba;
-  font-size: 11px;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 
 .visualArchivePicker select {
-  height: 28px;
+  height: var(--control-height);
   min-width: 0;
-  border: 1px solid #343d4a;
-  border-radius: 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
   padding: 0 7px;
-  color: #eef3fb;
-  background: #11161d;
+  color: var(--text);
+  background: var(--surface-input);
 }
 
 .visualGroup {
-  border-bottom: 1px solid #232b35;
+  border-bottom: 1px solid var(--border);
 }
 
 .visualGroupHeader {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
   width: 100%;
-  padding: 9px 10px;
+  padding: var(--space-3);
   border: 0;
-  color: #dbe3ef;
+  color: var(--text);
   background: transparent;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -69,66 +74,67 @@
 }
 
 .visualGroupHeader:hover {
-  background: #19202a;
+  background: var(--surface-hover);
 }
 
 .visualGroupChevron {
   width: 10px;
-  color: #7d8798;
+  color: var(--text-dim);
+  /* Below the type scale on purpose: the glyph has to fit the 10px column. */
   font-size: 9px;
 }
 
 .visualGroupCount {
   margin-left: auto;
-  color: #7d8798;
+  color: var(--text-dim);
   font-weight: 600;
   letter-spacing: 0;
   text-transform: none;
 }
 
 .visualGroupBody {
-  padding: 2px 10px 12px;
+  padding: var(--space-1) var(--space-3) var(--space-4);
 }
 
 .visualList {
   display: grid;
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 .visualRow {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
   width: 100%;
-  padding: 6px 8px;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid transparent;
-  border-radius: 5px;
-  color: #dbe3ef;
+  border-radius: var(--radius-md);
+  color: var(--text);
   background: transparent;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   text-align: left;
   cursor: pointer;
 }
 
 .visualRow:hover {
-  background: #1b2129;
+  background: var(--surface-hover);
 }
 
 .visualRow.selected {
-  border-color: #3d7fa8;
-  background: #16232e;
+  border-color: var(--selection-border);
+  background: var(--selection);
 }
 
 .visualRowMain {
   min-width: 0;
   display: grid;
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 .visualRowMain strong {
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -146,8 +152,8 @@
 }
 
 .visualRowMeta {
-  color: #8b95a5;
-  font-size: 11px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -156,17 +162,17 @@
 .visualRowAside {
   display: flex;
   align-items: center;
-  gap: 6px;
-  color: #8b95a5;
-  font-size: 11px;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 
 .visualToggle {
   display: flex;
   align-items: center;
-  gap: 5px;
-  color: #9faaba;
-  font-size: 11px;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
   cursor: pointer;
 }
 
@@ -175,68 +181,70 @@
 }
 
 .visualToggle.disabled {
-  color: #5c6674;
+  color: var(--text-disabled);
   cursor: not-allowed;
 }
 
 .visualToggleGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px 10px;
+  gap: var(--space-2) var(--space-3);
 }
 
 .visualTextureGrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(74px, 1fr));
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .visualTextureTile {
   display: grid;
-  gap: 4px;
-  padding: 5px;
-  border: 1px solid #232b35;
-  border-radius: 5px;
-  color: #dbe3ef;
-  background: #11161d;
-  font-size: 10px;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  background: var(--surface-input);
+  font-size: var(--font-size-xs);
   text-align: left;
   cursor: pointer;
 }
 
 .visualTextureTile:hover {
-  border-color: #3a4657;
+  border-color: var(--border-hover);
 }
 
 .visualTextureTile.selected {
-  border-color: #3d7fa8;
-  background: #16232e;
+  border-color: var(--selection-border);
+  background: var(--selection);
 }
 
 .visualTextureTile strong {
   overflow: hidden;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .visualTextureTile span {
-  color: #8b95a5;
+  color: var(--text-muted);
 }
 
-/* Alpha-aware preview: a checkerboard behind the decoded texture. */
+/* Alpha-aware preview: a checkerboard behind the decoded texture. The two tones are surface
+   tokens one step apart, which is all the contrast the checker needs. */
 .visualCheckerboard {
   display: grid;
   place-items: center;
   overflow: hidden;
-  border-radius: 3px;
-  background-color: #2a323d;
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-4);
   background-image:
-    linear-gradient(45deg, #202730 25%, transparent 25%),
-    linear-gradient(-45deg, #202730 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #202730 75%),
-    linear-gradient(-45deg, transparent 75%, #202730 75%);
+    linear-gradient(45deg, var(--surface-3) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--surface-3) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--surface-3) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--surface-3) 75%);
+  /* Checker geometry, not spacing: the offsets must stay exactly half the tile size. */
   background-size: 12px 12px;
   background-position: 0 0, 0 6px, 6px -6px, -6px 0;
 }
@@ -256,80 +264,80 @@
 .visualTexturePreviewLarge {
   min-height: 180px;
   max-height: 320px;
-  padding: 8px;
+  padding: var(--space-3);
 }
 
 .visualEmpty {
-  padding: 8px 2px;
-  color: #7d8798;
-  font-size: 11px;
+  padding: var(--space-3) var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
   line-height: 1.4;
 }
 
 .visualScrubber {
   display: grid;
-  gap: 6px;
-  padding: 8px;
-  border: 1px solid #232b35;
-  border-radius: 5px;
-  background: #11161d;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-input);
 }
 
 .visualScrubberRow {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .visualScrubberRow input[type='range'] {
   flex: 1 1 auto;
   min-width: 0;
-  accent-color: #5fd6ff;
+  accent-color: var(--accent);
 }
 
 .visualScrubberValue {
   min-width: 58px;
-  color: #9faaba;
-  font-size: 11px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
 
 .visualInlineButton {
-  height: 26px;
-  border: 1px solid #343d4a;
-  border-radius: 5px;
-  padding: 0 9px;
-  color: #dbe3ef;
-  background: #1a2029;
-  font-size: 11px;
+  height: var(--control-height-sm);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-3);
+  color: var(--text);
+  background: var(--surface-3);
+  font-size: var(--font-size-xs);
   cursor: pointer;
 }
 
 .visualInlineButton:hover:not(:disabled) {
-  border-color: #4b5768;
-  background: #212934;
+  border-color: var(--border-hover);
+  background: var(--surface-4);
 }
 
 .visualInlineButton:disabled {
-  color: #5c6674;
+  color: var(--text-disabled);
   cursor: not-allowed;
 }
 
 .visualInlineButton.active {
-  border-color: #3d7fa8;
-  background: #16323f;
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
 }
 
 .visualButtonRow {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .visualPresetRow {
   display: flex;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .visualPresetRow .visualInlineButton {
@@ -337,41 +345,41 @@
 }
 
 .visualNote {
-  color: #8b95a5;
-  font-size: 11px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
   line-height: 1.4;
 }
 
 .visualNote.warning {
-  color: #f0b866;
+  color: var(--warning-text);
 }
 
 .visualNote.error {
-  color: #f08a8a;
+  color: var(--danger-text);
 }
 
 .visualInspectorHeader {
   display: grid;
-  gap: 3px;
-  margin-bottom: 10px;
+  gap: var(--space-1);
+  margin-bottom: var(--space-3);
 }
 
 .visualInspectorHeader strong {
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .visualTagRow {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .visualTag {
-  padding: 2px 6px;
-  border: 1px solid #2e3844;
-  border-radius: 999px;
-  color: #9faaba;
-  font-size: 10px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 
 .visualOverlayPanel {
@@ -381,10 +389,10 @@
 .visualOverlayToggles {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px 10px;
+  gap: var(--space-2) var(--space-3);
 }
 
 .visualOverlayDivider {
   height: 1px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--border-overlay);
 }

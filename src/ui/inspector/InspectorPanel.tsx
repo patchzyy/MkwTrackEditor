@@ -1,6 +1,5 @@
 import { MousePointerSquareDashed, PanelRightClose, SlidersHorizontal, TriangleAlert } from 'lucide-react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
-import type { BrresEditorNode } from '../../lib/brresEditor';
 import type { KmpEntity, Vec3 } from '../../lib/kmp';
 import type { TrackDocument, validateTrack } from '../../lib/track';
 import { IconButton } from '../components/Button';
@@ -35,7 +34,6 @@ export function InspectorPanel({
   trackSummary,
   selected,
   selectedEntities,
-  selectedArchiveNode,
   selectedInspector,
   selectedInspectorSection,
   entityLabel,
@@ -67,7 +65,6 @@ export function InspectorPanel({
   trackSummary: { entityCount: number; groupCount: number; routeCount: number } | null;
   selected: KmpEntity | null;
   selectedEntities: KmpEntity[];
-  selectedArchiveNode: BrresEditorNode | null;
   selectedInspector: ReactNode;
   selectedInspectorSection: InspectorSection;
   entityLabel: (entity: KmpEntity) => string;
@@ -123,16 +120,6 @@ export function InspectorPanel({
                 />
                 {inspectorSection === 'object' ? (
                   <>
-                    {selectedArchiveNode && editorMode === 'model' && (
-                      <DetailsSummaryBar
-                        items={[
-                          { label: 'Selection', value: selectedArchiveNode.name },
-                          { label: 'Model', value: selectedArchiveNode.modelName },
-                          { label: 'Archive', value: friendlyTrackAssetName(selectedArchiveNode.archivePath) },
-                          { label: 'Node', value: `#${selectedArchiveNode.nodeId}` },
-                        ]}
-                      />
-                    )}
                     {selected && selectedInspectorSection === 'object' && (
                       <DetailsSummaryBar
                         items={[

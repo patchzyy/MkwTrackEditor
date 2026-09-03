@@ -1,4 +1,3 @@
-import type { EditorProjectState, BrresEditorNode } from '../../lib/brresEditor';
 import { mapCourseAssetToPlaceable, type CourseAssetDatabase, type PlaceableCourseAssetRecord } from '../../lib/courseAssets';
 import type { AppendableKmpSection } from '../../lib/kmp';
 import type { CommonResourceArchive } from '../../lib/objflow';
@@ -17,13 +16,34 @@ import {
 import { comparePlaceableCourseAssetPriority, dedupePlaceableCourseAssetsForBrowser } from './browserAssetDedupe';
 
 export type BrowserAssetItem = BrowserObject | PlaceableCourseAssetRecord;
-export type BrowserFolderId = 'featured' | 'kmp' | 'enemies' | 'nature' | 'gameplay' | 'props' | 'common' | 'track' | 'archiveNodes';
+export type BrowserFolderId = 'featured' | 'kmp' | 'enemies' | 'nature' | 'gameplay' | 'props' | 'common' | 'track';
+
+/** Top level of the folder tree. Folders hang off one of these. */
+export type BrowserGroupId = 'objects' | 'trackData' | 'thisTrack';
+
+export interface BrowserGroup {
+  id: BrowserGroupId;
+  label: string;
+}
+
+/** Root folders, in the order the tree shows them. */
+export const browserGroups: readonly BrowserGroup[] = [
+  { id: 'objects', label: 'Game Objects' },
+  { id: 'trackData', label: 'Track Data' },
+  { id: 'thisTrack', label: 'This Track' },
+];
+
+interface BrowserFolderBase {
+  id: BrowserFolderId;
+  group: BrowserGroupId;
+  label: string;
+  detail: string;
+}
 
 export type BrowserFolder =
-  | { id: BrowserFolderId; label: string; detail: string; kind: 'kmp'; items: typeof kmpPointCatalog }
-  | { id: BrowserFolderId; label: string; detail: string; kind: 'object'; items: BrowserAssetItem[] }
-  | { id: BrowserFolderId; label: string; detail: string; kind: 'archiveNode'; items: BrresEditorNode[] }
-  | { id: BrowserFolderId; label: string; detail: string; kind: 'brres'; items: string[] };
+  | (BrowserFolderBase & { kind: 'kmp'; items: typeof kmpPointCatalog })
+  | (BrowserFolderBase & { kind: 'object'; items: BrowserAssetItem[] })
+  | (BrowserFolderBase & { kind: 'brres'; items: string[] });
 
 export const kmpPointCatalog: Array<{ section: AppendableKmpSection; label: string; category: string }> = [
   { section: 'KTPT', label: 'Start Point', category: 'Track Data' },
@@ -38,7 +58,7 @@ export const kmpPointCatalog: Array<{ section: AppendableKmpSection; label: stri
   { section: 'MSPT', label: 'Battle Finish Point', category: 'Battle' },
 ];
 
-export function classifyObjectFolder(object: BrowserAssetItem): Exclude<BrowserFolderId, 'featured' | 'kmp' | 'common' | 'track' | 'archiveNodes'> {
+export function classifyObjectFolder(object: BrowserAssetItem): Exclude<BrowserFolderId, 'featured' | 'kmp' | 'common' | 'track'> {
   const text = browserItemSearchText(object);
   if (/(kuribo|goomba|choropu|pakkun|killer|wanwan|heyho|nokonoko|koopa|sanbo|crab|fish|enemy|boss)/.test(text)) return 'enemies';
   if (/(tree|wood|bush|grass|flower|plant|leaf|palm|forest|kinoko|mushroom|cactus)/.test(text)) return 'nature';
@@ -77,10 +97,6 @@ export function filterBrowserFolder(folder: BrowserFolder | null, query: string)
     const items = folder.items.filter((item) => browserItemSearchText(item).includes(trimmed));
     return { ...folder, detail: `${items.length} matching objects`, items };
   }
-  if (folder.kind === 'archiveNode') {
-    const items = folder.items.filter((item) => `${item.name} ${item.modelName} ${friendlyTrackAssetName(item.archivePath)}`.toLowerCase().includes(trimmed));
-    return { ...folder, detail: `${items.length} matching model nodes`, items };
-  }
   const items = folder.items.filter((item) => item.toLowerCase().includes(trimmed));
   return { ...folder, detail: `${items.length} matching track asset files`, items };
 }
@@ -88,13 +104,11 @@ export function filterBrowserFolder(folder: BrowserFolder | null, query: string)
 /** Builds the content browser's folder model from the loaded track and shared game assets. */
 export function buildBrowserFolders({
   track,
-  projectState,
   objFlow,
   commonArchive,
   courseAssetDb,
 }: {
   track: TrackDocument | null;
-  projectState: EditorProjectState | null;
   objFlow: CommonResourceArchive['objFlow'] | null;
   commonArchive: CommonResourceArchive | null;
   courseAssetDb: CourseAssetDatabase | null;
@@ -122,17 +136,15 @@ export function buildBrowserFolders({
   const props = [...objects.filter((object) => classifyObjectFolder(object) === 'props'), ...placeableCourseAssets.filter((asset) => classifyObjectFolder(asset) === 'props')].slice(0, 72);
   const common = [...objects, ...placeableCourseAssets].slice(0, 240);
   const trackAssets = track?.brresFiles.slice(0, 48) ?? [];
-  const archiveNodes = projectState?.sceneNodes ?? [];
   const folders: BrowserFolder[] = [
-    { id: 'featured', label: 'Common', detail: `${featured.length} highlighted objects`, kind: 'object', items: featured },
-    { id: 'archiveNodes', label: 'Model Nodes', detail: track ? `${archiveNodes.length} movable BRRES nodes` : 'Load a track to list model nodes', kind: 'archiveNode', items: archiveNodes },
-    { id: 'kmp', label: 'Track Data', detail: `${kmpPointCatalog.length} editable track records`, kind: 'kmp', items: kmpPointCatalog },
-    { id: 'enemies', label: 'Enemies', detail: `${enemies.length} common enemies`, kind: 'object', items: enemies },
-    { id: 'nature', label: 'Nature', detail: `${nature.length} trees and foliage`, kind: 'object', items: nature },
-    { id: 'gameplay', label: 'Gameplay', detail: `${gameplay.length} interactive objects`, kind: 'object', items: gameplay },
-    { id: 'props', label: 'Props', detail: `${props.length} scenery and structures`, kind: 'object', items: props },
-    { id: 'common', label: 'All Objects', detail: `${common.length} placeable game objects`, kind: 'object', items: common },
-    { id: 'track', label: 'Track Meshes', detail: track ? `${trackAssets.length} track asset files` : 'Load a track to list track assets', kind: 'brres', items: trackAssets },
+    { id: 'featured', group: 'objects', label: 'Favourites', detail: `${featured.length} highlighted objects`, kind: 'object', items: featured },
+    { id: 'enemies', group: 'objects', label: 'Enemies', detail: `${enemies.length} common enemies`, kind: 'object', items: enemies },
+    { id: 'nature', group: 'objects', label: 'Nature', detail: `${nature.length} trees and foliage`, kind: 'object', items: nature },
+    { id: 'gameplay', group: 'objects', label: 'Gameplay', detail: `${gameplay.length} interactive objects`, kind: 'object', items: gameplay },
+    { id: 'props', group: 'objects', label: 'Scenery', detail: `${props.length} props and structures`, kind: 'object', items: props },
+    { id: 'common', group: 'objects', label: 'All objects', detail: `${common.length} placeable game objects`, kind: 'object', items: common },
+    { id: 'kmp', group: 'trackData', label: 'Points and routes', detail: `${kmpPointCatalog.length} editable track records`, kind: 'kmp', items: kmpPointCatalog },
+    { id: 'track', group: 'thisTrack', label: 'Track meshes', detail: track ? `${trackAssets.length} track asset files` : 'Load a track to list track assets', kind: 'brres', items: trackAssets },
   ];
   return folders.filter((folder) => folder.items.length > 0 || folder.id === 'track');
 }
