@@ -331,3 +331,105 @@ their button rows out by hand instead of using `FieldRow`/`Toolbar`.
 `npm run smoke:browser` still cannot pass on this host: it runs headless Edge,
 which only gets SwiftShader, and noclip refuses to start there — its non-WebGL checks
 (`hasInspectorToggle`, `hasContentBrowserToggle`, `hasObjectThumbnailImage`) do pass.
+
+### Agent L - integration, QA and cleanup (wave 2)
+
+**Whole-pipeline batch check.** `scripts/batch-track-check.mjs` runs every real `.szs` on this
+machine through the path a user takes: load, parse the U8/Yaz0/KMP/KCL/BRRES inside, export
+untouched, apply one representative edit from each of the four modes, export again, re-open the
+result, and re-parse every BRRES with the renderer's own parser. The per-track logic is
+`src/lib/batch/trackPipelineCheck.ts`, so `vitest` runs the same code over a six-track subset
+(`trackPipelineCheck.test.ts`). It is headless and needs no build: modules load through Vite's
+SSR pipeline, so the TypeScript sources and the `noclip-rust-support` alias resolve as in the app.
+
+Result on all **338 tracks (128 custom + 210 Nintendo): 338 passed, 0 failed**, 314 s at the
+product's real compression depth with the noclip re-parse on. The only skips are three tracks
+(`Z54.szs`, `0.szs`, `beginner_course.szs`) whose course model has fewer than two singly-used
+draw ops, so there is no mesh the harness can move without also moving its neighbour.
+
+Every stage is **differential** - the bar is "no worse than the source". Real ported tracks ship
+with their own validation errors, so an edit is judged by whether it introduces a problem that was
+not already there.
+
+What "exports identically" means, measured: the **U8 archive inside** the `.szs` is byte-identical
+for an untouched track (every file, offset and pad byte reproduced from the captured `U8Layout`).
+The **compressed `.szs` file** is not, and cannot be - Yaz0 has no canonical encoding and this is
+not Nintendo's compressor; re-compressing lands within about 1% of the original size and
+decompresses to exactly the same bytes.
+
+**Bugs the harness found and fixed:**
+
+- `map_model.brres` - the minimap model - failed to parse in *every* retail and custom track.
+  Mario Kart Wii authors those with all three bones (`map`, `posLD`, `posRU`) leaving the id field
+  at 0, which tripped upstream noclip's `assert(id > 0)` on the two children. The id is only read
+  back for CHR0/VIS0 binding and parenting is derived from byte offsets, so the assumption was
+  simply wrong for these files. Every track had been logging a BRRES parse warning for it, and
+  Visual mode listed the minimap archive as unreadable.
+- A corrupt Yaz0 header could ask the browser for a multi-gigabyte allocation, and a **truncated**
+  archive decoded silently to zeroes and looked like a valid, empty-ish track. Both are bounded and
+  reported now. The U8 reader likewise rejects a node table that does not fit in the file.
+- `parseNoclipBrresSummary` swallowed every parse failure, so a corrupt `course_model.brres`
+  produced an empty viewport with nothing to explain it. It now returns an `error` the loader turns
+  into a warning, without ever throwing (one bad archive must not stop a track opening).
+- Load-time warnings were format jargon - "KCL header offsets are outside the file." Now
+  "The collision mesh is damaged: its header points outside the file."
+- `scripts/viewport-dev-probe.mjs` used `.probe-profile` as its Edge user-data-dir while the
+  `*-ui-probe.mjs` harnesses use subdirectories *of* it, so running any UI probe first made the dev
+  probe fail with a misleading "Track never finished loading". It has its own subdirectory now.
+
+The camera edit also confirmed two validation rules are earning their keep: chaining a camera into
+the opening pan without terminating it produced `camera.opening-loop`, and chaining in one of the
+five real tracks whose second camera has `time` 0 and nothing to animate produced
+`camera.zero-duration`. Both were the harness building an invalid chain; it now builds a properly
+terminated two-shot chain with a duration on each shot, as `ChainEditor` does.
+
+**Malformed input.** `src/lib/trackLoadErrors.test.ts` covers empty, too-small, wrong-format,
+impossible-compression-header, truncated and corrupt-file-table input, and the partial cases (no
+`course.kmp`, unreadable KMP/KCL/model) that must load *with a warning* rather than fail - opening
+a broken track is how an author finds out what is wrong with it. Every message is asserted to be a
+sentence with no section codes, struct names or stack-trace fragments.
+
+**Dead code removed.** Agent G's report was half right: `src/lib/brresRenderAdapter.ts` is *not*
+dead - the viewport imports it - but the bone-transform path inside it is. Per-mesh editing
+superseded it, so `buildBrresViewportBridge`, `toSceneNodeViewportTransformSelection(s)`,
+`BrresViewportBridgeState`, the `{ kind: 'brresNode' }` renderer-target variant, the
+`BrresViewportPreviewScene` alias and `MarioKartWiiRenderer.updateEditorBrresNodeTransform` are all
+gone (`docs/viewport-api.md` section 7). Also deleted, each verified to have no reference anywhere
+including tests: `concatBytes`, `IDENTITY_MESH_TRANSFORM`, `invalidateKclBvh`,
+`getTextureFormatName`, `createEmptyPathGroup`, `findMeshSelection`. The adapter's test file
+covered only deleted functions and was rewritten to cover the mesh path it never tested.
+
+Two things reported as dead were **not**, and were kept: `src/lib/meshPick.ts` is imported by the
+vendored `EditorMeshPicker.ts` (the one deliberate vendor-to-src import), and `lookupResDicIndex`
+was wired up to a new `src/lib/brres/resDic.test.ts` instead of deleted - it is the console-side
+walk that proves the BRRES writer's rebuilt name trees actually resolve, which is worth having as a
+test rather than losing.
+
+`scripts/vendor-reachability.mjs` recomputes the vendored import closure from `src/**` and
+`scripts/**`: **72 of 72 files reachable, 0 dead**, so there was nothing to trim. It also flags
+relative imports that do not resolve, and takes `--delete`.
+
+**GitHub Pages.** The workflow gates on typecheck + tests before building, which is correct. It
+built with `--base=/MkwTrackEditor/` on the command line, duplicating the base that
+`vite.config.ts` already derives from `GITHUB_PAGES`; it now sets the environment variable
+instead, because a POSIX shell on Windows rewrites the leading slash into a filesystem path and
+silently builds an unusable site (this really happens - it produced
+`/Program Files/Git/MkwTrackEditor/` locally). `scripts/serve-subpath.mjs` serves `dist/` under a
+sub-path the way Pages does, and `scripts/probe-subpath-build.mjs` loads the built site there in a
+real Edge window: the track opens through `?track=`, the viewport renders, the bundled `Common.szs`
+and asset database resolve, and there are no console errors or failed requests
+(`docs/screenshots/subpath-build.png`).
+
+**`?track=` vs `?smokeTrack=`** was already split by an earlier agent and is verified working:
+`?track=` is the plain load path with no smoke instrumentation, `?smokeTrack=` is the test-only one.
+Documented in `docs/ARCHITECTURE.md`.
+
+Verified with `npx tsc --noEmit -p tsconfig.json` (clean), `npx vitest run` (**685 passed, 1
+skipped**, up from the 651 baseline after K's UI merge), `npx vite build` (ok), the 338-track batch
+above, and all six browser probes re-run green against the post-merge build on port 5187:
+`probe-kmp-mode-ui.js`, `probe-camera-ui.js`, `probe-camera-handle-drag.js`,
+`probe-model-mode-ui.js`, `probe-visual-ui.js` and `probe-kmp-regression.js`.
+
+**Not done / for someone else:** `src/ui/inspector/fields/ByteNumberInputs.tsx` has no reference
+anywhere in the repo and should be deleted, but it is in agent K's area. `docs/ARCHITECTURE.md`
+was rewritten to match the code as it now is, including K's design system and the new dock shell.

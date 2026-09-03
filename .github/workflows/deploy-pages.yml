@@ -40,8 +40,15 @@ jobs:
       - name: Test
         run: npm test
 
+      # The base path lives in vite.config.ts, keyed off GITHUB_PAGES, so it is set in exactly
+      # one place and can be reproduced locally with `GITHUB_PAGES=1 npm run build`. Passing
+      # `--base=/MkwTrackEditor/` on the command line instead also works on Linux, but a POSIX
+      # shell on Windows rewrites the leading slash into a filesystem path and silently builds
+      # an unusable site, so the environment variable is the safer of the two.
       - name: Build
-        run: npm run build -- --base=/MkwTrackEditor/
+        run: npm run build
+        env:
+          GITHUB_PAGES: '1'
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

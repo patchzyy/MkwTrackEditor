@@ -26,7 +26,10 @@ const child = spawn(edge, [
   `--remote-debugging-port=${port}`,
   '--window-size=1280,760',
   '--window-position=-2400,-2400',
-  `--user-data-dir=${resolve(root, '.probe-profile')}`,
+  // Its own subdirectory, like the *-ui-probe.mjs harnesses. This used to be `.probe-profile`
+  // itself, which is the *parent* of theirs; once any UI probe had run, Edge would not start
+  // cleanly here and the probe failed with a misleading "Track never finished loading".
+  `--user-data-dir=${resolve(root, '.probe-profile/viewport-dev')}`,
   '--no-first-run',
   '--no-default-browser-check',
   '--disable-background-timer-throttling',

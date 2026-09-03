@@ -271,3 +271,23 @@ and its byte arrays come back untouched, so an unedited track still exports byte
 `listCourseMeshes`, `describeCourseMesh`, `courseMeshTarget`, `courseMeshCenter`. The outliner uses
 it so it works before the scene has loaded, and its `drawOpIndex` numbering is asserted to match
 what the picker reports.
+
+---
+
+## 7. Removed: the BRRES-node transform path
+
+Before Model mode was finished, a gizmo could target an MDL0 **bone** as well as a mesh:
+`ViewportTransformSelection.rendererTarget` had a `{ kind: 'brresNode', archivePath, modelName,
+nodeId }` variant, `buildBrresViewportBridge` / `toSceneNodeViewportTransformSelection(s)` produced
+it from the archive-node list, and the renderer moved the bone through
+`MarioKartWiiRenderer.updateEditorBrresNodeTransform`.
+
+Per-mesh editing superseded all of it. Nothing in the product built a `brresNode` target any more,
+so the renderer method was unreachable and only the adapter's own unit test exercised the
+functions. The variant, the three functions, `BrresViewportBridgeState` and the renderer method
+have been deleted.
+
+`rendererTarget` is now a single shape (`{ kind: 'editorMesh', target, baseCenter }`), which is what
+`toMeshViewportTransformSelection` produces and what `syncBrresViewportTransformSelectionPreview`
+pushes at `setEditorMeshTransform`. If bone-level editing is ever wanted again, it should come back
+as a mesh-style target rather than as a second parallel path.

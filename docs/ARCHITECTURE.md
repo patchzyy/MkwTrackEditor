@@ -1,7 +1,7 @@
 # Editor module map
 
 `src/ui/App.tsx` used to be a ~9000 line file that held all UI, state, history, inspectors,
-content browser and object metadata. It is now a ~420 line shell that composes panels; everything
+content browser and object metadata. It is now a ~540 line shell that composes panels; everything
 else lives in the modules below.
 
 Layering rule: `src/lib/**` is pure logic with no React import, `src/ui/**` is React. UI modules may
@@ -17,9 +17,14 @@ Companion documents: `docs/viewport-api.md` (the app ↔ viewport ↔ renderer c
 | File | Responsibility |
 | --- | --- |
 | `src/main.tsx` | React entry point. Also forwards an uncaught startup error to `?smokeCallback=`. |
-| `src/ui/App.tsx` | Layout composition only: calls the state hooks, composes the four mode hooks, derives the memoised view models, and renders the top bar, viewport, inspector and content browser. |
-| `src/ui/topbar/TopBar.tsx` | Header bar: open `.szs`, import `Common.szs`, undo/redo, inspector toggle, export, status line, editor-mode switch. |
+| `src/ui/App.tsx` | Layout composition only: calls the state hooks, composes the four mode hooks, derives the memoised view models, and renders the top bar, dock panels, viewport, inspector, content browser, status bar and toast stack. |
+| `src/ui/topbar/TopBar.tsx`, `FileMenu.tsx`, `recentFiles.ts` | Header bar: the file menu (open `.szs`, import `Common.szs`, recent files), undo/redo, export, and the editor-mode switch. |
+| `src/ui/components/` | The design system every panel is built from — `Button`, `Panel`, `Field`, `NumberInput`, `VectorInput`, `Select`, `Toggle`, `Tabs`, `SegmentedControl`, `TreeView`, `Menu`, `Popover`, `Tooltip`, `Toolbar`, `StatusBar`, `Toast`, `ShortcutOverlay`, `EmptyState`, `LoadingOverlay`, `AxisGizmo`, `ColorField` — plus the pure helpers behind them (`numberScrub.ts` for drag-to-scrub, `statusMessage.ts`, `treeModel.ts`) and `components.css`. Documented in `docs/UI.md`. |
 | `src/ui/Noclip3DViewport.tsx` | The viewport: canvas and scene lifecycle, picking, gizmos, drag/drop, camera control, camera playback, mesh picking and per-mesh transforms, and the `window.__mkwViewport` dev hook. See `docs/viewport-api.md`. |
+
+`NumberInput` is a text input carrying `role="spinbutton"` rather than `input[type=number]`, so it
+can support drag-to-scrub. Anything that looks for numeric fields (the UI probes, for instance) has
+to match that role as well as `input[type=number]`.
 
 ## Editor modes (`src/ui/{kmp,camera,model,visual}/`)
 
@@ -52,7 +57,7 @@ All hooks are plain functions returning an object; none of them render anything.
 | `usePostEffectActions.ts` | Create/patch the track's `posteffect.*` files (fog, bloom, DOF, lighting). |
 | `useTrackExport.ts` | Validation prompts, export, archive self-check, download. |
 | `useBrowserFolders.ts` | Content browser folder model, active folder and search query. |
-| `usePanelLayout.ts` | Dock sizes, collapse state, drag-to-resize handles, and the shell CSS custom properties. |
+| `usePanelLayout.ts` | Dockable panel layout: sizes, collapse and visibility state, drag-to-resize handles, and the shell CSS custom properties. Persisted in local storage under `mkw.editor.layout.v2`. |
 | `useEditorShortcuts.ts` | Global keyboard shortcuts (undo/redo, clipboard, W/E/R tools, fill between, delete, export). |
 | `useSmokeHarness.ts` | Instrumentation for `scripts/browser-smoke*.mjs`. Only runs for `?smokeTrack=` / `?smokeCallback=`. |
 
@@ -94,7 +99,8 @@ given. Nothing outside the smoke path reads any of the `smoke*` parameters.
 | `PlaceAssetsRail.tsx` | Left "Place Assets" rail of frequently dragged objects. |
 | `browserFolders.ts` | Folder model (`buildBrowserFolders`), folder classification, search text and `filterBrowserFolder`. |
 | `browserAssetDedupe.ts` | Collapses duplicated course assets to one representative. |
-| `ObjectThumbnail.tsx`, `CourseAssetThumbnail.tsx` | Asset tile previews, rendered by `src/lib/thumbnail`. |
+| `browserEntries.ts` | The flat entry model the browser grid renders. |
+| `ObjectThumbnail.tsx`, `EntryThumbnail.tsx` | Asset tile previews, rendered by `src/lib/thumbnail`. |
 
 ## Object and label metadata
 

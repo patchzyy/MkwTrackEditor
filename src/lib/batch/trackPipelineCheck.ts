@@ -10,6 +10,16 @@
  * The rule for "pass" is *no worse than the source*. Real tracks (especially ported custom ones)
  * ship with their own validation errors, so an edit is judged by whether it introduces a problem
  * that was not already there, never by whether the result is clean.
+ *
+ * What "exports identically" means, precisely:
+ *
+ * - The **U8 archive inside** the `.szs` is byte-identical for an untouched track. That is the
+ *   claim `export-unedited-identical` makes, and it is the one that matters: every file, every
+ *   offset, every byte of padding is reproduced from the captured `U8Layout`.
+ * - The **compressed `.szs` file** is *not* byte-identical, and cannot be. Yaz0 has no canonical
+ *   encoding, and this compressor is not Nintendo's; re-compressing a real track lands within
+ *   about 1% of the original size. `yaz0-roundtrip` therefore proves the weaker but sufficient
+ *   property: the stream decompresses to exactly the archive that went in.
  */
 
 import { readBrresRaw, makeSubFileNameReader, BRRES_MODELS_GROUP } from '../brres/brresRaw';
