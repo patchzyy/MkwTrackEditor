@@ -21,6 +21,7 @@ import {
   type ViewportTransformSelection,
 } from '../lib/brresRenderAdapter';
 import { buildU8 } from '../lib/u8';
+import type { VisualRendererScene } from './visual/visualScene';
 import type { AppendableKmpSection, KmpDocument, KmpEntity, KmpRouteInsertTarget, Vec3 } from '../lib/kmp';
 import { raycastDown, raycastMesh, snapPointToTriangleFeature } from '../lib/kcl';
 import type { TrackDocument } from '../lib/track';
@@ -105,6 +106,12 @@ interface Noclip3DViewportProps {
   onSelectMesh?: (target: EditorMeshTarget | null, options?: { additive?: boolean; targets?: EditorMeshTarget[] }) => void;
   onTransformMesh?: (target: EditorMeshTarget, transform: MeshTransform) => void;
   onChangeMeshGranularity?: (granularity: MeshSelectionGranularity) => void;
+  /**
+   * Visual mode: fired with the loaded Mario Kart Wii renderer after every scene (re)load, and
+   * with `null` when the scene goes away. Visual mode drives the renderer's material/texture/
+   * animation methods through it; see `src/ui/visual/visualScene.ts`.
+   */
+  onVisualSceneChange?: (scene: VisualRendererScene | null) => void;
   fillBetweenPreviewPositions?: Vec3[];
   smokeCommonUrl?: string | null;
   commonArchiveUrl?: string | null;
@@ -636,6 +643,7 @@ export function Noclip3DViewport({
   onSelectMesh,
   onTransformMesh,
   onChangeMeshGranularity,
+  onVisualSceneChange,
   fillBetweenPreviewPositions = [],
   smokeCommonUrl = null,
   commonArchiveUrl = null,
@@ -687,6 +695,19 @@ export function Noclip3DViewport({
   const smokeMouseLookDoneRef = useRef(false);
   const smokeViewportSampleRef = useRef<'pending' | 'blank' | 'nonblank'>('pending');
   const trackRef = useRef<TrackDocument | null>(null);
+  // Held in a ref so a new callback identity never re-runs the (expensive) scene load effect.
+  const visualSceneChangeRef = useRef(onVisualSceneChange);
+  visualSceneChangeRef.current = onVisualSceneChange;
+  const deliveredVisualSceneRef = useRef<(SceneGfx & VisualRendererScene) | null>(null);
+  /** Hands the scene to Visual mode at most once per scene, from wherever it becomes available. */
+  const deliverVisualScene = (scene: (SceneGfx & VisualRendererScene) | null) => {
+    const notify = visualSceneChangeRef.current;
+    // Nothing is recorded while no mode is listening, so the scene is still delivered to Visual
+    // mode when it is switched on after the track has already loaded.
+    if (!notify || deliveredVisualSceneRef.current === scene) return;
+    deliveredVisualSceneRef.current = scene;
+    notify(scene);
+  };
   const collisionVisibleRef = useRef(collisionVisible);
   const selectedIdRef = useRef<string | null>(selectedId);
   const selectedIdsRef = useRef<string[]>(selectedIds);
@@ -913,6 +934,7 @@ export function Noclip3DViewport({
       sceneRef.current = null;
       viewerRef.current = null;
       destroyablePoolRef.current = [];
+      deliverVisualScene(null);
       setViewerReady(false);
     };
   }, []);
@@ -1039,6 +1061,7 @@ export function Noclip3DViewport({
     if (!sceneTrack) {
       setStatus('Drop a Mario Kart Wii .szs track anywhere in the editor');
       viewer.setScene(null);
+      deliverVisualScene(null);
       return;
     }
 
@@ -1074,6 +1097,7 @@ export function Noclip3DViewport({
         sceneRef.current = scene;
         sceneViewer.setScene(scene);
         (scene as SceneGfx & EditorMeshRendererScene).setEditorMode?.(modeRef.current);
+        deliverVisualScene(scene as SceneGfx & VisualRendererScene);
         syncSceneOverlay(loadingTrack, selectedIdRef.current);
         applyViewMode(loadingTrack, true);
         setStatus(`${loadingTrack.fileName} Sigma`);
@@ -1087,6 +1111,13 @@ export function Noclip3DViewport({
       cancelled = true;
     };
   }, [sceneKey, viewerReady]);
+
+  // Visual mode is usually switched on long after the scene finished loading, so the scene has to
+  // be handed over when its callback appears rather than only at load time. `deliverVisualScene`
+  // dedupes, so running this after every render costs one reference comparison.
+  useEffect(() => {
+    if (onVisualSceneChange && sceneRef.current) deliverVisualScene(sceneRef.current as SceneGfx & VisualRendererScene);
+  });
 
   useEffect(() => {
     syncRenderedGobjTransforms(track);

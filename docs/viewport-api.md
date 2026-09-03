@@ -53,6 +53,15 @@ Mouse: hover highlights the mesh under the cursor, click selects it, shift/ctrl-
 to or removes from the selection, and the translate/rotate/scale gizmo attaches to the
 selected mesh's bounding-box centre.
 
+### Visual mode (materials, textures, animations, post effects)
+
+| Prop | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `onVisualSceneChange` | `(scene: VisualRendererScene \| null) => void` | – | Handed the loaded Mario Kart Wii renderer so Visual mode can drive its material/texture/animation methods, and `null` when the scene goes away. Fired after every scene (re)load *and* as soon as the callback itself appears, because Visual mode is usually switched on long after the track finished loading. Held in a ref inside the viewport, so a new callback identity never re-runs the scene load. |
+
+`VisualRendererScene` is declared structurally in `src/ui/visual/visualScene.ts` — like
+`EditorMeshRendererScene`, every member is optional, so `src/ui` never imports vendored types.
+
 ### Types re-exported by the viewport
 
 ```ts
@@ -110,6 +119,22 @@ All of these are reachable from the viewport as `sceneRef.current`.
 `viewStart`, `viewEnd`, `zoomStart`, `zoomEnd`, `routePoints[]`, `routeIndex`, `selected`,
 `hovered`, `label`, `openingOrder`.
 `EditorOverlayCameraChainLink` fields: `from`, `to`, `order`.
+
+### Visual mode: models, animations, render toggles, textures, post effects
+
+| Method | Purpose |
+| --- | --- |
+| `listEditorSceneModels()` | Every BRRES the scene draws as course geometry, with its MDL0 stats and current visibility. |
+| `setEditorSceneModelVisible(archivePath, visible)` | Shows/hides one archive (`./course_model.brres`, `./vrcorn_model.brres`, ...). |
+| `setEditorObjectPreviewsVisible(visible)` | Shows/hides every model spawned from the KMP object list. |
+| `listEditorAnimations(archivePath)` | Every SRT0/PAT0/CLR0/CHR0/VIS0/SCN0 in a loaded archive, with length, loop mode and whether it is currently bound. SCN0 is reported with `supported: false`. |
+| `setEditorAnimationEnabled(archivePath, kind, name, enabled)` | Binds/unbinds one animation. Rebuilds the `MDL0ModelInstance` from the same uploaded `MDL0Model`, because there is no public unbind for CHR0/VIS0. |
+| `setEditorAnimationsPlaying(playing)` / `setEditorSceneTimeFrames(frames \| null)` / `getEditorSceneTimeFrames()` | Pause, scrub and read the shared animation clock. The wall time spent paused is subtracted out instead of stopping the viewer, so the free camera keeps working while animations are frozen. |
+| `setEditorTexturesEnabled` / `setEditorVertexColorsEnabled` / `setEditorLightingEnabled` / `setEditorBloomEnabled` / `setEditorWireframe` / `setEditorDOFMode` / `setEditorPostProcessingEnabled` | Preview-only render toggles. None of them touch the track files. |
+| `getEditorVisualCapabilities()` | `{ bloom, dof, lighting, wireframe }` — which toggles this particular track and device can actually drive. |
+| `reloadEditorTexture(name, texture)` | Swaps an already-uploaded TEX0's pixels in place, reusing the `GfxTexture` handle so every material that samples it picks the new pixels up next frame. Requires the same dimensions and format; returns `false` otherwise. |
+| `listEditorTextureNames()` | Names in the scene's texture holder. |
+| `applyEditorPostEffectFile(path, data)` | Re-applies an edited `posteffect/*` file without reloading the scene: `.bblm` and `.bdof` rebuild their `EggDrawPath`, `.blight` swaps the `EggLightManager`. Returns `false` for files the renderer does not consume — including `posteffect.bfg`, since this renderer has no course-fog draw path. |
 
 ### Mesh picking and editing
 
