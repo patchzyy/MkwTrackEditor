@@ -719,9 +719,9 @@ measures how far the rendered frame moves, against a baseline of how far two fra
 unchanged scene move on their own. A run gives 2.91 against 0.01 — the simple controls reach the
 renderer.
 
-**A gap that pass found, and did not fix.** `Ctrl+Z` restores the document — the control snaps
-back and the status bar says "Undid last edit" — but the viewport keeps the undone look: the
-frame stays 2.91 away from where it started. This is not new and is not about the simple
-controls; driving the raw `Sides drawn` select in **Surface → Advanced** behaves identically.
-`MaterialMode.tsx`'s undo path restores the decoded document out of its `WeakMap` but does not
-push the restored bytes at `reloadEditorMaterial`, which is where the fix belongs.
+**A gap that pass found, fixed at merge time.** `Ctrl+Z` restored the document — the control
+snapped back and the status bar said "Undid last edit" — but the viewport kept the undone look,
+because `MaterialMode.tsx`'s undo path restored the decoded documents out of its `WeakMap` without
+pushing the restored bytes at `reloadEditorMaterial`. It now hot-swaps every material whose
+document differs between the version that was showing and the one just restored, so undo and redo
+both reach the viewport; when a swap cannot apply, the status line points at Refresh.

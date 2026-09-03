@@ -91,7 +91,8 @@ await shot(`${window.__probePrefix}-01-material-mode`);
 
 // ---------------------------------------------------------------- the edit, live and rebuilt
 
-clickText('Blend & alpha');
+// The raw culling select lives under Surface > Advanced in the simplified inspector.
+for (const toggle of qa('.materialInspector .materialAdvancedToggle[aria-expanded="false"]')) toggle.click();
 await sleep(300);
 const cull = qa('select').find((s) => s.getAttribute('aria-label') === 'Sides drawn');
 const cullBefore = cull.value;

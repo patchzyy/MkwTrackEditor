@@ -40,6 +40,20 @@ export default defineConfig({
     watch: {
       usePolling: true,
       interval: 200,
+      // Polling walks the whole tree every interval, so everything that is not source has to be
+      // kept out of it: browser profiles the probe scripts write, build output, screenshots,
+      // agent worktrees and the local track copies. With these included the dev server pegs
+      // several cores and static files take tens of seconds to serve.
+      ignored: [
+        '**/node_modules/**',
+        '**/.git/**',
+        '**/.claude/**',
+        '**/.probe-profile/**',
+        '**/dist/**',
+        '**/docs/screenshots/**',
+        '**/native/kinoko-shim/build/**',
+        '**/public/dev-tracks/**',
+      ],
     },
   },
 });

@@ -220,6 +220,7 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
     setDocs((current) => (current === stored ? current : { ...current, ...stored }));
   }, [active, track]);
 
+
   // A material's graph starts as the decompiled stages, unless an authored one was stored for
   // exactly these stages in a previous session.
   useEffect(() => {
@@ -266,6 +267,34 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
   }, []);
 
   /**
+   * The viewport has to follow too: every material whose document differs between the version
+   * that was showing and the version just restored gets its restored bytes hot-swapped, so an
+   * undone edit disappears from the track and a redone one comes back.
+   */
+  const docsRef = useRef(docs);
+  docsRef.current = docs;
+  const refsByKeyRef = useRef(new Map<string, GxMaterialRef>());
+  useEffect(() => {
+    if (!track) return;
+    const stored = docsByTrackRef.current.get(track);
+    if (!stored) return;
+    const showing = docsRef.current;
+    const stale: GxMaterialRef[] = [];
+    for (const key of new Set([...Object.keys(showing), ...Object.keys(stored)])) {
+      if (showing[key] === stored[key]) continue;
+      const ref = refsByKeyRef.current.get(key);
+      if (ref) stale.push(ref);
+    }
+    if (stale.length === 0) return;
+    let failed = 0;
+    for (const ref of stale) {
+      const bytes = findArchiveBytes(track, ref.archivePath);
+      if (!bytes || !pushToRenderer(ref, bytes)) failed++;
+    }
+    if (failed > 0) setStatus(`${failed === stale.length ? 'The restored material' : 'One restored material'} ${HOT_SWAP_FAILED_HINT}`);
+  }, [pushToRenderer, setStatus, track]);
+
+  /**
    * One committed edit: write the document into the archive, put the new bytes in the track
    * document (which is what undo and export both read), and hot-swap the material in the viewport.
    * `transient` edits — a slider mid-drag — only update the working document, so a whole drag
@@ -276,6 +305,7 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
       const ref = selectedRef;
       if (!ref) return;
       const key = materialRefKey(ref);
+      refsByKeyRef.current.set(key, ref);
       const nextDocs = { ...docs, [key]: next };
       setDocs(nextDocs);
       if (options.transient || !library || !track) return;
