@@ -13,14 +13,18 @@
 }
 
 .visualPanelHeader {
-  min-height: 48px;
+  /* The subtitle counts models, textures and bytes and wraps onto two lines, so the header must
+     not be shrunk by the scrolling body next to it in the column. */
+  flex: 0 0 auto;
   align-items: flex-start;
+  min-height: 48px;
 }
 
 .visualPanelBody {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 0 0 12px;
 }
 
@@ -128,6 +132,17 @@
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A `visualRowMain` that is itself the click target, inside a row that has its own controls. */
+.visualRowButton {
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .visualRowMeta {

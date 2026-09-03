@@ -685,6 +685,16 @@ export function Noclip3DViewport({
   // Held in a ref so a new callback identity never re-runs the (expensive) scene load effect.
   const visualSceneChangeRef = useRef(onVisualSceneChange);
   visualSceneChangeRef.current = onVisualSceneChange;
+  const deliveredVisualSceneRef = useRef<(SceneGfx & VisualRendererScene) | null>(null);
+  /** Hands the scene to Visual mode at most once per scene, from wherever it becomes available. */
+  const deliverVisualScene = (scene: (SceneGfx & VisualRendererScene) | null) => {
+    const notify = visualSceneChangeRef.current;
+    // Nothing is recorded while no mode is listening, so the scene is still delivered to Visual
+    // mode when it is switched on after the track has already loaded.
+    if (!notify || deliveredVisualSceneRef.current === scene) return;
+    deliveredVisualSceneRef.current = scene;
+    notify(scene);
+  };
   const collisionVisibleRef = useRef(collisionVisible);
   const selectedIdRef = useRef<string | null>(selectedId);
   const selectedIdsRef = useRef<string[]>(selectedIds);
@@ -903,7 +913,7 @@ export function Noclip3DViewport({
       sceneRef.current = null;
       viewerRef.current = null;
       destroyablePoolRef.current = [];
-      visualSceneChangeRef.current?.(null);
+      deliverVisualScene(null);
       setViewerReady(false);
     };
   }, []);
@@ -1030,7 +1040,7 @@ export function Noclip3DViewport({
     if (!sceneTrack) {
       setStatus('Drop a Mario Kart Wii .szs track anywhere in the editor');
       viewer.setScene(null);
-      visualSceneChangeRef.current?.(null);
+      deliverVisualScene(null);
       return;
     }
 
@@ -1066,7 +1076,7 @@ export function Noclip3DViewport({
         sceneRef.current = scene;
         sceneViewer.setScene(scene);
         (scene as SceneGfx & EditorMeshRendererScene).setEditorMode?.(modeRef.current);
-        visualSceneChangeRef.current?.(scene as SceneGfx & VisualRendererScene);
+        deliverVisualScene(scene as SceneGfx & VisualRendererScene);
         syncSceneOverlay(loadingTrack, selectedIdRef.current);
         applyViewMode(loadingTrack, true);
         setStatus(`${loadingTrack.fileName} Sigma`);
@@ -1080,6 +1090,13 @@ export function Noclip3DViewport({
       cancelled = true;
     };
   }, [sceneKey, viewerReady]);
+
+  // Visual mode is usually switched on long after the scene finished loading, so the scene has to
+  // be handed over when its callback appears rather than only at load time. `deliverVisualScene`
+  // dedupes, so running this after every render costs one reference comparison.
+  useEffect(() => {
+    if (onVisualSceneChange && sceneRef.current) deliverVisualScene(sceneRef.current as SceneGfx & VisualRendererScene);
+  });
 
   useEffect(() => {
     syncRenderedGobjTransforms(track);

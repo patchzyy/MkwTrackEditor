@@ -105,6 +105,14 @@ export function listVisualArchivePaths(track: TrackDocument | null): string[] {
   return paths.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
 }
 
+/**
+ * The renderer keys its loaded archives by their U8 path with the `./` prefix the noclip U8 reader
+ * uses (`./course_model.brres`); the track document stores them without it.
+ */
+export function toSceneArchivePath(path: string): string {
+  return path.startsWith('./') ? path : `./${path}`;
+}
+
 export function findArchiveBytes(track: TrackDocument | null, path: string): Uint8Array | null {
   if (!track) return null;
   const entry = track.archiveEntries.find(
@@ -282,4 +290,45 @@ const ANIMATION_KIND_LABELS: Record<VisualAnimationKind, string> = {
 
 export function animationKindLabel(kind: VisualAnimationKind): string {
   return ANIMATION_KIND_LABELS[kind];
+}
+
+/** What the Visual panel currently has focused; drives the inspector. */
+export type VisualSelection =
+  | { kind: 'material'; modelName: string; materialIndex: number }
+  | { kind: 'texture'; textureName: string }
+  | { kind: 'animation'; animationKind: VisualAnimationKind; name: string }
+  | { kind: 'postEffects' }
+  | null;
+
+/** One animation row as shown in the panel: parsed metadata plus the renderer's playback state. */
+export interface VisualAnimationRow extends VisualAnimationInfo {
+  /** True when the renderer is currently playing this animation. */
+  enabled: boolean;
+  /** False when the renderer cannot play this kind (SCN0) or has not loaded the archive. */
+  togglable: boolean;
+}
+
+/**
+ * Merges the archive's parsed animation list with the renderer's live state. The parse is the
+ * source of truth for which animations exist (it also covers archives the renderer never loads,
+ * like `map_model.brres`); the renderer supplies whether each one is bound and playing.
+ */
+export function buildAnimationRows(
+  parsed: VisualAnimationInfo[],
+  live: Array<{ kind: string; name: string; enabled: boolean; supported: boolean }>,
+): VisualAnimationRow[] {
+  const liveByKey = new Map(live.map((entry) => [`${entry.kind}|${entry.name}`, entry]));
+  return parsed.map((animation) => {
+    const match = liveByKey.get(`${animation.kind}|${animation.name}`);
+    return {
+      ...animation,
+      enabled: match?.enabled ?? false,
+      togglable: match !== undefined && match.supported,
+    };
+  });
+}
+
+/** Longest animation in the archive, in frames — the range the scrubber covers. */
+export function maxAnimationFrames(animations: VisualAnimationInfo[]): number {
+  return animations.reduce((longest, animation) => Math.max(longest, Math.ceil(animation.duration)), 0);
 }
