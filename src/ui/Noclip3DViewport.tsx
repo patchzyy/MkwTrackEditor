@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type MutableRefObject, type PointerEvent, type ReactNode } from 'react';
 import { Eye, EyeOff, Move3D, RotateCcw, Scale3D } from 'lucide-react';
 import { mat4, vec3, vec4 } from 'gl-matrix';
 import ArrayBufferSlice from '../../vendor/noclip.website/src/ArrayBufferSlice';
@@ -32,12 +32,14 @@ import {
   retargetMeshGranularity,
   widenMeshGranularity,
   type EditorMeshTarget,
+  type ImportedMesh,
   type MeshEdit,
   type MeshSelectionGranularity,
   type MeshTransform,
 } from '../lib/brresEditor';
 import {
   buildOpeningCameraChain,
+  eulerFromLookDirection,
   getOpeningSequenceDuration,
   sampleCameraPose,
   sampleOpeningSequence,
@@ -86,12 +88,28 @@ interface Noclip3DViewportProps {
   /** Drives the in-viewport CAME playback. `null` restores the free camera. */
   cameraPreview?: CameraPreviewRequest | null;
   onCameraPreviewEnd?: () => void;
+  /** Reports the playback clock every rendered frame. Written into a ref, never into state. */
+  onCameraPreviewProgress?: (progress: CameraPreviewProgress) => void;
   /** Fired when a CAME view-point handle is dragged in the viewport. */
   onMoveCameraViewPoint?: (entity: KmpEntity, which: 'start' | 'end', position: Vec3) => void;
+  /**
+   * Camera mode: filled in with a small imperative API for the free camera and for picking the
+   * point under the middle of the viewport. Cleared when the viewport unmounts.
+   */
+  cameraViewportApiRef?: MutableRefObject<CameraViewportApi | null>;
   /** Model mode: how much geometry one click selects. Uncontrolled by default. */
   meshGranularity?: MeshSelectionGranularity;
   /** Model mode: mesh edits to re-apply to the renderer when the scene (re)loads. */
   meshEdits?: MeshEdit[];
+  /** Model mode: objects placed as course geometry, rendered as extra model instances. */
+  importedMeshes?: ImportedMesh[];
+  /** Resolves the BRRES bytes behind an imported mesh's `sourcePath`. */
+  resolveImportedMeshSource?: (sourcePath: string) => Uint8Array | null;
+  /**
+   * Model mode: the selection, when the app drives it (from the outliner). Leave it undefined and
+   * the viewport keeps its own; clicks in the viewport report through `onSelectMesh` either way.
+   */
+  meshSelection?: EditorMeshTarget[];
   onSelectMesh?: (target: EditorMeshTarget | null, options?: { additive?: boolean; targets?: EditorMeshTarget[] }) => void;
   onTransformMesh?: (target: EditorMeshTarget, transform: MeshTransform) => void;
   onChangeMeshGranularity?: (granularity: MeshSelectionGranularity) => void;
@@ -163,6 +181,35 @@ export interface CameraPreviewRequest {
   time: number;
   /** Play the whole opening chain starting at this camera instead of just this one. */
   sequence?: boolean;
+  /**
+   * Bump this to restart the playback clock at `time` without leaving preview mode. Used for
+   * scrubbing while playing, for the replay button and for looping.
+   */
+  seek?: number;
+}
+
+/** Where the playback clock is, reported once per rendered frame. */
+export interface CameraPreviewProgress {
+  /** Playback position within the whole preview (a single shot, or the whole chain). */
+  frames: number;
+  /** The camera currently on screen. */
+  cameraIndex: number;
+  /** Playback position within that camera's own shot. */
+  localFrames: number;
+  /** How long the whole preview runs for; `0` when it has no fixed length. */
+  totalFrames: number;
+}
+
+/** Free-camera and viewport-picking helpers the camera inspector needs. */
+export interface CameraViewportApi {
+  /** The free camera's eye, a point 2000 units ahead of it, and the matching KMP rotation. */
+  getFreeCameraPose(): { position: Vec3; target: Vec3; rotation: Vec3 } | null;
+  /** Puts the free camera at `position` looking at `target` (KMP units). */
+  lookFrom(position: Vec3, target: Vec3): boolean;
+  /** Pulls the free camera back so a camera marker and its sight line are both in view. */
+  frameCamera(position: Vec3, target: Vec3): boolean;
+  /** The collision (or ground-plane) point under the middle of the viewport, in KMP units. */
+  pickCenterPoint(): Vec3 | null;
 }
 export type { ViewportTransformSelection } from '../lib/brresRenderAdapter';
 export type { MeshSelectionGranularity, EditorMeshTarget } from '../lib/brresEditor';
@@ -676,9 +723,14 @@ export function Noclip3DViewport({
   mode = 'kmp',
   cameraPreview = null,
   onCameraPreviewEnd,
+  onCameraPreviewProgress,
   onMoveCameraViewPoint,
+  cameraViewportApiRef,
   meshGranularity,
   meshEdits,
+  importedMeshes,
+  resolveImportedMeshSource,
+  meshSelection,
   onSelectMesh,
   onTransformMesh,
   onChangeMeshGranularity,
@@ -824,6 +876,13 @@ export function Noclip3DViewport({
   const meshSelectionsRef = useRef<MeshSelectionEntry[]>(meshSelections);
   const [hoveredMeshKey, setHoveredMeshKey] = useState<string | null>(null);
   const hoveredMeshRef = useRef<{ key: string; target: EditorMeshTarget } | null>(null);
+  /** Mesh edits currently pushed into the renderer, so they can be lifted when they go away. */
+  const appliedMeshEditsRef = useRef<Map<string, EditorMeshTarget>>(new Map());
+  /** Meshes that currently have duplicates in the renderer, so they can be cleared. */
+  const appliedMeshCopiesRef = useRef<Map<string, EditorMeshTarget>>(new Map());
+  /** Placed-object id to the renderer instance standing in for it. */
+  const importedMeshInstancesRef = useRef<Map<string, { instanceId: string; signature: string }>>(new Map());
+  const resolveImportedMeshSourceRef = useRef(resolveImportedMeshSource);
   const cameraPreviewRef = useRef<CameraPreviewRequest | null>(cameraPreview);
   /** Dev-hook override so `window.__mkwViewport.previewCamera` survives re-renders. */
   const devCameraPreviewRef = useRef<CameraPreviewRequest | null | undefined>(undefined);
@@ -835,7 +894,9 @@ export function Noclip3DViewport({
     active: boolean;
     sequence: ReturnType<typeof buildOpeningCameraChain> | null;
     startIndex: number;
-  }>({ frames: 0, lastTimeMs: null, savedCameraMatrix: null, savedFovY: null, active: false, sequence: null, startIndex: 0 });
+    seek: number | undefined;
+  }>({ frames: 0, lastTimeMs: null, savedCameraMatrix: null, savedFovY: null, active: false, sequence: null, startIndex: 0, seek: undefined });
+  const onCameraPreviewProgressRef = useRef(onCameraPreviewProgress);
   const cameraPreviewMatrixRef = useRef(mat4.create());
   const cameraPreviewDefsRef = useRef<CameraPreviewDef[]>([]);
   const previousCameraControllerRef = useRef<CameraController | null>(null);
@@ -870,9 +931,11 @@ export function Noclip3DViewport({
   onMoveCheckpointEndpointRef.current = onMoveCheckpointEndpoint;
   onMoveCameraViewPointRef.current = onMoveCameraViewPoint;
   onSelectMeshRef.current = onSelectMesh;
+  resolveImportedMeshSourceRef.current = resolveImportedMeshSource;
   onTransformMeshRef.current = onTransformMesh;
   onChangeMeshGranularityRef.current = onChangeMeshGranularity;
   onCameraPreviewEndRef.current = onCameraPreviewEnd;
+  onCameraPreviewProgressRef.current = onCameraPreviewProgress;
   modeRef.current = devModeOverrideRef.current ?? mode;
   meshGranularityRef.current = activeMeshGranularity;
   meshSelectionsRef.current = meshSelections;
@@ -1252,15 +1315,132 @@ export function Noclip3DViewport({
     syncSceneOverlay(trackRef.current, selectedIdRef.current);
   }, [mode, viewerReady, sceneKey]);
 
-  // Re-apply persisted mesh edits after the scene (re)loads.
+  // Camera mode is about cameras, so it starts with the racing-line overlays (enemy/item routes,
+  // checkpoints, respawns, object routes) switched off; camera markers, the routes they fly and
+  // the areas that trigger them stay on. The eye menu still overrides this, and leaving the mode
+  // puts the user's own choices back.
+  useEffect(() => {
+    if (mode !== 'camera') return;
+    const saved = routeVisibilityRef.current;
+    setRouteVisibility({ ...saved, ENPT: false, ITPT: false, CKPT: false, JGPT: false, POTI_OBJECT: false, POTI_CAMERA: true, AREA: true, CAME: true });
+    return () => setRouteVisibility(saved);
+  }, [mode]);
+
+  /**
+   * Mirrors the document's mesh edits into the renderer.
+   *
+   * The document is the source of truth, so this both applies the edits that are there and lifts
+   * the ones that are not: an edit removed by undo, or reset from the inspector, has to put its
+   * mesh back where it started. The selection's own copy of the transform is refreshed too, so
+   * the gizmo follows an undo instead of floating where the mesh used to be.
+   */
   useEffect(() => {
     const scene = getMeshScene();
-    if (!scene?.setEditorMeshTransform || !meshEdits) return;
-    for (const edit of meshEdits) {
+    if (!scene?.setEditorMeshTransform) return;
+    const applied = appliedMeshEditsRef.current;
+    const next = new Map<string, EditorMeshTarget>();
+    for (const edit of meshEdits ?? []) {
+      const key = meshTargetKey(edit.target);
+      next.set(key, edit.target);
       scene.setEditorMeshTransform?.(edit.target, { kind: 'trs', ...edit.transform });
-      if (!edit.visible || edit.deleted) scene.setEditorMeshVisible?.(edit.target, false);
+      scene.setEditorMeshVisible?.(edit.target, edit.visible && !edit.deleted);
+    }
+    for (const [key, target] of applied) {
+      if (next.has(key)) continue;
+      scene.setEditorMeshTransform?.(target, null);
+      scene.setEditorMeshVisible?.(target, true);
+    }
+    appliedMeshEditsRef.current = next;
+
+    if (meshSelectionsRef.current.length > 0) {
+      const byKey = new Map((meshEdits ?? []).map((edit) => [meshTargetKey(edit.target), edit.transform]));
+      const refreshed = meshSelectionsRef.current.map((entry) => ({
+        ...entry,
+        transform: byKey.get(entry.key) ?? createIdentityMeshTransform(),
+      }));
+      setMeshSelections(refreshed);
+      meshSelectionsRef.current = refreshed;
+      updateMeshHighlight();
     }
   }, [meshEdits, viewerReady, sceneKey]);
+
+  /**
+   * Mirrors duplicated meshes into the renderer. A duplicate is the same geometry drawn a second
+   * time somewhere else, so it costs one draw call and no extra vertex data — and it keeps
+   * standing when the original is hidden or deleted.
+   */
+  useEffect(() => {
+    const scene = getMeshScene();
+    if (!scene?.setEditorMeshCopies) return;
+    const byTarget = new Map<string, { target: EditorMeshTarget; transforms: MeshTransform[] }>();
+    for (const mesh of importedMeshes ?? []) {
+      if (!mesh.sourceShape || !mesh.visible) continue;
+      const key = meshTargetKey(mesh.sourceShape);
+      const entry = byTarget.get(key) ?? { target: mesh.sourceShape, transforms: [] };
+      entry.transforms.push(mesh.transform);
+      byTarget.set(key, entry);
+    }
+    // Anything that had copies last time and does not now gets cleared.
+    for (const [key, target] of appliedMeshCopiesRef.current) {
+      if (!byTarget.has(key)) scene.setEditorMeshCopies?.(target, []);
+    }
+    const applied = new Map<string, EditorMeshTarget>();
+    for (const [key, entry] of byTarget) {
+      scene.setEditorMeshCopies?.(entry.target, entry.transforms.map((transform) => ({ kind: 'trs' as const, ...transform })));
+      applied.set(key, entry.target);
+    }
+    appliedMeshCopiesRef.current = applied;
+  }, [importedMeshes, viewerReady, sceneKey]);
+
+  /**
+   * Renders the objects placed as course geometry. Each one is an extra model instance; the diff
+   * against what is already in the scene keeps a move from re-parsing the BRRES.
+   */
+  useEffect(() => {
+    const scene = getMeshScene();
+    if (!scene?.addEditorModelInstance) return;
+    const live = importedMeshInstancesRef.current;
+    const wanted = (importedMeshes ?? []).filter((mesh) => !mesh.sourceShape);
+
+    for (const [id, entry] of [...live]) {
+      if (!wanted.some((mesh) => mesh.id === id)) {
+        removeImportedMeshInstance(entry.instanceId);
+        live.delete(id);
+      }
+    }
+    for (const mesh of wanted) {
+      const signature = `${mesh.sourcePath}::${mesh.modelName}`;
+      const existing = live.get(mesh.id);
+      if (existing && existing.signature === signature) {
+        scene.updateEditorModelInstance?.(existing.instanceId, importedMeshMatrix(mesh.transform));
+        scene.setEditorModelInstanceVisible?.(existing.instanceId, mesh.visible);
+        continue;
+      }
+      if (existing) {
+        removeImportedMeshInstance(existing.instanceId);
+        live.delete(mesh.id);
+      }
+      const bytes = resolveImportedMeshSourceRef.current?.(mesh.sourcePath);
+      if (!bytes) continue;
+      const instanceId = addImportedMeshInstance(bytes, mesh.modelName || null, {});
+      if (instanceId === null) continue;
+      scene.updateEditorModelInstance?.(instanceId, importedMeshMatrix(mesh.transform));
+      scene.setEditorModelInstanceVisible?.(instanceId, mesh.visible);
+      live.set(mesh.id, { instanceId, signature });
+    }
+  }, [importedMeshes, viewerReady, sceneKey]);
+
+  // The outliner drives the selection when the app passes one in.
+  useEffect(() => {
+    if (meshSelection === undefined || modeRef.current !== 'model') return;
+    const wanted = meshSelection.map((target) => meshTargetKey(target)).join('|');
+    if (wanted === meshSelectionsRef.current.map((entry) => entry.key).join('|')) return;
+    const editsByKey = new Map((meshEdits ?? []).map((edit) => [meshTargetKey(edit.target), edit.transform]));
+    const entries = meshSelection
+      .map((target) => makeMeshEntryFromTarget(target, describeMeshTarget(target), editsByKey.get(meshTargetKey(target))))
+      .filter((entry): entry is MeshSelectionEntry => entry !== null);
+    applyMeshSelection(entries, false);
+  }, [meshSelection, mode, viewerReady, sceneKey]);
 
   // `]` widens the mesh selection unit, `[` narrows it.
   useEffect(() => {
@@ -1386,8 +1566,15 @@ export function Noclip3DViewport({
         if (started) devCameraPreviewRef.current = cameraPreviewRef.current;
         return started;
       },
-      getCameraOverlay: () => buildCameraOverlay(trackRef.current?.kmp ?? null),
+      getCameraOverlay: () =>
+        buildCameraOverlay(trackRef.current?.kmp ?? null, {
+          selectedIds: new Set([...(selectedIdsRef.current ?? []), ...(selectedIdRef.current ? [selectedIdRef.current] : [])]),
+          hoveredId: hoveredIdRef.current,
+        }),
       getCameras: () => cameraPreviewDefsRef.current,
+      /** The overlay handle under a screen point — how probes locate a camera view-point handle. */
+      pickHandleAt: (clientX: number, clientY: number) =>
+        canvasRef.current ? pickSceneHandle(sceneRef.current, clientX, clientY, canvasRef.current) : null,
       /** Grabs the WebGL frame as a PNG data URL (the drawing buffer is not preserved). */
       captureFrame: async (): Promise<string | null> => {
         devCaptureRef.current = { request: true, dataUrl: null };
@@ -2532,6 +2719,36 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     return scene.addEditorModelInstance(viewer.gfxDevice, slice, modelName, matrix);
   }
 
+  /** Scene-space placement matrix for an imported mesh, in the renderer's units. */
+  function importedMeshMatrix(transform: MeshTransform): mat4 {
+    const matrix = mat4.create();
+    const deg = Math.PI / 180;
+    mat4.fromTranslation(matrix, [
+      transform.translation.x * MKW_RENDER_SCALE,
+      transform.translation.y * MKW_RENDER_SCALE,
+      transform.translation.z * MKW_RENDER_SCALE,
+    ]);
+    mat4.rotateY(matrix, matrix, transform.rotation.y * deg);
+    mat4.rotateX(matrix, matrix, transform.rotation.x * deg);
+    mat4.rotateZ(matrix, matrix, transform.rotation.z * deg);
+    mat4.scale(matrix, matrix, [
+      transform.scale.x * MKW_RENDER_SCALE,
+      transform.scale.y * MKW_RENDER_SCALE,
+      transform.scale.z * MKW_RENDER_SCALE,
+    ]);
+    return matrix;
+  }
+
+  /** Fallback label for a target that came from the outliner rather than from a pick. */
+  function describeMeshTarget(target: EditorMeshTarget): string {
+    const listed = getMeshScene()?.listEditorMeshes?.() ?? [];
+    const match = listed.find(
+      (entry: { drawOpIndex?: number; shapeName?: string; nodeName?: string }) => entry.drawOpIndex === target.drawOpIndex,
+    );
+    if (target.granularity === 'node') return match?.nodeName || `Bone ${target.nodeId}`;
+    return match?.shapeName || `Mesh ${target.drawOpIndex + 1}`;
+  }
+
   function removeImportedMeshInstance(id: string): boolean {
     const viewer = viewerRef.current;
     const scene = getMeshScene();
@@ -2627,8 +2844,16 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
         state.lastTimeMs = null;
       }
       state.startIndex = startDef.index;
+      state.seek = request.seek;
       beginCameraPreview(viewer);
       state.sequence = request.sequence ? buildOpeningCameraChain(cameraPreviewDefsRef.current, startDef.index) : null;
+    }
+
+    // A bumped `seek` restarts the clock at `request.time` without leaving preview mode.
+    if (request.seek !== state.seek) {
+      state.seek = request.seek;
+      state.frames = Math.max(0, request.time);
+      state.lastTimeMs = null;
     }
 
     if (request.playing) {
@@ -2668,6 +2893,12 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
       cameraPreviewLabelRef.current = label;
       setCameraPreviewLabel(label);
     }
+    onCameraPreviewProgressRef.current?.({
+      frames: state.frames,
+      cameraIndex: def.index,
+      localFrames,
+      totalFrames: state.sequence ? getOpeningSequenceDuration(state.sequence) : Math.max(0, startDef.time),
+    });
   }
 
   /** Chains through the opening cameras starting at the CAME header's intro camera. */
@@ -2683,6 +2914,100 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     cameraPreviewRef.current = { cameraId: `CAME-${first.cameraIndex}`, playing: true, time: 0, sequence: true };
     return true;
   }
+
+  /**
+   * The free camera's world matrix. While a preview is playing the live matrix belongs to the
+   * CAME pose, so the saved pre-preview matrix is used instead: the "from viewport" buttons
+   * always mean the camera the user was flying.
+   */
+  function getFreeCameraMatrix(): mat4 | null {
+    const viewer = viewerRef.current;
+    if (!viewer) return null;
+    const state = cameraPreviewStateRef.current;
+    return state.active && state.savedCameraMatrix ? state.savedCameraMatrix : viewer.camera.worldMatrix;
+  }
+
+  function getFreeCameraController(viewer: Viewer): FPSCameraController {
+    if (viewer.cameraController instanceof FPSCameraController) return viewer.cameraController;
+    const controller = new FPSCameraController();
+    viewer.setCameraController(controller);
+    return controller;
+  }
+
+  const cameraViewportApi: CameraViewportApi = {
+    getFreeCameraPose() {
+      const world = getFreeCameraMatrix();
+      if (!world) return null;
+      const position = { x: world[12] / MKW_RENDER_SCALE, y: world[13] / MKW_RENDER_SCALE, z: world[14] / MKW_RENDER_SCALE };
+      // gl-matrix `targetTo` puts `eye - target` in the third column, so forward is its negation.
+      const forward = { x: -world[8], y: -world[9], z: -world[10] };
+      const length = Math.hypot(forward.x, forward.y, forward.z) || 1;
+      const unit = { x: forward.x / length, y: forward.y / length, z: forward.z / length };
+      const reach = 2000;
+      return {
+        position,
+        target: { x: position.x + unit.x * reach, y: position.y + unit.y * reach, z: position.z + unit.z * reach },
+        rotation: eulerFromLookDirection(unit),
+      };
+    },
+    lookFrom(position, target) {
+      const viewer = viewerRef.current;
+      if (!viewer) return false;
+      const controller = getFreeCameraController(viewer);
+      applyFPSCameraFrame(controller, {
+        eye: vec3.fromValues(position.x * MKW_RENDER_SCALE, position.y * MKW_RENDER_SCALE, position.z * MKW_RENDER_SCALE),
+        target: vec3.fromValues(target.x * MKW_RENDER_SCALE, target.y * MKW_RENDER_SCALE, target.z * MKW_RENDER_SCALE),
+      });
+      controller.update(viewer.inputManager, 0);
+      viewer.camera.worldMatrixUpdated();
+      return true;
+    },
+    frameCamera(position, target) {
+      const viewer = viewerRef.current;
+      if (!viewer) return false;
+      let dx = target.x - position.x;
+      let dy = target.y - position.y;
+      let dz = target.z - position.z;
+      const span = Math.hypot(dx, dy, dz);
+      if (span <= 1e-4) {
+        dx = 0;
+        dy = 0;
+        dz = 1;
+      } else {
+        dx /= span;
+        dy /= span;
+        dz /= span;
+      }
+      const distance = Math.max(900, Math.min(9000, span * 0.45));
+      const eye = vec3.fromValues(
+        (position.x - dx * distance) * MKW_RENDER_SCALE,
+        (position.y - dy * distance + distance * 0.35) * MKW_RENDER_SCALE,
+        (position.z - dz * distance) * MKW_RENDER_SCALE,
+      );
+      const controller = getFreeCameraController(viewer);
+      applyFPSCameraFrame(controller, {
+        eye,
+        target: vec3.fromValues(position.x * MKW_RENDER_SCALE, position.y * MKW_RENDER_SCALE, position.z * MKW_RENDER_SCALE),
+      });
+      controller.update(viewer.inputManager, 0);
+      viewer.camera.worldMatrixUpdated();
+      return true;
+    },
+    pickCenterPoint() {
+      const canvas = canvasRef.current;
+      if (!canvas) return null;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return null;
+      return placeFromScreen(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    },
+  };
+  if (cameraViewportApiRef) cameraViewportApiRef.current = cameraViewportApi;
+  useEffect(() => {
+    if (!cameraViewportApiRef) return;
+    return () => {
+      cameraViewportApiRef.current = null;
+    };
+  }, [cameraViewportApiRef]);
 
   //#endregion
 

@@ -92,3 +92,74 @@ A track editor a Mario Kart Wii custom-track author would actually use:
 End your work with a report that lists: what was completed, what was verified and how
 (commands, browser checks), what is not done, files touched, and any wiring the
 orchestrator has to do in files you did not own.
+
+## Progress log
+
+- 2026-09-02 wave 1 merged: App.tsx split into modules (`docs/ARCHITECTURE.md`); vendor trimmed
+  874→73 files; typecheck clean; real-renderer thumbnails (`src/lib/thumbnail`); data layer
+  audited (kmpFile/kmpGraph/kmpValidation/kclRaycast, byte-exact on 338 tracks); renderer camera
+  gizmos + preview playback and mesh picking/per-mesh transforms (`docs/viewport-api.md`).
+- 2026-09-02 mode scaffold: each mode is a hook in `src/ui/{kmp,camera,model,visual}/` returning a
+  `ModeUi` (`src/ui/modes/types.ts`); `App.tsx` composes them. Default mode is KMP.
+- Wave 2 (in progress): F camera UI, G model UI + BRRES writer, H visual mode, J KMP parity,
+  K UI redesign (design system in `src/ui/components`, `docs/UI.md`).
+
+### Agent F — Camera (CAME) mode (wave 2)
+
+Camera mode is complete and works on real tracks. Shipped:
+
+- **Camera outliner** (`src/ui/camera/CameraOutliner.tsx`): every CAME entry with a per-family
+  icon, a friendly type name, and badges for opening/selection order, the areas that trigger it
+  and its movement path. Filter box; add / duplicate / delete / reorder; "set as opening start"
+  and "set as selection-screen start".
+- **Chain editors** (`ChainEditor.tsx`): the opening pan and the character-select pan as
+  drag-reorderable lists with per-shot durations and a running total, plus a play button.
+  Editing a chain rewrites the `nextCam` links and the CAME header's first camera.
+- **Friendly inspector** (`CameraInspector.tsx`, `CameraFields.tsx`, `cameraFieldMeta.ts`): every
+  CAME field under a plain-language label with a one-line hint, irrelevant fields hidden per
+  camera type, duration in both frames and seconds, and X/Y/Z-labelled full-width vector rows.
+  Shared with the KMP-mode camera section so a camera reads the same everywhere.
+- **Viewport handles**: camera position via the normal gizmo, the two look-at points via
+  draggable handles, and the camera's route via the existing POTI points. Camera mode also turns
+  the racing-line overlays off so the camera gizmos are actually visible.
+- **Playback** (`CameraPlaybackControls.tsx`): play/pause/stop/loop and a scrubber that flies the
+  real viewport camera through a shot or the whole opening chain; Escape stops and restores the
+  free camera.
+- **Replay cameras**: types 0-3 are first-class in the type picker and the outliner shows which
+  AREA triggers each one.
+
+Verified with `npx tsc --noEmit -p tsconfig.json` (clean), `npx vitest run` (359 passed),
+`npx vite build` (ok), and browser probes against `nintendo_1.szs` and `Z0.szs`
+(`scripts/camera-ui-probe.mjs` with `scripts/probe-camera-ui.js` and
+`scripts/probe-camera-handle-drag.js`). Screenshots: `docs/screenshots/camera-mode-*.png`.
+
+### Model mode — complete (agent G)
+
+Model mode does what section 3 asks for. Clicking track geometry in the viewport selects the
+smallest sensible piece (a connected component of a shape); `]` / `[` widen and narrow that to the
+whole mesh or the whole bone, and the inspector has the same control in words. The selection can be
+moved, rotated, scaled, hidden, deleted, restored and duplicated, from the gizmo or from numeric
+fields, and an object model can be placed into the track as scenery. All of it is baked into
+`course_model.brres` on export.
+
+The interesting part was the writer. Three properties of the format each cost a bug:
+
+- A pointer from one block to another (a resource dictionary to its data, a material to its TEV
+  shader) is read back **unsigned**, so the target has to sit after the pointer. Appending a grown
+  dictionary table past the blocks it indexes produced negative offsets that noclip's parser
+  rejected. Dictionaries are now re-emitted into a gap opened in front of the first block.
+- Readers over-read the tail of a block on purpose — a fixed-size material display list, four bytes
+  past a vertex array — which the next block normally covers. An edited model keeps slack behind
+  the last block it appended.
+- New textures have to be slotted into the layout ahead of the animation sub-files (SRT0/CLR0/PAT0),
+  whose internal name pointers this editor does not model, so those keep their distance to the
+  string pool.
+
+Verified with `npx tsc --noEmit`, `npx vitest run` (401 tests), `npx vite build`, and a scripted
+browser pass over `Z0.szs` and `nintendo_1.szs` (`scripts/probe-model-ui.mjs` +
+`scripts/probe-model-mode-ui.js`, screenshots in `docs/screenshots/model-ui-*.png` and
+`model-nintendo-*.png`). An unedited track still exports byte-for-byte identically.
+
+Known gap: a mesh whose vertices are shared between two connected components moves its neighbours
+too. The exporter detects this and warns rather than silently corrupting the shape; splitting the
+vertex data per component would be the fix.

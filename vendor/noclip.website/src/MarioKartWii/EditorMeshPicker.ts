@@ -8,7 +8,7 @@ import { mat4, vec3 } from 'gl-matrix';
 import * as BRRES from '../rres/brres.js';
 import * as GX from '../gx/gx_enum.js';
 import { MDL0ModelInstance } from '../rres/render.js';
-import type { ShapeInstanceEditorComponentDraw, ShapeInstanceEditorOverride } from '../rres/render.js';
+import type { ShapeInstanceEditorComponentDraw, ShapeInstanceEditorCopyDraw, ShapeInstanceEditorOverride } from '../rres/render.js';
 import { GfxBuffer, GfxBufferFrequencyHint, GfxBufferUsage, GfxDevice } from '../gfx/platform/GfxPlatform.js';
 import { createBufferFromData } from '../gfx/helpers/BufferHelpers.js';
 import {
@@ -131,6 +131,12 @@ function computeJointToWorldMatrices(modelInstance: MDL0ModelInstance): mat4[] {
     return matrices;
 }
 
+/** One duplicate of a draw call, or of a single connected component of it. */
+interface EditorMeshCopy {
+    componentIndex: number | null;
+    matrix: mat4;
+}
+
 export class EditorMeshPicker {
     private sources: EditorMeshSource[] = [];
     private caches: EditorMeshDrawCache[] | null = null;
@@ -138,6 +144,8 @@ export class EditorMeshPicker {
     private overridesByDraw = new Map<string, ShapeInstanceEditorOverride>();
     private componentTransforms = new Map<string, mat4>();
     private componentHidden = new Set<string>();
+    /** Duplicates of a draw call, by draw key. Each one is redrawn with its own matrix. */
+    private copiesByDraw = new Map<string, EditorMeshCopy[]>();
     /** Scene units per game unit (the MKW scene renders at 0.1). */
     public sceneScale = 0.1;
     public componentEpsilon = 1.0;
@@ -610,10 +618,26 @@ export class EditorMeshPicker {
         });
     }
 
+    /**
+     * Replaces the set of duplicates of `target`. Each transform is a game-unit TRS pivoting on
+     * the target's own centre, exactly like `setTransform`, so a copy offset by (0, 500, 0) sits
+     * 500 units above the original — the same thing the exporter bakes.
+     */
+    public setCopies(target: EditorMeshTargetRef, transforms: readonly EditorMeshTransformInput[]): boolean {
+        const matrices = transforms.map((transform) => mat4.clone(this.buildSceneMatrix(target, transform)));
+        return this.mutateTarget(target, (cache, componentIndex) => {
+            const kept = (this.copiesByDraw.get(cache.key) ?? []).filter((copy) => copy.componentIndex !== componentIndex);
+            const next = [...kept, ...matrices.map((matrix) => ({ componentIndex, matrix }))];
+            if (next.length === 0) this.copiesByDraw.delete(cache.key);
+            else this.copiesByDraw.set(cache.key, next);
+        });
+    }
+
     public clearAllEdits(): void {
         this.overridesByDraw.clear();
         this.componentTransforms.clear();
         this.componentHidden.clear();
+        this.copiesByDraw.clear();
         this.reapplyOverrides();
     }
 
@@ -634,7 +658,7 @@ export class EditorMeshPicker {
     private getOrCreateOverride(cache: EditorMeshDrawCache): ShapeInstanceEditorOverride {
         let override = this.overridesByDraw.get(cache.key);
         if (override === undefined) {
-            override = { hidden: false, extraWorldMatrix: null, componentDraws: null };
+            override = { hidden: false, extraWorldMatrix: null, componentDraws: null, copyDraws: null };
             this.overridesByDraw.set(cache.key, override);
         }
         return override;
@@ -659,7 +683,23 @@ export class EditorMeshPicker {
                 }
             }
 
-            if (override === null && componentDraws === null) {
+            const copies = this.copiesByDraw.get(cache.key) ?? null;
+            let copyDraws: ShapeInstanceEditorCopyDraw[] | null = null;
+            if (copies !== null && copies.length > 0) {
+                // A copy of one connected component needs that component's index buffer; a copy
+                // of a whole draw call reuses the shape's own index ranges.
+                const draws = copies.some((copy) => copy.componentIndex !== null)
+                    ? componentDraws ?? this.ensureComponentDraws(cache)
+                    : null;
+                copyDraws = copies.map((copy) => {
+                    const component = copy.componentIndex !== null && draws !== null ? draws[copy.componentIndex] : undefined;
+                    return component !== undefined
+                        ? { indexBuffer: component.indexBuffer, indexCount: component.indexCount, extraWorldMatrix: copy.matrix }
+                        : { indexBuffer: null, indexCount: 0, extraWorldMatrix: copy.matrix };
+                });
+            }
+
+            if (override === null && componentDraws === null && copyDraws === null) {
                 shapeInstance.editorOverride = null;
                 continue;
             }
@@ -667,6 +707,7 @@ export class EditorMeshPicker {
                 hidden: override?.hidden ?? false,
                 extraWorldMatrix: override?.extraWorldMatrix ?? null,
                 componentDraws,
+                copyDraws,
             };
         }
     }

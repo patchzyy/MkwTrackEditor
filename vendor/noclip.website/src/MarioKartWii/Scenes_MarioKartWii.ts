@@ -817,6 +817,14 @@ class MarioKartWiiRenderer {
         return this.getEditorMeshPicker().setVisible(target, visible);
     }
 
+    /**
+     * Replaces the duplicates of a mesh. Each transform places one extra copy of the same
+     * geometry, so the viewport shows what the exporter will bake into the model.
+     */
+    public setEditorMeshCopies(target: EditorMeshTargetRef, transforms: EditorMeshTransformInput[]): boolean {
+        return this.getEditorMeshPicker().setCopies(target, transforms);
+    }
+
     public clearEditorMeshEdits(): void {
         this.getEditorMeshPicker().clearAllEdits();
     }

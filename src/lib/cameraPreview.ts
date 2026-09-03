@@ -56,11 +56,6 @@ export function getCameraTypeInfo(type: number): CameraTypeInfo {
   return CAMERA_TYPES[type] ?? UNKNOWN_CAMERA_TYPE;
 }
 
-export function getCameraTypeLabel(type: number): string {
-  const info = getCameraTypeInfo(type);
-  return info.id < 0 ? `Type ${type}` : `${info.name}`;
-}
-
 export function isOpeningCameraType(type: number): boolean {
   return type === 4 || type === 5 || type === 6;
 }
@@ -345,4 +340,62 @@ export function computeFrustumCorners(
   });
 
   return [corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)];
+}
+
+// ---------------------------------------------------------------------------
+// Frames, seconds and the CAME rotation field
+// ---------------------------------------------------------------------------
+
+const FRAMES_PER_SECOND = 60;
+
+/** MKW frames (the game runs at 60 fps) to seconds. */
+export function framesToSeconds(frames: number): number {
+  return frames / FRAMES_PER_SECOND;
+}
+
+/** Seconds to MKW frames. */
+export function secondsToFrames(seconds: number): number {
+  return seconds * FRAMES_PER_SECOND;
+}
+
+/** `12.5` -> `"12.5 frames (0.21 s)"`, for the duration readouts. */
+export function formatFrames(frames: number): string {
+  const safe = Number.isFinite(frames) ? frames : 0;
+  return `${Number(safe.toFixed(2))} frames (${framesToSeconds(safe).toFixed(2)} s)`;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return value < min ? min : value > max ? max : value;
+}
+
+const RAD_TO_DEG = 180 / Math.PI;
+const DEG_TO_RAD = Math.PI / 180;
+
+/**
+ * The KMP rotation of a record whose local +Z axis points along `forward`, with no roll.
+ *
+ * The renderer builds a record's matrix as `Rz * Ry * Rx` (noclip's `computeModelMatrixSRT`),
+ * whose third basis vector is `(cosX*sinY, -sinX, cosX*cosY)` when the Z rotation is zero.
+ * This inverts that, so `lookDirectionFromEuler(eulerFromLookDirection(f))` gives `f` back.
+ */
+export function eulerFromLookDirection(forward: Vec3): Vec3 {
+  const length = Math.hypot(forward.x, forward.y, forward.z);
+  if (length <= 1e-6) return { x: 0, y: 0, z: 0 };
+  const fx = forward.x / length;
+  const fy = forward.y / length;
+  const fz = forward.z / length;
+  // `+ 0` keeps a negative zero out of the KMP float.
+  return {
+    x: -Math.asin(clampNumber(fy, -1, 1)) * RAD_TO_DEG + 0,
+    y: Math.atan2(fx, fz) * RAD_TO_DEG + 0,
+    z: 0,
+  };
+}
+
+/** The unit direction a record with this KMP rotation (degrees) faces. Inverse of {@link eulerFromLookDirection}. */
+export function lookDirectionFromEuler(rotation: Vec3): Vec3 {
+  const pitch = rotation.x * DEG_TO_RAD;
+  const yaw = rotation.y * DEG_TO_RAD;
+  const cosPitch = Math.cos(pitch);
+  return { x: cosPitch * Math.sin(yaw), y: -Math.sin(pitch), z: cosPitch * Math.cos(yaw) };
 }
