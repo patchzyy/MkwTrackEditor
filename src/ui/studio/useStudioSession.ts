@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CompiledShader, GxArchiveMaterials, GxMaterialDoc, GxMaterialRef } from '../../lib/gxMaterial';
 import { buildPublicAssetUrl } from '../../lib/assetPaths';
 import type { ToastApi } from '../components/Toast';
-import { autoLayout, type EditorShaderGraph } from '../material/graphModel';
+import { autoLayout, countRawStages, type EditorShaderGraph } from '../material/graphModel';
 import { loadStoredGraph, saveStoredGraph, sessionGraphKey } from '../material/graphStore';
 import { ensureLayerCount, materialDocEquals, withChannelLighting } from '../material/materialDoc';
 import { loadMaterialLibrary, type GxMaterialLibrary } from '../material/materialLibrary';
@@ -110,6 +110,8 @@ export interface StudioSession {
   setGraph: (graph: EditorShaderGraph, options?: { record?: boolean; undoFrom?: EditorShaderGraph; edited?: boolean }) => void;
   stepGraphHistory: (direction: 'undo' | 'redo') => void;
   resetGraphFromStages: () => void;
+  convertRawStages: () => void;
+  rawStagesConvertible: boolean;
   applyPreset: (presetId: string) => void;
   runAutoLayout: () => void;
 
@@ -389,7 +391,10 @@ export function useStudioSession({
     const fallback = autoLayout(library.decompileShader(materialDoc));
     void loadStoredGraph(selectedRef, materialDoc.tevStages).then((stored) => {
       if (cancelled) return;
-      setGraphs((current) => (current[key] ? current : { ...current, [key]: stored ?? fallback }));
+      // A graph stored before this build learned a node still holds read-only "Special step"
+      // cards for steps it can now draw properly; prefer the fresh read and lose only the layout.
+      const chosen = stored && countRawStages(stored) <= countRawStages(fallback) ? stored : fallback;
+      setGraphs((current) => (current[key] ? current : { ...current, [key]: chosen }));
     });
     return () => { cancelled = true; };
   }, [graphs, library, materialDoc, selectedRef]);
@@ -591,6 +596,23 @@ export function useStudioSession({
     setStatus(`Rebuilt the graph from ${materialDoc.name} as it is now.`);
   }, [library, materialDoc, setGraph]);
 
+  /** What a fresh read of this material's steps would still leave as read-only cards. */
+  const freshRawStages = useMemo(
+    () => (library && materialDoc ? countRawStages(library.decompileShader(materialDoc)) : 0),
+    [library, materialDoc],
+  );
+  const rawStagesConvertible = countRawStages(graph) > freshRawStages;
+
+  const convertRawStages = useCallback(() => {
+    if (!library || !materialDoc) return;
+    setGraph(autoLayout(library.decompileShader(materialDoc)), { edited: false });
+    setStatus(
+      freshRawStages === 0
+        ? 'Rebuilt the graph — every step of this material is drawn as nodes now.'
+        : `Rebuilt the graph. ${freshRawStages} step${freshRawStages === 1 ? '' : 's'} still cannot be drawn as nodes; the Stages tab shows ${freshRawStages === 1 ? 'it' : 'them'} in full.`,
+    );
+  }, [freshRawStages, library, materialDoc, setGraph]);
+
   const applyPreset = useCallback(
     (presetId: string) => {
       if (!library || !materialDoc) return;
@@ -752,6 +774,8 @@ export function useStudioSession({
     setGraph,
     stepGraphHistory,
     resetGraphFromStages,
+    convertRawStages,
+    rawStagesConvertible,
     applyPreset,
     runAutoLayout,
     transport,

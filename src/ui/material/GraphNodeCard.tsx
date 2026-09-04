@@ -11,18 +11,20 @@ import {
   IND_TEX_WRAP_OPTIONS,
   KONST_ALPHA_SEL_OPTIONS,
   KONST_COLOR_SEL_OPTIONS,
+  OUTPUT_REGISTER_OPTIONS,
+  RAS_CHANNEL_OPTIONS,
+  STORED_SLOT_OPTIONS,
   TEV_OP_OPTIONS,
   caLabel,
   ccLabel,
   channelLabel,
-  channelName,
   colorRegisterName,
   defaultKonstAlphaSel,
   defaultKonstColorSel,
   konstColorName,
-  registerLabel,
   slotLabel,
   socketLabel,
+  storedSlotName,
   tevOpLabel,
 } from './gxOptions';
 import {
@@ -53,9 +55,19 @@ export interface GraphNodeCardProps {
   diagnostics: GraphDiagnostic[];
   onPatch: (patch: Partial<EditorGraphNode>) => void;
   onChangeDoc: MaterialDocChange;
+  /**
+   * Re-reads the material's stages and rebuilds the graph. Offered on a "Special step" card,
+   * because a graph saved before the editor learned a node still holds the read-only version.
+   */
+  onConvertRawStages?: () => void;
+  /** True when a fresh read of this material's stages would draw every step as nodes. */
+  rawStagesConvertible?: boolean;
   onPointerDownNode: (event: ReactPointerEvent<HTMLElement>, nodeId: string) => void;
   onPointerDownSocket: (event: ReactPointerEvent<HTMLElement>, nodeId: string, socket: string, side: 'input' | 'output') => void;
 }
+
+/** Node types that become a step of their own, and so can name where the result is stored. */
+const STEP_TYPES = new Set(['multiply', 'add', 'subtract', 'lerp', 'scale', 'compare']);
 
 /**
  * One node in the shader graph: a coloured title bar, input sockets down the left, output sockets
@@ -75,6 +87,8 @@ export function GraphNodeCard({
   diagnostics,
   onPatch,
   onChangeDoc,
+  onConvertRawStages,
+  rawStagesConvertible,
   onPointerDownNode,
   onPointerDownSocket,
 }: GraphNodeCardProps) {
@@ -213,11 +227,18 @@ export function GraphNodeCard({
             label="Which channel"
             size="sm"
             value={String(node.channel)}
-            options={[
-              { value: '0', label: channelName(0) },
-              { value: '1', label: channelName(1) },
-            ]}
+            options={RAS_CHANNEL_OPTIONS}
             onChange={(value) => onPatch({ channel: Number(value) } as Partial<EditorGraphNode>)}
+          />
+        )}
+
+        {node.type === 'storedValue' && (
+          <Select
+            label="Which slot"
+            size="sm"
+            value={String(node.slot)}
+            options={STORED_SLOT_OPTIONS}
+            onChange={(value) => onPatch({ slot: (value === 'prev' ? 'prev' : Number(value)) } as Partial<EditorGraphNode>)}
           />
         )}
 
@@ -340,6 +361,22 @@ export function GraphNodeCard({
           />
         )}
 
+        {/* Where the step leaves its result. Almost always the working slot, which is why it is
+            folded away: it only matters when a later step has to read this value after something
+            else has overwritten the working slot. */}
+        {STEP_TYPES.has(node.type) && (
+          <details className="graphNodeAdvanced">
+            <summary>Advanced</summary>
+            <Select
+              label="Store result in"
+              size="sm"
+              value={String((node as { outputRegister?: 'prev' | 0 | 1 | 2 }).outputRegister ?? 'prev')}
+              options={OUTPUT_REGISTER_OPTIONS}
+              onChange={(value) => onPatch({ outputRegister: (value === 'prev' ? 'prev' : Number(value)) } as Partial<EditorGraphNode>)}
+            />
+          </details>
+        )}
+
         {node.type === 'indirectWarp' && (
           <>
             <Select
@@ -394,14 +431,28 @@ export function GraphNodeCard({
         )}
 
         {/* Read-only on purpose: this is a stage the graph cannot express, kept exactly as the
-            file had it. Its `prev` socket carries no value, only the order it runs in. */}
+            file had it. Its `prev` socket carries no value, only the order it runs in.
+            Never a dead end: the card says what it is that cannot be drawn, and when the editor
+            has since learned the node, offers to redraw the whole graph. */}
         {node.type === 'rawStage' && (
           <>
             <p className="graphRawStageNote">
-              This step does something the node editor cannot draw, so it is kept exactly as the
-              file had it and written back untouched. Everything else in the graph still compiles
-              around it.
+              {node.reason ?? 'This step does something the node editor cannot draw.'}
+              {' '}It is kept exactly as the file had it and written back untouched; the
+              <strong> Stages</strong> tab shows every field of it.
             </p>
+            {onConvertRawStages && (
+              <button
+                type="button"
+                className="graphRawStageConvert"
+                onClick={onConvertRawStages}
+                title={rawStagesConvertible
+                  ? 'This editor can draw this step now. Rebuild the graph from the material\'s steps.'
+                  : 'Rebuild the graph from the material\'s steps.'}
+              >
+                {rawStagesConvertible ? 'Convert to nodes' : 'Rebuild from steps'}
+              </button>
+            )}
             <dl className="graphRawStage">
               <div>
                 <dt>Texture</dt>
@@ -421,7 +472,7 @@ export function GraphNodeCard({
               </div>
               <div>
                 <dt>Op</dt>
-                <dd>{`${tevOpLabel(node.stage.colorOp)} → ${registerLabel(node.stage.colorRegId)}`}</dd>
+                <dd>{`${tevOpLabel(node.stage.colorOp)} → ${storedSlotName(node.stage.colorRegId === 0 ? 'prev' : ((node.stage.colorRegId - 1) as 0 | 1 | 2))}`}</dd>
               </div>
             </dl>
           </>

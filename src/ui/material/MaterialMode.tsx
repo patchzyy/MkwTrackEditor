@@ -9,6 +9,7 @@ import { MaterialViewOverlay } from './MaterialViewOverlay';
 import { ShaderGraphDock } from './ShaderGraphDock';
 import {
   autoLayout,
+  countRawStages,
   emptyGraph,
   type EditorShaderGraph,
 } from './graphModel';
@@ -266,7 +267,12 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
     const fallback = autoLayout(library.decompileShader(doc));
     void loadStoredGraph(selectedRef, doc.tevStages).then((stored) => {
       if (cancelled) return;
-      setGraphs((current) => (current[key] ? current : { ...current, [key]: stored ?? fallback }));
+      // A graph stored before this build learned a node still holds the read-only "Special step"
+      // cards it needed then. A fresh read draws those steps properly, so it wins: the only thing
+      // lost is the layout, and a graph the editor can actually edit is worth more than one.
+      const storedRaw = countRawStages(stored);
+      const chosen = stored && storedRaw <= countRawStages(fallback) ? stored : fallback;
+      setGraphs((current) => (current[key] ? current : { ...current, [key]: chosen }));
     });
     return () => { cancelled = true; };
   }, [active, doc, graphs, library, selectedRef]);
@@ -461,6 +467,27 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
     const timer = window.setTimeout(() => void saveStoredGraph(selectedRef, doc.tevStages, graph), 600);
     return () => window.clearTimeout(timer);
   }, [active, doc, graph, selectedRef]);
+
+  /**
+   * How many steps a fresh read of this material would leave as read-only cards. Compared against
+   * what the graph on screen holds, it is what tells the "Special step" card whether pressing
+   * Convert would actually gain anything.
+   */
+  const freshRawStages = useMemo(
+    () => (library && doc ? countRawStages(library.decompileShader(doc)) : 0),
+    [doc, library],
+  );
+  const rawStagesConvertible = countRawStages(graph) > freshRawStages;
+
+  const convertRawStages = useCallback(() => {
+    if (!library || !doc) return;
+    setGraph(autoLayout(library.decompileShader(doc)), { edited: false });
+    setStatus(
+      freshRawStages === 0
+        ? 'Rebuilt the graph — every step of this material is drawn as nodes now.'
+        : `Rebuilt the graph. ${freshRawStages} step${freshRawStages === 1 ? '' : 's'} still cannot be drawn as nodes; the Stages tab shows ${freshRawStages === 1 ? 'it' : 'them'} in full.`,
+    );
+  }, [doc, freshRawStages, library, setGraph, setStatus]);
 
   const resetGraphFromStages = useCallback(() => {
     if (!library || !doc) return;
@@ -672,6 +699,8 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
         onUndo={() => stepGraphHistory('undo')}
         onRedo={() => stepGraphHistory('redo')}
         onResetFromStages={resetGraphFromStages}
+        onConvertRawStages={convertRawStages}
+        rawStagesConvertible={rawStagesConvertible}
         onApplyPreset={applyPreset}
         onAutoLayout={runAutoLayout}
         onChangeDoc={updateDoc}

@@ -409,13 +409,51 @@ export function colorRegisterName(slot: number): string {
 }
 
 /**
- * The two rasterised lighting channels as the graph names them. `channelLabel` above answers the
- * same question for a `GX.RasColorChannelID`, which also has the bump-alpha values; this one is
- * for the 0/1 index a `Vertex colour` node carries.
+ * What a `Vertex colour` node reads, in words. The value is a `GX.RasColorChannelID`: 0 and 1 are
+ * the material's two lighting channels, 5 and 6 are the bump alpha an indirect stage feeds, and 7
+ * is the rasteriser's constant black.
  */
 export function channelName(channel: number): string {
-  return `Vertex colour ${channel + 1}`;
+  switch (channel) {
+    case GX.RasColorChannelID.ALPHA_BUMP: return 'Bump alpha';
+    case GX.RasColorChannelID.ALPHA_BUMP_N: return 'Bump alpha, inverted';
+    case GX.RasColorChannelID.COLOR_ZERO: return 'Nothing (black)';
+    default: return `Vertex colour ${channel + 1}`;
+  }
 }
+
+/** Every source a stage can rasterise, for the `Vertex colour` node's picker. */
+export const RAS_CHANNEL_OPTIONS: NumberOption[] = options([
+  [GX.RasColorChannelID.COLOR0A0, channelName(GX.RasColorChannelID.COLOR0A0)],
+  [GX.RasColorChannelID.COLOR1A1, channelName(GX.RasColorChannelID.COLOR1A1)],
+  [GX.RasColorChannelID.ALPHA_BUMP, channelName(GX.RasColorChannelID.ALPHA_BUMP)],
+  [GX.RasColorChannelID.ALPHA_BUMP_N, channelName(GX.RasColorChannelID.ALPHA_BUMP_N)],
+  [GX.RasColorChannelID.COLOR_ZERO, channelName(GX.RasColorChannelID.COLOR_ZERO)],
+]);
+
+/**
+ * The four places a step's result can live, as an author reads them. "Working slot" is the one
+ * every step writes to unless told otherwise and the one the next step reads without being asked;
+ * the three stored slots keep a value alive across the steps in between.
+ */
+export function storedSlotName(slot: 'prev' | 0 | 1 | 2): string {
+  return slot === 'prev' ? 'Working slot' : `Stored slot ${slot + 1}`;
+}
+
+export const STORED_SLOT_OPTIONS: Array<SelectOption<string>> = [
+  { value: 'prev', label: storedSlotName('prev') },
+  { value: '0', label: storedSlotName(0) },
+  { value: '1', label: storedSlotName(1) },
+  { value: '2', label: storedSlotName(2) },
+];
+
+/** Where a step leaves its result. Same list, phrased as a destination. */
+export const OUTPUT_REGISTER_OPTIONS: Array<SelectOption<string>> = [
+  { value: 'prev', label: 'Working slot (normal)' },
+  { value: '0', label: 'Stored slot 1' },
+  { value: '1', label: 'Stored slot 2' },
+  { value: '2', label: 'Stored slot 3' },
+];
 
 /**
  * Socket names in the node graph. The compiler's names are terse (`a`, `t`, `prevAlpha`) because

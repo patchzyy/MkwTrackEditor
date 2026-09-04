@@ -15,7 +15,7 @@ import {
   type GxMaterialDoc,
   type ShaderGraph,
 } from '../../lib/gxMaterial/types';
-import { colorRegisterName, konstColorName } from './gxOptions';
+import { channelName, colorRegisterName, konstColorName, storedSlotName } from './gxOptions';
 
 // ---------------------------------------------------------------------------- node types
 
@@ -45,8 +45,22 @@ export function isMathNode(node: EditorGraphNode): boolean {
 /** Node types the "Add node" palette offers, in menu order. `output` is never addable twice. */
 export const ADDABLE_NODE_TYPES: GraphNodeType[] = [
   'texture', 'vertexColor', 'constant', 'register', 'value',
-  'multiply', 'add', 'subtract', 'lerp', 'scale', 'compare', 'indirectWarp', 'comment',
+  'multiply', 'add', 'subtract', 'lerp', 'scale', 'comment',
+  'alphaAsColor', 'storedValue', 'compare', 'indirectWarp',
 ];
+
+/**
+ * The palette's second half. Everything above the line is what a material is normally made of;
+ * these four are the hardware showing through, and a first-time author does not need them to
+ * build a road. They are still one click away, under a heading, rather than hidden.
+ */
+export const ADVANCED_NODE_TYPES: ReadonlySet<GraphNodeType> = new Set<GraphNodeType>([
+  'alphaAsColor', 'storedValue', 'compare', 'indirectWarp',
+]);
+
+export function nodePaletteSection(type: EditorGraphNodeType): 'basic' | 'advanced' {
+  return ADVANCED_NODE_TYPES.has(type) ? 'advanced' : 'basic';
+}
 
 export const NODE_CATEGORY: Record<EditorGraphNodeType, 'source' | 'math' | 'output' | 'note'> = {
   output: 'output',
@@ -54,7 +68,9 @@ export const NODE_CATEGORY: Record<EditorGraphNodeType, 'source' | 'math' | 'out
   vertexColor: 'source',
   constant: 'source',
   register: 'source',
+  storedValue: 'source',
   value: 'source',
+  alphaAsColor: 'source',
   multiply: 'math',
   add: 'math',
   subtract: 'math',
@@ -73,7 +89,9 @@ export const NODE_SUMMARY: Record<EditorGraphNodeType, string> = {
   vertexColor: 'The colour the mesh brings with it — the vertex colours, or the scene lighting when the material is lit.',
   constant: 'One of the material\'s four colours. The swatch on the card edits it, live.',
   register: 'The colour a scratch slot starts at, before any step writes to it.',
+  storedValue: 'Reads a slot back: whatever the steps before this one left in it.',
   value: 'A plain number the hardware supplies for free: 0, a half, or 1.',
+  alphaAsColor: 'Uses an alpha where a colour is wanted, so one image\'s transparency can tint or blend another.',
   multiply: 'Multiplies two things together. Tinting and masking are both this.',
   add: 'Adds two things together. Brightens, and stacks glows.',
   subtract: 'Takes one thing away from another.',
@@ -100,6 +118,8 @@ export function nodeTypeTitle(type: EditorGraphNodeType): string {
     case 'register': return 'Start colour';
     case 'rawStage': return 'Special step';
     case 'indirectWarp': return 'Warp coordinates';
+    case 'storedValue': return 'Stored value';
+    case 'alphaAsColor': return 'Alpha as colour';
     default: return nodeSpec(type).title;
   }
 }
@@ -109,6 +129,7 @@ export function nodeTitle(node: EditorGraphNode): string {
     case 'texture': return `Texture ${node.sampler + 1}`;
     case 'constant': return konstColorName(node.slot);
     case 'register': return colorRegisterName(node.slot);
+    case 'storedValue': return storedSlotName(node.slot);
     default: return nodeTypeTitle(node.type);
   }
 }
@@ -117,7 +138,7 @@ export function nodeTitle(node: EditorGraphNode): string {
 export function nodeCaption(node: EditorGraphNode, doc: GxMaterialDoc | null): string | null {
   switch (node.type) {
     case 'texture': return doc?.samplers[node.sampler]?.texture || 'no image';
-    case 'vertexColor': return `channel ${node.channel + 1}`;
+    case 'vertexColor': return channelName(node.channel);
     case 'value': return String(node.value);
     case 'scale': return `x${node.scale}${node.bias === 0 ? '' : node.bias > 0 ? ' +0.5' : ' -0.5'}`;
     case 'rawStage': return 'from the file';
@@ -146,7 +167,9 @@ export function nodeBodyHeight(node: EditorGraphNode): number {
     case 'texture': return 96;
     case 'constant': return 56;
     case 'register': return 30;
+    case 'storedValue': return 30;
     case 'value': return 30;
+    case 'alphaAsColor': return 0;
     case 'scale': return 62;
     case 'compare': return 30;
     case 'indirectWarp': return 94;
@@ -454,7 +477,9 @@ export function createNode(type: EditorGraphNodeType, x: number, y: number): Edi
     case 'vertexColor': return { ...base, type, channel: 0 };
     case 'constant': return { ...base, type, slot: 0 };
     case 'register': return { ...base, type, slot: 0 };
+    case 'storedValue': return { ...base, type, slot: 'prev' };
     case 'value': return { ...base, type, value: 1 };
+    case 'alphaAsColor': return { ...base, type };
     case 'scale': return { ...base, type, scale: 2, bias: 0, clamp: true };
     case 'compare': return { ...base, type, op: 8 as never };
     case 'indirectWarp': return { ...base, type, indStage: 0, matrix: 1 as never, format: 0 as never, bias: 0 as never, wrapS: 0 as never, wrapT: 0 as never, addPrevious: false };
@@ -669,6 +694,15 @@ export function inputSource(graph: EditorShaderGraph, nodeId: string, socket: st
 export function socketSpecs(node: EditorGraphNode, side: 'input' | 'output'): GraphSocketSpec[] {
   const spec = nodeSpec(node.type);
   return side === 'input' ? spec.inputs : spec.outputs;
+}
+
+/**
+ * How many steps in a graph are the read-only "Special step" card. Comparing a stored graph's
+ * count with what a fresh read of the material gives is what decides whether re-reading would
+ * gain anything, so it lives here rather than being spelled out at each call site.
+ */
+export function countRawStages(graph: EditorShaderGraph | null | undefined): number {
+  return graph ? graph.nodes.filter((node) => node.type === 'rawStage').length : 0;
 }
 
 /** An empty graph with just the Material node, for a material with no stages. */

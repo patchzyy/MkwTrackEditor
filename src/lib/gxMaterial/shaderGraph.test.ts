@@ -8,15 +8,15 @@ import { describe, expect, it } from 'vitest';
 import * as GX from '../../../vendor/noclip.website/src/gx/gx_enum';
 import { BRRES_MODELS_GROUP, makeSubFileNameReader, readBrresRaw } from '../brres/brresRaw';
 import { Mdl0Editor } from '../brres/mdl0Raw';
-import { listMaterialArchives } from './materialFixtures.testdata';
+import { fixtureFamily, listShaderGraphArchives } from './materialFixtures.testdata';
 import { MATERIAL_FIELDS as MAT, TEV_BLOCK_SIZE, decodeMaterialBlock } from './materialCodec';
 import { compileShaderGraph } from './shaderGraph';
-import { decompileShader } from './decompile';
+import { decompileShader, decompileShaderReport } from './decompile';
 import { SHADER_GRAPH_PRESETS } from './presets';
 import { createDefaultMaterialDoc, createDefaultStage, createPassThroughStage } from './defaults';
 import type { GraphEdge, GraphNode, GxMaterialDoc, ShaderGraph } from './types';
 
-const archives = listMaterialArchives();
+const archives = listShaderGraphArchives();
 
 function collectDocs(): Array<{ label: string; doc: GxMaterialDoc }> {
   const out: Array<{ label: string; doc: GxMaterialDoc }> = [];
@@ -66,14 +66,16 @@ function wire(nodes: GraphNode[], edges: Array<[string, string, string, string]>
 describe.skipIf(documents.length === 0)('decompile / compile round trip', () => {
   it('reproduces every retail material stage for stage', () => {
     const failures: string[] = [];
-    // Raw-stage share per fixture family. Course models are mostly texture-times-vertex-colour
-    // and the graph covers nearly all of them; the shared object archives lean on an alpha value
-    // read as a colour operand (RASA, APREV in a colour input), which the graph has no node for
-    // yet, so a much larger share of those stages stays raw.
-    const raw = { course: 0, object: 0 };
-    const total = { course: 0, object: 0 };
+    // Raw-stage share per fixture family. `scripts/shader-graph-coverage.mjs` is the same
+    // measurement over the whole corpus on this machine (16671 materials in 2343 archives):
+    // drivers, karts and the shared object archives come out at exactly zero, course models at
+    // 0.10%, and all of that 0.10% is one shape — a stage that reads a texture while binding
+    // none. These are ceilings, not targets: if one jumps, the graph model lost ground and the
+    // editor started showing read-only cards where it used to show nodes.
+    const raw: Record<string, number> = { course: 0, object: 0, driver: 0, kart: 0 };
+    const total: Record<string, number> = { course: 0, object: 0, driver: 0, kart: 0 };
     for (const { label, doc } of documents) {
-      const family = label.startsWith('Common/') ? 'object' : 'course';
+      const family = fixtureFamily(label);
       const graph = decompileShader(doc);
       raw[family] += graph.nodes.filter((node) => node.type === 'rawStage').length;
       total[family] += doc.tevStages.length;
@@ -87,11 +89,25 @@ describe.skipIf(documents.length === 0)('decompile / compile round trip', () => 
       }
     }
     expect(failures.slice(0, 10).join('\n')).toBe('');
-    // Not an assertion about quality, just a guard: if either of these ever jumps, the graph
-    // model lost ground and the editor started showing read-only cards where it used to show
-    // nodes. Lower the object bound once alpha-as-colour inputs get a node.
-    if (total.course > 0) expect(raw.course / total.course).toBeLessThan(0.2);
-    if (total.object > 0) expect(raw.object / total.object).toBeLessThan(0.5);
+    if (total.course > 0) expect(raw.course / total.course).toBeLessThanOrEqual(0.01);
+    // Character and object models are fully expressible; anything above zero is a regression.
+    for (const family of ['object', 'driver', 'kart']) {
+      if (total[family] > 0) {
+        expect(`${family}: ${raw[family]} raw of ${total[family]}`).toBe(`${family}: 0 raw of ${total[family]}`);
+      }
+    }
+  });
+
+  it('says why each step it could not draw stayed a Special step', () => {
+    for (const { doc } of documents) {
+      const report = decompileShaderReport(doc);
+      expect(report.causes.length).toBe(report.rawStages);
+      for (const node of report.graph.nodes) {
+        if (node.type !== 'rawStage') continue;
+        // Never a dead end: every read-only card carries a sentence the user can act on.
+        expect(node.reason === undefined ? '' : node.reason.slice(0, 3)).not.toBe('');
+      }
+    }
   });
 
   it('produces graphs the editor can lay out', () => {
@@ -392,7 +408,10 @@ describe('shader graph compiler', () => {
     ]);
   });
 
-  it('refuses a texture slot the material does not have', () => {
+  // A warning rather than an error: retail tracks really do ship materials whose stage samples a
+  // slot they have no layer for, and refusing to lower one would show the author a wall of
+  // read-only cards for a defect they did not introduce. `applyMaterial` refuses the new ones.
+  it('warns about a texture slot the material does not have, and still binds it', () => {
     const graph = wire(
       [
         { id: 't', type: 'texture', sampler: 6, texCoord: 0, x: 0, y: 0 },
@@ -401,8 +420,12 @@ describe('shader graph compiler', () => {
       [['t', 'rgb', 'o', 'color']],
     );
     const compiled = compileShaderGraph(graph, material);
-    expect(compiled.ok).toBe(false);
+    expect(compiled.ok).toBe(true);
+    expect(compiled.diagnostics[0].severity).toBe('warning');
     expect(compiled.diagnostics[0].message).toMatch(/only has 2/);
+    expect(compiled.tevStages[0].texMap).toBe(6);
+    // The slot does not exist, so nothing in the inspector should light up for it.
+    expect(compiled.usage.samplers).toEqual([]);
   });
 
   it('refuses a shader that needs more than sixteen stages', () => {

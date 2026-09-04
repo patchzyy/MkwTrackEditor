@@ -96,6 +96,8 @@ interface Operand {
    * stage of its own before the hardware will output it.
    */
   produced?: boolean;
+  /** The node whose result this is, so a spill can ask whether anything still needs it. */
+  owner?: string;
 }
 
 const COLOR_REGISTER_INPUT: Record<GX.Register, GX.CC> = {
@@ -110,6 +112,14 @@ const ALPHA_REGISTER_INPUT: Record<GX.Register, GX.CA> = {
   [GX.Register.REG0]: GX.CA.A0,
   [GX.Register.REG1]: GX.CA.A1,
   [GX.Register.REG2]: GX.CA.A2,
+};
+
+/** Reading a slot's alpha from a *colour* input: `CC.APREV`, `CC.A0`, `CC.A1`, `CC.A2`. */
+const COLOR_REGISTER_ALPHA_INPUT: Record<GX.Register, GX.CC> = {
+  [GX.Register.PREV]: GX.CC.APREV,
+  [GX.Register.REG0]: GX.CC.A0,
+  [GX.Register.REG1]: GX.CC.A1,
+  [GX.Register.REG2]: GX.CC.A2,
 };
 
 const KONST_COLOR_FOR_SLOT = [GX.KonstColorSel.KCSEL_K0, GX.KonstColorSel.KCSEL_K1, GX.KonstColorSel.KCSEL_K2, GX.KonstColorSel.KCSEL_K3];
@@ -146,6 +156,10 @@ class Compiler {
   private prevOperands: Operand[] = [];
   /** First stage this pipeline may still write to; keeps its ops in order while they interleave. */
   private cursor = 0;
+  /** The half `place` last put down in this pipeline; a `scale` node folds itself into it. */
+  private lastPlaced: HalfOp | undefined;
+  /** Nodes whose stage this pipeline has already emitted, including the ones fused into a parent. */
+  private emittedNodes = new Set<string>();
 
   constructor(private readonly graph: ShaderGraph, private readonly material: GxMaterialDoc) {
     for (const node of graph.nodes) this.nodes.set(node.id, node);
@@ -242,28 +256,61 @@ class Compiler {
     this.reservedRegisters = new Set();
     this.prevOperands = [];
     this.cursor = 0;
+    this.lastPlaced = undefined;
+    this.emittedNodes = new Set();
     this.consumers = this.countConsumers(root);
 
-    // Registers a `register` node reads have to survive; never allocate over them.
+    // Slots the graph names by hand have to survive; the spill allocator never takes one.
     for (const node of this.graph.nodes) {
-      if (node.type === 'register') this.reservedRegisters.add((GX.Register.REG0 + Math.max(0, Math.min(2, node.slot))) as GX.Register);
+      if (node.type === 'register') this.reservedRegisters.add(registerOfSlot(node.slot));
+      if (node.type === 'storedValue' && node.slot !== 'prev') this.reservedRegisters.add(registerOfSlot(node.slot));
+      const requested = (node as { outputRegister?: 'prev' | 0 | 1 | 2 }).outputRegister;
+      if (requested !== undefined && requested !== 'prev') this.reservedRegisters.add(registerOfSlot(requested));
     }
 
-    if (!root) return;
-    const result = this.lowerEdgeValue(root, outputId, domain === 'rgb' ? 'color' : 'alpha');
-    // A source wired straight to the output — a texture's alpha, say — is not a stage yet. The
-    // hardware reads the previous-stage register at the end, so copy it there.
-    if (!result.produced) {
-      const zero = this.literal(0);
-      this.place({
-        inputs: [zero.input, zero.input, zero.input, result.input],
-        op: GX.TevOp.ADD,
-        bias: GX.TevBias.ZERO,
-        scale: GX.TevScale.SCALE_1,
-        clamp: true,
-        regId: GX.Register.PREV,
-        bindings: result.bindings,
-      });
+    if (root) {
+      const result = this.lowerEdgeValue(root, outputId, domain === 'rgb' ? 'color' : 'alpha');
+      // A source wired straight to the output — a texture's alpha, say — is not a stage yet. The
+      // hardware reads the previous-stage register at the end, so copy it there.
+      if (!result.produced) {
+        const zero = this.literal(0);
+        this.place({
+          inputs: [zero.input, zero.input, zero.input, result.input],
+          op: GX.TevOp.ADD,
+          bias: GX.TevBias.ZERO,
+          scale: GX.TevScale.SCALE_1,
+          clamp: true,
+          regId: GX.Register.PREV,
+          bindings: result.bindings,
+        });
+      }
+    }
+    this.emitUnusedClusters();
+  }
+
+  /**
+   * Steps whose result nothing reads, but which the hardware still runs.
+   *
+   * A TEV stage is executed whether or not a later stage looks at what it wrote, and real files
+   * are full of halves like this — a kart body computes an alpha in stage 0 that stage 1 then
+   * overwrites without reading. Dropping them would change nothing on screen but would lose the
+   * stage, so the decompiler marks the cluster's root `unusedResult` and this emits it after the
+   * walk from the output. Only nodes the decompiler made carry the flag, so a node the author
+   * unwires still simply stops doing anything.
+   */
+  private emitUnusedClusters(): void {
+    const pending = this.graph.nodes
+      .filter((node) => node.unusedResult === true && !this.lowered.has(node.id) && clusterDomain(node) === this.domain)
+      .sort((a, b) => (groupOf(a) ?? 0) - (groupOf(b) ?? 0) || a.x - b.x);
+    if (pending.length === 0) return;
+    // These stages sit *before* the one that produced the pipeline's result, so the value living
+    // in the working slot at the end of the walk is not something they can overwrite.
+    this.prevOperands = [];
+    this.cursor = 0;
+    for (const node of pending) {
+      if (this.lowered.has(node.id)) continue;
+      this.lowered.add(node.id);
+      this.lowerNodeUncached(node, 'out');
     }
   }
 
@@ -285,6 +332,14 @@ class Compiler {
     }
   }
 
+  /**
+   * How many times each node is read *in this pipeline*. The domain filter is load-bearing: the
+   * colour and alpha halves of one source (a texture's two outputs, a raw stage's `out` and
+   * `alpha`) are separate values living in separate hardware registers, and the two pipelines are
+   * lowered one after the other. Counting an alpha read as a second use of the colour value made
+   * the compiler spill a value that was only ever read once, which inserted a stage the file did
+   * not have and turned a perfectly expressible stage into a "Special step".
+   */
   private countConsumers(root: GraphEdge | null): Map<string, number> {
     const counts = new Map<string, number>();
     if (!root) return counts;
@@ -296,6 +351,10 @@ class Compiler {
       seen.add(id);
       for (const edge of this.graph.edges) {
         if (edge.to.node !== id) continue;
+        const from = this.nodes.get(edge.from.node);
+        const to = this.nodes.get(edge.to.node);
+        if (from && this.socketDomain(from, edge.from.socket) !== this.domain) continue;
+        if (to && this.inputDomain(to, edge.to.socket) !== this.domain) continue;
         // A raw stage's ordering wires carry no value, so they are not a use of what they
         // point at; counting them would spill a result nobody actually reads twice.
         if (!this.isOrderingEdge(edge)) counts.set(edge.from.node, (counts.get(edge.from.node) ?? 0) + 1);
@@ -342,6 +401,12 @@ class Compiler {
     return GRAPH_NODE_SOCKETS[node.type].outputs.find((output) => output.name === socket)?.type ?? this.domain;
   }
 
+  /** The same question for an input socket: `rawStage.prevAlpha` is an alpha wire, `prev` is not. */
+  private inputDomain(node: GraphNode, socket: string): Domain {
+    if (MATH_TYPES.has(node.type) && node.type !== 'rawStage') return this.domain;
+    return GRAPH_NODE_SOCKETS[node.type].inputs.find((input) => input.name === socket)?.type ?? this.domain;
+  }
+
   private lowerNode(nodeId: string, _consumerId: string, socket: string): Operand {
     const cached = this.memo.get(nodeId);
     if (cached) {
@@ -359,16 +424,15 @@ class Compiler {
     const operand = this.lowerNodeUncached(node, socket);
     this.inProgress.delete(nodeId);
     this.lowered.add(nodeId);
+    this.emittedNodes.add(nodeId);
 
     const uses = this.consumers.get(nodeId) ?? 1;
-    if (uses > 1 && operand.produced && operand.register === GX.Register.PREV) {
-      // Consumed more than once, so it cannot live in the previous-stage register.
-      const moved = this.spill(operand, nodeId);
-      this.memo.set(nodeId, moved);
-      this.remainingUses.set(nodeId, uses - 1);
-      return moved;
-    }
     if (uses > 1) {
+      // Remembered, not spilled. A value read twice is only in trouble once something overwrites
+      // the register it lives in, and `emitMath` checks for exactly that before it does. Spilling
+      // here instead used to add a copy stage even when both reads were operands of the very next
+      // stage, which no file ever spells that way.
+      operand.owner = nodeId;
       this.memo.set(nodeId, operand);
       this.remainingUses.set(nodeId, uses - 1);
     }
@@ -397,6 +461,10 @@ class Compiler {
         return this.konstOperand(node, socket);
       case 'register':
         return this.registerOperand(node.slot, node.id);
+      case 'storedValue':
+        return this.storedValueOperand(node);
+      case 'alphaAsColor':
+        return this.alphaAsColorOperand(node);
       case 'indirectWarp':
         // Meaningful only as a texture node's `uv` input; on its own it carries no colour.
         this.warn('An indirect warp only does something when it feeds a texture\'s UV input.', node.id);
@@ -431,16 +499,20 @@ class Compiler {
   }
 
   private textureOperand(sampler: number, texCoord: number, alpha: boolean, nodeId: string): Operand {
-    if (sampler < 0 || sampler >= this.material.samplers.length) {
-      this.error(`This texture reads slot ${sampler + 1}, but the material only has ${this.material.samplers.length}.`, nodeId);
-      return this.literal(0);
+    // A warning, not an error. Retail tracks really do ship materials whose stage samples a slot
+    // the material has no layer for, and refusing to lower one would leave the author staring at a
+    // wall of read-only cards for a file they cannot fix from here. `applyMaterial` is the backstop
+    // that refuses a defect an *edit* introduced.
+    const knownSampler = sampler >= 0 && sampler < this.material.samplers.length;
+    const knownCoord = texCoord >= 0 && texCoord < this.material.texGens.length;
+    if (!knownSampler) {
+      this.warn(`This texture reads slot ${sampler + 1}, but the material only has ${this.material.samplers.length}.`, nodeId);
     }
-    if (texCoord < 0 || texCoord >= this.material.texGens.length) {
-      this.error(`This texture uses coordinate ${texCoord + 1}, but the material only generates ${this.material.texGens.length}.`, nodeId);
-      return this.literal(0);
+    if (!knownCoord) {
+      this.warn(`This texture uses coordinate ${texCoord + 1}, but the material only generates ${this.material.texGens.length}.`, nodeId);
     }
-    this.usage.samplers.push(sampler);
-    this.usage.texCoords.push(texCoord);
+    if (knownSampler) this.usage.samplers.push(sampler);
+    if (knownCoord) this.usage.texCoords.push(texCoord);
     const bindings: Bindings = { texture: { texMap: sampler, texCoord } };
     const warp = this.indirectBindingFor(nodeId);
     if (warp) bindings.indirect = warp;
@@ -474,14 +546,23 @@ class Compiler {
   }
 
   private channelOperand(channel: number, nodeId: string): Operand {
-    if (channel < 0 || channel >= Math.max(1, this.material.channels.length)) {
-      this.error(`This vertex colour reads channel ${channel + 1}, but the material only has ${this.material.channels.length}.`, nodeId);
+    // 0 and 1 are the material's own lighting channels and have to exist; the bump-alpha sources
+    // and the constant-black one come from the rasteriser itself, so they always do.
+    const lit = channel === GX.RasColorChannelID.COLOR0A0 || channel === GX.RasColorChannelID.COLOR1A1;
+    if (!lit && channel !== GX.RasColorChannelID.ALPHA_BUMP && channel !== GX.RasColorChannelID.ALPHA_BUMP_N
+      && channel !== GX.RasColorChannelID.COLOR_ZERO) {
+      this.error('This vertex colour reads a channel the hardware does not have.', nodeId);
       return this.literal(0);
     }
-    this.usage.channels.push(channel);
+    const known = lit && channel < Math.max(1, this.material.channels.length);
+    if (lit && !known) {
+      // Inherited, like an out-of-range texture slot above: say so, but still draw the material.
+      this.warn(`This vertex colour reads channel ${channel + 1}, but the material only has ${this.material.channels.length}.`, nodeId);
+    }
+    if (known) this.usage.channels.push(channel);
     return {
       input: this.domain === 'rgb' ? GX.CC.RASC : GX.CA.RASA,
-      bindings: { channel: channel === 1 ? GX.RasColorChannelID.COLOR1A1 : GX.RasColorChannelID.COLOR0A0 },
+      bindings: { channel },
       register: null,
     };
   }
@@ -507,6 +588,73 @@ class Compiler {
       bindings: {},
       register,
     };
+  }
+
+  /** Reads back whatever the steps before this one left in a slot. */
+  private storedValueOperand(node: Extract<GraphNode, { type: 'storedValue' }>): Operand {
+    const register = node.slot === 'prev' ? GX.Register.PREV : registerOfSlot(node.slot);
+    if (register !== GX.Register.PREV) this.usage.registers.push(register - GX.Register.REG0);
+    return {
+      input: this.domain === 'rgb' ? COLOR_REGISTER_INPUT[register] : ALPHA_REGISTER_INPUT[register],
+      bindings: {},
+      register,
+    };
+  }
+
+  /**
+   * An alpha source read into a colour input. The hardware names a *place* in a colour operand —
+   * "the texture's alpha", "the working slot's alpha" — so this resolves the wired node directly
+   * instead of lowering it in the alpha pipeline: there is nothing to compute, only a different
+   * operand code for the same source. A step's result is not a place, which is why one has to be
+   * stored in a slot first; the error says so.
+   */
+  private alphaAsColorOperand(node: GraphNode): Operand {
+    if (this.domain !== 'rgb') {
+      this.error('"Alpha as colour" produces a colour, so it cannot feed the material\'s alpha.', node.id);
+      return this.literal(0);
+    }
+    const edge = this.incoming(node.id, 'alpha');
+    const from = edge ? this.nodes.get(edge.from.node) : undefined;
+    if (!edge || !from) {
+      this.warn('"Alpha as colour" has nothing wired to it, so it reads zero.', node.id);
+      return this.literal(0);
+    }
+    this.lowered.add(from.id);
+    switch (from.type) {
+      case 'texture': {
+        const base = this.textureOperand(from.sampler, from.texCoord, false, from.id);
+        return { ...base, input: GX.CC.TEXA };
+      }
+      case 'vertexColor': {
+        const base = this.channelOperand(from.channel, from.id);
+        return { ...base, input: GX.CC.RASA };
+      }
+      case 'constant': {
+        // K0..K3 read as a colour, all three channels taken from the register's alpha.
+        const slot = Math.max(0, Math.min(3, from.slot));
+        const sel = from.colorSel ?? ((GX.KonstColorSel.KCSEL_K0_A + slot) as GX.KonstColorSel);
+        if (sel >= 0x0c) this.usage.konstColors.push(slot);
+        return { input: GX.CC.KONST, bindings: { konstSel: sel }, register: null };
+      }
+      case 'register': {
+        const register = registerOfSlot(from.slot);
+        this.usage.registers.push(register - GX.Register.REG0);
+        return { input: COLOR_REGISTER_ALPHA_INPUT[register], bindings: {}, register };
+      }
+      case 'storedValue': {
+        const register = from.slot === 'prev' ? GX.Register.PREV : registerOfSlot(from.slot);
+        if (register !== GX.Register.PREV) this.usage.registers.push(register - GX.Register.REG0);
+        return { input: COLOR_REGISTER_ALPHA_INPUT[register], bindings: {}, register };
+      }
+      default:
+        this.error(
+          '"Alpha as colour" can read a texture, a vertex colour, a constant, a start colour or a stored value. '
+          + 'To use a step\'s result, set that step to store into a slot and read the slot here.',
+          node.id,
+          edge.id,
+        );
+        return this.literal(0);
+    }
   }
 
   private rawStageOperand(nodeId: string): Operand {
@@ -547,10 +695,12 @@ class Compiler {
         this.usage.texCoords.push(stage.texCoordId);
       }
     }
+    const writesPrev = stage.colorRegId === GX.Register.PREV || stage.alphaRegId === GX.Register.PREV;
+    if (writesPrev) this.preserveLivePrev();
     const slot: Slot = { color: half('rgb'), alpha: half('alpha'), group: groupOf(node) };
     this.slots.push(slot);
     this.rawSlots.set(nodeId, slot);
-    this.prevOperands = this.prevOperands.filter((operand) => operand.register !== GX.Register.PREV);
+    if (writesPrev) this.prevOperands = this.prevOperands.filter((operand) => operand.register !== GX.Register.PREV);
     return this.rawStageResult(stage);
   }
 
@@ -588,6 +738,7 @@ class Compiler {
         operands.push(this.lowerInput(fused.node.id, name));
       }
       this.lowered.add(fused.node.id);
+      this.emittedNodes.add(fused.node.id);
     }
 
     let inputs: [number, number, number, number];
@@ -665,7 +816,19 @@ class Compiler {
       half.clamp = node.clamp;
       if (node.stageTemplate) half.template = node.stageTemplate;
       if (groupOf(node) !== undefined) half.group = groupOf(node);
-      return operand;
+      if (node.outputRegister === undefined) return operand;
+      // The scale folded into the step below it, so a slot named here is that step's slot, and
+      // the value now has to be read back from there rather than from wherever it went before.
+      half.regId = node.outputRegister === 'prev' ? GX.Register.PREV : registerOfSlot(node.outputRegister);
+      const moved: Operand = {
+        input: this.domain === 'rgb' ? COLOR_REGISTER_INPUT[half.regId] : ALPHA_REGISTER_INPUT[half.regId],
+        bindings: {},
+        register: half.regId,
+        produced: true,
+      };
+      this.prevOperands = this.prevOperands.filter((entry) => entry !== operand);
+      if (half.regId === GX.Register.PREV) this.prevOperands.push(moved);
+      return moved;
     }
     // Nothing to fuse into (or it already has a bias): a pass-through stage carries the scale.
     const zero = this.literal(0);
@@ -679,24 +842,31 @@ class Compiler {
     return result;
   }
 
+  /**
+   * The half `place` put down last *in this pipeline*, which is where a `scale` node folds its
+   * bias and scale. Scanning the slot list backwards instead — which is what this used to do —
+   * finds the last slot that has a half at all, and after the colour pipeline has already filled
+   * both halves of a later stage (a raw stage, say) that is somebody else's op entirely.
+   */
   private lastHalf(): HalfOp | undefined {
-    for (let i = this.slots.length - 1; i >= 0; i--) {
-      const half = this.domain === 'rgb' ? this.slots[i].color : this.slots[i].alpha;
-      if (half) return half;
-    }
-    return undefined;
+    return this.lastPlaced;
   }
 
   private emitMath(node: GraphNode, inputs: [number, number, number, number], op: GX.TevOp, operands: Operand[]): Operand {
     const bindings = this.mergeOperandBindings(operands, node.id);
     const template = node.stageTemplate;
+    // An explicit choice wins over the stage the decompiler copied, which wins over "the working
+    // slot". Honouring the request is what makes a hand-built graph that stores into C1 round trip.
+    const requested = (node as { outputRegister?: 'prev' | 0 | 1 | 2 }).outputRegister;
     const half: HalfOp = {
       inputs,
       op,
       bias: GX.TevBias.ZERO,
       scale: GX.TevScale.SCALE_1,
       clamp: template ? (this.domain === 'rgb' ? template.colorClamp : template.alphaClamp) : true,
-      regId: template ? (this.domain === 'rgb' ? template.colorRegId : template.alphaRegId) : GX.Register.PREV,
+      regId: requested !== undefined
+        ? (requested === 'prev' ? GX.Register.PREV : registerOfSlot(requested))
+        : template ? (this.domain === 'rgb' ? template.colorRegId : template.alphaRegId) : GX.Register.PREV,
       bindings,
       template,
       group: groupOf(node),
@@ -705,9 +875,12 @@ class Compiler {
       half.bias = GX.TevBias.$HWB_COMPARE;
       half.scale = ((op - GX.TevOp.COMP_R8_GT) >>> 1) as GX.TevScale;
     }
+    if (half.regId === GX.Register.PREV) this.preserveLivePrev();
     this.place(half);
 
-    this.prevOperands = this.prevOperands.filter((operand) => operand.register !== GX.Register.PREV);
+    if (half.regId === GX.Register.PREV) {
+      this.prevOperands = this.prevOperands.filter((operand) => operand.register !== GX.Register.PREV);
+    }
     const result: Operand = {
       input: this.domain === 'rgb' ? COLOR_REGISTER_INPUT[half.regId] : ALPHA_REGISTER_INPUT[half.regId],
       bindings: {},
@@ -725,6 +898,7 @@ class Compiler {
   private place(half: HalfOp): void {
     const key = this.domain === 'rgb' ? 'color' : 'alpha';
     const other = this.domain === 'rgb' ? 'alpha' : 'color';
+    this.lastPlaced = half;
     if (half.group !== undefined) {
       const index = this.slots.findIndex((candidate) => candidate.group === half.group && candidate[key] === undefined);
       if (index >= 0 && bindingsCompatible(half.bindings, this.slots[index][other]?.bindings)) {
@@ -732,6 +906,16 @@ class Compiler {
         this.cursor = index + 1;
         return;
       }
+    }
+    // A grouped half with no stage of its own yet belongs where its group says, not at the end:
+    // a step whose result nothing reads is lowered after the walk from the output, and appending
+    // it would run it after the stage that produced the final colour instead of before it.
+    if (half.group !== undefined && this.slots.every((slot) => slot.group !== undefined)) {
+      const at = this.slots.findIndex((slot) => slot.group! > half.group!);
+      const index = at < 0 ? this.slots.length : at;
+      this.slots.splice(index, 0, { [key]: half, group: half.group } as Slot);
+      this.cursor = index + 1;
+      return;
     }
     // Otherwise ride along on the first stage from here on whose other half is free and whose
     // bindings agree. Searching forward only is what keeps this pipeline's ops in order.
@@ -748,7 +932,13 @@ class Compiler {
     this.cursor = this.slots.length;
   }
 
-  /** Does walking this input emit stages, i.e. would it overwrite the previous-stage register? */
+  /**
+   * Does walking this input emit stages, i.e. would it overwrite the previous-stage register?
+   *
+   * "Already emitted" has to include the nodes fused into a parent stage, not just the memoised
+   * ones: a lerp folded into its `add` never goes through `lowerNode`, so treating it as still
+   * pending made the compiler spill a value that nothing was about to overwrite.
+   */
   private subtreeEmitsStages(nodeId: string, socket: string): boolean {
     const edge = this.incoming(nodeId, socket);
     if (!edge) return false;
@@ -759,14 +949,46 @@ class Compiler {
       if (seen.has(id)) continue;
       seen.add(id);
       const node = this.nodes.get(id);
-      if (node && MATH_TYPES.has(node.type) && !this.memo.has(id) && !this.rawSlots.has(id)) return true;
+      if (node && MATH_TYPES.has(node.type) && !this.emittedNodes.has(id) && !this.rawSlots.has(id)
+        && this.nodeWritesPrev(node)) return true;
       for (const inbound of this.graph.edges) if (inbound.to.node === id) stack.push(inbound.from.node);
     }
     return false;
   }
 
+  /**
+   * Does this step leave its result in the working slot? A step told to store into C0..C2 — which
+   * is what a file's own stage usually says — leaves the working slot alone, so nothing that runs
+   * before it has to be moved out of the way.
+   */
+  private nodeWritesPrev(node: GraphNode): boolean {
+    const requested = (node as { outputRegister?: 'prev' | 0 | 1 | 2 }).outputRegister;
+    if (requested !== undefined) return requested === 'prev';
+    const stage = node.type === 'rawStage' ? node.stage : node.stageTemplate;
+    if (!stage) return true;
+    return (this.domain === 'rgb' ? stage.colorRegId : stage.alphaRegId) === GX.Register.PREV;
+  }
+
+  /**
+   * Called before a stage that writes the previous-stage register. Anything living there that a
+   * later node still has a use for is copied into C0..C2 first; the copy stage does not touch
+   * PREV, so the stage about to be emitted can still read it as an operand of its own.
+   */
+  private preserveLivePrev(): void {
+    for (const operand of [...this.prevOperands]) {
+      if (operand.register !== GX.Register.PREV) continue;
+      const owner = operand.owner;
+      if (owner === undefined || (this.remainingUses.get(owner) ?? 0) <= 0) continue;
+      this.spill(operand, owner, true);
+    }
+  }
+
+  /** Everything in PREV, needed or not: the pending operands of a half-lowered op are in there. */
   private spillLivePrev(): void {
-    for (const operand of [...this.prevOperands]) this.spill(operand, undefined, true);
+    for (const operand of [...this.prevOperands]) {
+      if (operand.register !== GX.Register.PREV) continue;
+      this.spill(operand, operand.owner, true);
+    }
     this.prevOperands = [];
   }
 
@@ -872,9 +1094,24 @@ class Compiler {
  * being compiled through two separate trees. Nodes the editor creates have their own ids and no
  * group, which is right: there is no original stage to line up with.
  */
+/** `0 | 1 | 2` -> `REG0 | REG1 | REG2`, clamped. */
+function registerOfSlot(slot: number): GX.Register {
+  return (GX.Register.REG0 + Math.max(0, Math.min(2, slot))) as GX.Register;
+}
+
 function groupOf(node: GraphNode): number | undefined {
   const match = /^s(\d+)[a-z]+$/.exec(node.id);
   return match ? Number(match[1]) : undefined;
+}
+
+/**
+ * Which pipeline a decompiled cluster node belongs to, by the same id convention: `s3cs` is the
+ * colour half of stage 3, `s3al` the alpha half. Null for a node the author made, which has no
+ * half to belong to until a wire gives it one.
+ */
+function clusterDomain(node: GraphNode): Domain | null {
+  const match = /^s\d+([ca])[a-z]*$/.exec(node.id);
+  return match ? (match[1] === 'c' ? 'rgb' : 'alpha') : null;
 }
 
 function bindingsCompatible(a: Bindings, b: Bindings | undefined): boolean {

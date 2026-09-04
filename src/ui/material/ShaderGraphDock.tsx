@@ -40,6 +40,10 @@ export interface ShaderGraphDockProps {
   onUndo: () => void;
   onRedo: () => void;
   onResetFromStages: () => void;
+  /** Re-reads the material's steps into a fresh graph; offered on every "Special step" card. */
+  onConvertRawStages: () => void;
+  /** True when that fresh read would leave fewer read-only cards than the graph on screen. */
+  rawStagesConvertible: boolean;
   onApplyPreset: (presetId: string) => void;
   onAutoLayout: () => void;
   onChangeDoc: MaterialDocChange;
@@ -81,6 +85,8 @@ export function ShaderGraphDock({
   onUndo,
   onRedo,
   onResetFromStages,
+  onConvertRawStages,
+  rawStagesConvertible,
   onApplyPreset,
   onAutoLayout,
   onChangeDoc,
@@ -214,6 +220,8 @@ export function ShaderGraphDock({
                 onChangeDoc={onChangeDoc}
                 onUndo={onUndo}
                 onRedo={onRedo}
+                onConvertRawStages={onConvertRawStages}
+                rawStagesConvertible={rawStagesConvertible}
                 fitRequest={fitRequest}
               />
             </>

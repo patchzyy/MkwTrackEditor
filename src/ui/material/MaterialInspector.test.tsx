@@ -196,7 +196,7 @@ function renderDock(
   tab: 'graph' | 'stages',
   open = true,
   doc: GxMaterialDoc | null = docWithLayer(),
-  extra: { graph?: ShaderGraph; presets?: ShaderGraphPreset[] } = {},
+  extra: { graph?: ShaderGraph; presets?: ShaderGraphPreset[]; convertible?: boolean } = {},
 ): string {
   return renderToStaticMarkup(
     <ShaderGraphDock
@@ -223,6 +223,8 @@ function renderDock(
       onUndo={noop}
       onRedo={noop}
       onResetFromStages={noop}
+      onConvertRawStages={noop}
+      rawStagesConvertible={extra.convertible ?? false}
       onApplyPreset={noop}
       onAutoLayout={noop}
       onChangeDoc={noop}

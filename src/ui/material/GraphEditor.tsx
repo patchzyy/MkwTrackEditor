@@ -26,6 +26,7 @@ import {
   graphBounds,
   marqueeRect,
   moveNodes,
+  nodePaletteSection,
   nodeSpec,
   nodeTypeTitle,
   nodesInMarquee,
@@ -58,6 +59,10 @@ export interface GraphEditorProps {
   onChangeDoc: MaterialDocChange;
   onUndo: () => void;
   onRedo: () => void;
+  /** Re-reads the material's steps and replaces the graph. Offered on every "Special step" card. */
+  onConvertRawStages?: () => void;
+  /** True when a fresh read of the material's steps would leave no "Special step" behind. */
+  rawStagesConvertible?: boolean;
   /** Bumped by the toolbar's fit button. */
   fitRequest: number;
 }
@@ -96,6 +101,8 @@ export function GraphEditor({
   onChangeDoc,
   onUndo,
   onRedo,
+  onConvertRawStages,
+  rawStagesConvertible,
   fitRequest,
 }: GraphEditorProps) {
   const surfaceRef = useRef<HTMLDivElement | null>(null);
@@ -541,6 +548,8 @@ export function GraphEditor({
             diagnostics={diagnosticsByNode.get(node.id) ?? []}
             onPatch={(patch) => onChangeGraph(patchNode(graph, node.id, patch as Partial<EditorGraphNode>))}
             onChangeDoc={onChangeDoc}
+            onConvertRawStages={onConvertRawStages}
+            rawStagesConvertible={rawStagesConvertible}
             onPointerDownNode={onPointerDownNode}
             onPointerDownSocket={onPointerDownSocket}
           />
@@ -577,8 +586,22 @@ export function GraphEditor({
               if (event.key === 'Enter' && paletteTypes[0]) addFromPalette(paletteTypes[0]);
             }}
           />
+          {/* Two sections, not one long list: what a material is normally made of, then the four
+              that are the hardware showing through. Both are always visible — the heading is a
+              signpost, not a disclosure, because hiding them is how a node nobody finds happens. */}
           <ul className="graphPaletteList">
-            {paletteTypes.map((type) => (
+            {paletteTypes.filter((type) => nodePaletteSection(type) === 'basic').map((type) => (
+              <li key={type}>
+                <button type="button" onClick={() => addFromPalette(type)}>
+                  <strong>{nodeTypeTitle(type)}</strong>
+                  <span>{NODE_SUMMARY[type]}</span>
+                </button>
+              </li>
+            ))}
+            {paletteTypes.some((type) => nodePaletteSection(type) === 'advanced') && (
+              <li className="graphPaletteHeading" aria-hidden="true">Advanced</li>
+            )}
+            {paletteTypes.filter((type) => nodePaletteSection(type) === 'advanced').map((type) => (
               <li key={type}>
                 <button type="button" onClick={() => addFromPalette(type)}>
                   <strong>{nodeTypeTitle(type)}</strong>

@@ -548,6 +548,8 @@ export function ModelStudio({ onClose, trackBridge, onSaveToAssets, initialOpen 
             onUndo={() => session.stepGraphHistory('undo')}
             onRedo={() => session.stepGraphHistory('redo')}
             onResetFromStages={session.resetGraphFromStages}
+            onConvertRawStages={session.convertRawStages}
+            rawStagesConvertible={session.rawStagesConvertible}
             onApplyPreset={session.applyPreset}
             onAutoLayout={session.runAutoLayout}
             onChangeDoc={session.updateMaterial}

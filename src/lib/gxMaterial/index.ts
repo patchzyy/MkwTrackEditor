@@ -25,7 +25,8 @@ export {
 } from './defaults';
 
 export { compileShaderGraph } from './shaderGraph';
-export { decompileShader } from './decompile';
+export { decompileShader, decompileShaderReport } from './decompile';
+export type { DecompileReport, RawStageCause } from './decompile';
 export { SHADER_GRAPH_PRESETS, PRESET_WANTS_LIGHTING } from './presets';
 
 export { GX_LIMITS, collectMaterialIssues, validateMaterialDoc } from './materialCodec';

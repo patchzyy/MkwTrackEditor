@@ -374,7 +374,9 @@ export type GraphNodeType =
   | 'vertexColor' // rasterised channel 0/1 (vertex color, lit when the channel says so): `rgb`, `alpha`
   | 'constant' // a konst color: `rgb`, `alpha`
   | 'register' // initial value of C0..C2: `rgb`, `alpha`
+  | 'storedValue' // whatever a step left in the working slot or one of C0..C2: `rgb`, `alpha`
   | 'value' // ZERO / HALF / ONE literal: `rgb`, `alpha`
+  | 'alphaAsColor' // reads an alpha source into a color input (CC.TEXA, CC.RASA, CC.APREV, ...)
   | 'multiply' // a * b
   | 'add' // a + b
   | 'subtract' // a - b
@@ -401,6 +403,13 @@ export interface GraphNodeBase {
    * the editor never has to show it, and a node built by hand may leave it out.
    */
   stageTemplate?: GxTevStageDoc;
+  /**
+   * Optional, and only ever set by the decompiler. Marks the root of a cluster whose result no
+   * later step reads: the hardware still runs the stage, so the compiler emits it even though the
+   * walk from the material output never reaches it. Deleting the node is safe — it changes
+   * nothing on screen — which is what the card says.
+   */
+  unusedResult?: boolean;
 }
 
 export interface GraphOutputNode extends GraphNodeBase {
@@ -417,7 +426,12 @@ export interface GraphTextureNode extends GraphNodeBase {
 
 export interface GraphVertexColorNode extends GraphNodeBase {
   type: 'vertexColor';
-  /** 0 or 1. */
+  /**
+   * The rasterised channel, as a `GX.RasColorChannelID`. 0 and 1 are the two lighting channels,
+   * which is all a graph saved before this field grew its extra values ever holds; 5 and 6 are the
+   * bump-alpha sources an indirect stage feeds, and 7 is the constant-black one that a stage names
+   * when it wants the rasteriser to contribute nothing.
+   */
   channel: number;
 }
 
@@ -440,6 +454,33 @@ export interface GraphRegisterNode extends GraphNodeBase {
   slot: number;
 }
 
+/**
+ * Reads a slot back: `'prev'` is the working slot every step writes to unless told otherwise, and
+ * 0..2 are the three stored slots (C0..C2). Unlike `register`, which is the colour a slot *starts*
+ * at, this is whatever the steps before it left there — including, when nothing did, the start
+ * colour, which is how a file that reads the working slot in its very first stage round trips.
+ */
+export interface GraphStoredValueNode extends GraphNodeBase {
+  type: 'storedValue';
+  slot: 'prev' | 0 | 1 | 2;
+}
+
+/**
+ * The one place the colour and alpha halves meet. A TEV colour input can name an alpha source —
+ * the texture's alpha, the vertex colour's alpha, a slot's alpha, a constant's alpha — and that is
+ * how nearly every character model mixes two textures. There is no node the other way round,
+ * because an alpha input cannot name a colour: the hardware simply has no such operand.
+ *
+ * Only a source can be wired in, not a step's result: a colour input names a *place*, so a value
+ * a step computed has to be parked in a slot (`outputRegister`) and read back with `storedValue`.
+ */
+export interface GraphAlphaAsColorNode extends GraphNodeBase {
+  type: 'alphaAsColor';
+}
+
+/** Which slot a step writes its result into. `'prev'` is the working slot and is the default. */
+export type GraphOutputRegister = 'prev' | 0 | 1 | 2;
+
 export interface GraphValueNode extends GraphNodeBase {
   type: 'value';
   value: 0 | 0.5 | 1;
@@ -447,6 +488,8 @@ export interface GraphValueNode extends GraphNodeBase {
 
 export interface GraphMathNode extends GraphNodeBase {
   type: 'multiply' | 'add' | 'subtract' | 'lerp';
+  /** Where the step leaves its result. Defaults to the working slot. */
+  outputRegister?: GraphOutputRegister;
 }
 
 export interface GraphScaleNode extends GraphNodeBase {
@@ -454,11 +497,13 @@ export interface GraphScaleNode extends GraphNodeBase {
   scale: 0.5 | 1 | 2 | 4;
   bias: -0.5 | 0 | 0.5;
   clamp: boolean;
+  outputRegister?: GraphOutputRegister;
 }
 
 export interface GraphCompareNode extends GraphNodeBase {
   type: 'compare';
   op: GX.TevOp;
+  outputRegister?: GraphOutputRegister;
 }
 
 export interface GraphIndirectWarpNode extends GraphNodeBase {
@@ -494,6 +539,12 @@ export interface GraphCommentNode extends GraphNodeBase {
 export interface GraphRawStageNode extends GraphNodeBase {
   type: 'rawStage';
   stage: GxTevStageDoc;
+  /**
+   * One plain sentence saying what about this step the editor could not draw, written by the
+   * decompiler and shown on the card. Optional: a graph saved by an older build has none, and the
+   * card falls back to the general wording.
+   */
+  reason?: string;
 }
 
 export type GraphNode =
@@ -502,7 +553,9 @@ export type GraphNode =
   | GraphVertexColorNode
   | GraphConstantNode
   | GraphRegisterNode
+  | GraphStoredValueNode
   | GraphValueNode
+  | GraphAlphaAsColorNode
   | GraphMathNode
   | GraphScaleNode
   | GraphCompareNode
@@ -547,6 +600,8 @@ export const GRAPH_NODE_SOCKETS: Readonly<Record<GraphNodeType, GraphNodeSpec>> 
   vertexColor: { title: 'Vertex color', inputs: [], outputs: [{ name: 'rgb', type: 'rgb' }, { name: 'alpha', type: 'alpha' }] },
   constant: { title: 'Color', inputs: [], outputs: [{ name: 'rgb', type: 'rgb' }, { name: 'alpha', type: 'alpha' }] },
   register: { title: 'Register', inputs: [], outputs: [{ name: 'rgb', type: 'rgb' }, { name: 'alpha', type: 'alpha' }] },
+  storedValue: { title: 'Stored value', inputs: [], outputs: [{ name: 'rgb', type: 'rgb' }, { name: 'alpha', type: 'alpha' }] },
+  alphaAsColor: { title: 'Alpha as colour', inputs: [{ name: 'alpha', type: 'alpha' }], outputs: [{ name: 'rgb', type: 'rgb' }] },
   value: { title: 'Value', inputs: [], outputs: [{ name: 'rgb', type: 'rgb' }, { name: 'alpha', type: 'alpha' }] },
   multiply: { title: 'Multiply', inputs: [{ name: 'a', type: 'rgb', default: 1 }, { name: 'b', type: 'rgb', default: 1 }], outputs: [{ name: 'out', type: 'rgb' }] },
   add: { title: 'Add', inputs: [{ name: 'a', type: 'rgb', default: 0 }, { name: 'b', type: 'rgb', default: 0 }], outputs: [{ name: 'out', type: 'rgb' }] },
