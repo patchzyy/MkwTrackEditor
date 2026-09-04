@@ -4812,7 +4812,8 @@ class MarioKartWiiSceneDesc implements Viewer.SceneDesc {
         });
 
         const device = context.device;
-        build.report('scene-course', 'Reading the track layout', 0.1);
+        // Not "reading the track layout" -- the worker already said that. This is the object list.
+        build.report('scene-course', 'Reading the objects to place', 0.1);
         await build.yieldNow();
         const kmp = parseKMP(assertExists(arc.findFileData(`./course.kmp`)));
         const renderer = new MarioKartWiiRenderer(context, commonCache, arc, arc.findFileData(`./posteffect/posteffect.blight`) === null);
