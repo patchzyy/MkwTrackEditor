@@ -16,7 +16,10 @@ import { SHADER_GRAPH_PRESETS } from './presets';
 import { createDefaultMaterialDoc, createDefaultStage, createPassThroughStage } from './defaults';
 import type { GraphEdge, GraphNode, GxMaterialDoc, GxTevStageDoc, ShaderGraph } from './types';
 
-const archives = listShaderGraphArchives();
+// A spread of character models, not just the first alphabetically: they are where the graph is
+// stretched hardest, and 18 archives of them still runs in well under a second. The whole folder
+// is `node scripts/shader-graph-coverage.mjs`, which is the same measurement without a time budget.
+const archives = listShaderGraphArchives(12, 8, 18);
 
 function collectDocs(): Array<{ label: string; doc: GxMaterialDoc }> {
   const out: Array<{ label: string; doc: GxMaterialDoc }> = [];
