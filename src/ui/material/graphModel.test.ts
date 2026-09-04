@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   ADDABLE_NODE_TYPES,
+  ADVANCED_NODE_TYPES,
+  NODE_SUMMARY,
   addNode,
   autoLayout,
   canConnect,
@@ -15,7 +17,9 @@ import {
   marqueeRect,
   moveNodes,
   nodeAtPoint,
+  countRawStages,
   nodeCaption,
+  nodePaletteSection,
   nodeSize,
   nodeSpec,
   nodeTitle,
@@ -385,6 +389,106 @@ describe('stage templates', () => {
     expect(duplicated.graph.nodes.find((node) => node.id === duplicated.newIds[0])).toHaveProperty('stageTemplate', stageTemplate);
     const pasted = pasteNodes(graph, copyNodes(graph, ['t']), 0, 0);
     expect(pasted.graph.nodes.find((node) => node.id === pasted.newIds[0])).toHaveProperty('stageTemplate', stageTemplate);
+  });
+});
+
+describe('the new nodes', () => {
+  it('offers them in the palette, with the hardware ones under Advanced', () => {
+    expect(ADDABLE_NODE_TYPES).toContain('alphaAsColor');
+    expect(ADDABLE_NODE_TYPES).toContain('storedValue');
+    expect(nodePaletteSection('alphaAsColor')).toBe('advanced');
+    expect(nodePaletteSection('storedValue')).toBe('advanced');
+    expect(nodePaletteSection('compare')).toBe('advanced');
+    expect(nodePaletteSection('indirectWarp')).toBe('advanced');
+    // The everyday half stays the everyday half.
+    for (const type of ['texture', 'vertexColor', 'constant', 'multiply', 'lerp', 'scale'] as const) {
+      expect(nodePaletteSection(type)).toBe('basic');
+    }
+    expect([...ADVANCED_NODE_TYPES]).toHaveLength(4);
+  });
+
+  it('names them in words, and explains each in one line', () => {
+    expect(nodeTypeTitle('alphaAsColor')).toBe('Alpha as colour');
+    expect(nodeTypeTitle('storedValue')).toBe('Stored value');
+    expect(nodeTitle({ id: 's', type: 'storedValue', slot: 'prev', x: 0, y: 0 })).toBe('Working slot');
+    expect(nodeTitle({ id: 's', type: 'storedValue', slot: 1, x: 0, y: 0 })).toBe('Stored slot 2');
+    for (const type of ADDABLE_NODE_TYPES) {
+      expect(NODE_SUMMARY[type].length).toBeGreaterThan(20);
+      for (const jargon of ['TEV', 'TEXMAP', 'KONST', 'CPREV', 'RASA']) expect(NODE_SUMMARY[type]).not.toContain(jargon);
+    }
+  });
+
+  it('captions a vertex colour with the source it rasterises', () => {
+    expect(nodeCaption({ id: 'v', type: 'vertexColor', channel: 0, x: 0, y: 0 }, null)).toBe('Vertex colour 1');
+    expect(nodeCaption({ id: 'v', type: 'vertexColor', channel: 5, x: 0, y: 0 }, null)).toBe('Bump alpha');
+    expect(nodeCaption({ id: 'v', type: 'vertexColor', channel: 7, x: 0, y: 0 }, null)).toBe('Nothing (black)');
+  });
+
+  it('starts a new one on the sensible default', () => {
+    expect(createNode('storedValue', 0, 0)).toMatchObject({ type: 'storedValue', slot: 'prev' });
+    expect(createNode('alphaAsColor', 0, 0)).toMatchObject({ type: 'alphaAsColor' });
+  });
+
+  it('takes an alpha wire and gives a colour one', () => {
+    const graph = graphOf(
+      [
+        { id: 't', type: 'texture', sampler: 0, texCoord: 0, x: 0, y: 0 },
+        { id: 'aac', type: 'alphaAsColor', x: 200, y: 0 },
+        multiply('m'),
+      ],
+    );
+    expect(canConnect(graph, { node: 't', socket: 'alpha', side: 'output' }, { node: 'aac', socket: 'alpha', side: 'input' }).ok).toBe(true);
+    // A colour cannot go in: the hardware has no operand for it, so neither does the socket.
+    expect(canConnect(graph, { node: 't', socket: 'rgb', side: 'output' }, { node: 'aac', socket: 'alpha', side: 'input' }).ok).toBe(false);
+    const wired = connectEdge(graph, { node: 'aac', socket: 'rgb', side: 'output' }, { node: 'm', socket: 'a', side: 'input' });
+    expect(socketType(wired, 'm', 'out', 'output')).toBe('rgb');
+  });
+});
+
+describe('graphs saved by an older build', () => {
+  // The node model gained only optional fields, so the stored version stays 1 and a graph written
+  // before any of this loads unchanged. What does change is that some of its read-only cards are
+  // now expressible, which is what `countRawStages` is compared against on load.
+  const legacy: EditorShaderGraph = JSON.parse(JSON.stringify({
+    version: 1,
+    nodes: [
+      { id: 'src0', type: 'texture', sampler: 0, texCoord: 0, x: -260, y: 0 },
+      { id: 'src1', type: 'vertexColor', channel: 1, x: -260, y: 90 },
+      { id: 's0c', type: 'add', x: 0, y: 0, stageTemplate: { texMap: 0 } },
+      { id: 's1r', type: 'rawStage', x: 260, y: 0, stage: { texMap: 1 } },
+      { id: 'out', type: 'output', x: 520, y: 180 },
+    ],
+    edges: [
+      { id: 'e0', from: { node: 'src0', socket: 'rgb' }, to: { node: 's0c', socket: 'a' } },
+      { id: 'e1', from: { node: 's0c', socket: 'out' }, to: { node: 's1r', socket: 'prev' } },
+      { id: 'e2', from: { node: 's1r', socket: 'out' }, to: { node: 'out', socket: 'color' } },
+    ],
+  }));
+
+  it('still loads: every node type and socket it names still exists', () => {
+    expect(legacy.version).toBe(1);
+    for (const node of legacy.nodes) expect(nodeSpec(node.type).title).not.toBe('Unknown node');
+    for (const edge of legacy.edges) {
+      const from = legacy.nodes.find((node) => node.id === edge.from.node)!;
+      const to = legacy.nodes.find((node) => node.id === edge.to.node)!;
+      expect(nodeSpec(from.type).outputs.some((socket) => socket.name === edge.from.socket)).toBe(true);
+      expect(nodeSpec(to.type).inputs.some((socket) => socket.name === edge.to.socket)).toBe(true);
+    }
+    // A `vertexColor` saved as channel 1 still means the second lighting channel.
+    expect(nodeCaption(legacy.nodes[1], null)).toBe('Vertex colour 2');
+  });
+
+  it('counts its read-only cards, which is what decides whether re-reading gains anything', () => {
+    expect(countRawStages(legacy)).toBe(1);
+    expect(countRawStages(graphOf([output('o')]))).toBe(0);
+    expect(countRawStages(null)).toBe(0);
+  });
+
+  it('survives every edit the editor makes, so the layout is not lost on the way', () => {
+    const moved = moveNodes(legacy, ['s1r'], 10, 10);
+    expect(moved.nodes.find((node) => node.id === 's1r')).toMatchObject({ x: 270, y: 10 });
+    const pasted = pasteNodes(legacy, copyNodes(legacy, ['s0c']), 0, 0);
+    expect(pasted.graph.nodes.find((node) => node.id === pasted.newIds[0])).toHaveProperty('stageTemplate');
   });
 });
 

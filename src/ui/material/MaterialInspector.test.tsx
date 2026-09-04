@@ -302,6 +302,64 @@ describe('ShaderGraphDock', () => {
     for (const jargon of ['TEXMAP', 'TEXCOORD', 'KCSEL', 'RASC']) expect(markup).not.toContain(jargon);
   });
 
+  it('explains the read-only stage in the sentence the decompiler wrote', () => {
+    const graph: ShaderGraph = {
+      version: 1,
+      nodes: [
+        {
+          id: 'raw',
+          type: 'rawStage',
+          stage: sampleStage(),
+          reason: 'It reads a texture, but no texture is bound to this step.',
+          x: 0,
+          y: 0,
+        },
+        { id: 'o', type: 'output', x: 300, y: 0 },
+      ],
+      edges: [],
+    };
+    const markup = renderDock('graph', true, docWithLayer(), { graph });
+    expect(markup).toContain('no texture is bound to this step');
+    // And it points at the escape hatch rather than stopping there.
+    expect(markup).toContain('Stages');
+  });
+
+  it('offers to redraw a Special step the editor has since learned', () => {
+    const graph: ShaderGraph = {
+      version: 1,
+      nodes: [
+        { id: 'raw', type: 'rawStage', stage: sampleStage(), x: 0, y: 0 },
+        { id: 'o', type: 'output', x: 300, y: 0 },
+      ],
+      edges: [],
+    };
+    expect(renderDock('graph', true, docWithLayer(), { graph, convertible: true })).toContain('Convert to nodes');
+    // Nothing to gain: the button is still there, but it only offers a plain rebuild.
+    const plain = renderDock('graph', true, docWithLayer(), { graph, convertible: false });
+    expect(plain).toContain('Rebuild from steps');
+    expect(plain).not.toContain('Convert to nodes');
+  });
+
+  it('names the new nodes in words, and offers where a step stores its result', () => {
+    const graph: ShaderGraph = {
+      version: 1,
+      nodes: [
+        { id: 'sv', type: 'storedValue', slot: 'prev', x: 0, y: 0 },
+        { id: 'aac', type: 'alphaAsColor', x: 160, y: 0 },
+        { id: 'v', type: 'vertexColor', channel: 7, x: 0, y: 160 },
+        { id: 'm', type: 'multiply', x: 320, y: 0 },
+        { id: 'o', type: 'output', x: 480, y: 0 },
+      ],
+      edges: [],
+    };
+    const markup = renderDock('graph', true, docWithLayer(), { graph });
+    expect(markup).toContain('Alpha as colour');
+    expect(markup).toContain('Working slot');
+    expect(markup).toContain('Nothing (black)');
+    expect(markup).toContain('Store result in');
+    for (const jargon of ['APREV', 'CPREV', 'RASA', 'TEXA', 'COLOR_ZERO']) expect(markup).not.toContain(jargon);
+  });
+
   it('explains the read-only stage it cannot draw', () => {
     const graph: ShaderGraph = {
       version: 1,

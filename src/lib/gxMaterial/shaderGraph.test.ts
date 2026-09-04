@@ -14,7 +14,7 @@ import { compileShaderGraph } from './shaderGraph';
 import { decompileShader, decompileShaderReport } from './decompile';
 import { SHADER_GRAPH_PRESETS } from './presets';
 import { createDefaultMaterialDoc, createDefaultStage, createPassThroughStage } from './defaults';
-import type { GraphEdge, GraphNode, GxMaterialDoc, ShaderGraph } from './types';
+import type { GraphEdge, GraphNode, GxMaterialDoc, GxTevStageDoc, ShaderGraph } from './types';
 
 const archives = listShaderGraphArchives();
 
@@ -445,6 +445,147 @@ describe('shader graph compiler', () => {
     expect(compiled.diagnostics.some((d) => /sixteen|16/.test(d.message))).toBe(true);
   });
 
+  // ------------------------------------------------------------ the cross-domain read
+  //
+  // The one place the colour and alpha halves meet, and the thing nearly every character model is
+  // built out of: `d + lerp(a, b, alphaOfSomething)`.
+
+  it('reads a texture alpha into a colour input', () => {
+    const graph = wire(
+      [
+        { id: 't', type: 'texture', sampler: 0, texCoord: 0, x: 0, y: 0 },
+        { id: 'aac', type: 'alphaAsColor', x: 120, y: 0 },
+        { id: 'm', type: 'multiply', x: 260, y: 0 },
+        { id: 'o', type: 'output', x: 420, y: 0 },
+      ],
+      [['t', 'alpha', 'aac', 'alpha'], ['aac', 'rgb', 'm', 'a'], ['t', 'rgb', 'm', 'b'], ['m', 'out', 'o', 'color']],
+    );
+    const compiled = compileShaderGraph(graph, material);
+    expect(compiled.diagnostics).toEqual([]);
+    expect(compiled.tevStages).toHaveLength(1);
+    const [stage] = compiled.tevStages;
+    expect([stage.colorInB, stage.colorInC]).toEqual([GX.CC.TEXA, GX.CC.TEXC]);
+    expect(stage.texMap).toBe(0);
+  });
+
+  it('reads a vertex colour, a constant and a slot alpha into a colour input', () => {
+    const cases: Array<[GraphNode, GX.CC]> = [
+      [{ id: 's', type: 'vertexColor', channel: 0, x: 0, y: 0 }, GX.CC.RASA],
+      [{ id: 's', type: 'constant', slot: 1, x: 0, y: 0 }, GX.CC.KONST],
+      [{ id: 's', type: 'register', slot: 2, x: 0, y: 0 }, GX.CC.A2],
+      [{ id: 's', type: 'storedValue', slot: 'prev', x: 0, y: 0 }, GX.CC.APREV],
+      [{ id: 's', type: 'storedValue', slot: 1, x: 0, y: 0 }, GX.CC.A1],
+    ];
+    for (const [source, expected] of cases) {
+      const graph = wire(
+        [
+          source,
+          { id: 'aac', type: 'alphaAsColor', x: 120, y: 0 },
+          { id: 'o', type: 'output', x: 300, y: 0 },
+        ],
+        [['s', 'alpha', 'aac', 'alpha'], ['aac', 'rgb', 'o', 'color']],
+      );
+      const compiled = compileShaderGraph(graph, material);
+      expect(compiled.ok).toBe(true);
+      expect(compiled.tevStages[0].colorInD).toBe(expected);
+    }
+    // A constant read as a colour takes all three channels from the register's alpha.
+    const konst = wire(
+      [
+        { id: 's', type: 'constant', slot: 1, x: 0, y: 0 },
+        { id: 'aac', type: 'alphaAsColor', x: 120, y: 0 },
+        { id: 'o', type: 'output', x: 300, y: 0 },
+      ],
+      [['s', 'alpha', 'aac', 'alpha'], ['aac', 'rgb', 'o', 'color']],
+    );
+    expect(compileShaderGraph(konst, material).tevStages[0].konstColorSel).toBe(GX.KonstColorSel.KCSEL_K1_A);
+  });
+
+  it('says how to fix a step wired into "Alpha as colour"', () => {
+    const graph = wire(
+      [
+        { id: 't', type: 'texture', sampler: 0, texCoord: 0, x: 0, y: 0 },
+        { id: 'm', type: 'multiply', x: 120, y: 0 },
+        { id: 'aac', type: 'alphaAsColor', x: 260, y: 0 },
+        { id: 'o', type: 'output', x: 420, y: 0 },
+      ],
+      [['t', 'alpha', 'm', 'a'], ['m', 'out', 'aac', 'alpha'], ['aac', 'rgb', 'o', 'color']],
+    );
+    const compiled = compileShaderGraph(graph, material);
+    expect(compiled.ok).toBe(false);
+    expect(compiled.diagnostics[0].message).toMatch(/store into a slot/);
+  });
+
+  it('reads a slot back with "Stored value"', () => {
+    const graph = wire(
+      [
+        { id: 'sv', type: 'storedValue', slot: 1, x: 0, y: 0 },
+        { id: 't', type: 'texture', sampler: 0, texCoord: 0, x: 0, y: 80 },
+        { id: 'm', type: 'multiply', x: 200, y: 0 },
+        { id: 'o', type: 'output', x: 400, y: 0 },
+      ],
+      [['sv', 'rgb', 'm', 'a'], ['t', 'rgb', 'm', 'b'], ['m', 'out', 'o', 'color']],
+    );
+    const compiled = compileShaderGraph(graph, material);
+    expect(compiled.ok).toBe(true);
+    expect(compiled.tevStages[0].colorInB).toBe(GX.CC.C1);
+    expect(compiled.usage.registers).toEqual([1]);
+  });
+
+  it('honours the slot a step is told to store its result in', () => {
+    const graph = wire(
+      [
+        { id: 't', type: 'texture', sampler: 0, texCoord: 0, x: 0, y: 0 },
+        { id: 'v', type: 'vertexColor', channel: 0, x: 0, y: 80 },
+        { id: 'm', type: 'multiply', outputRegister: 2, x: 200, y: 0 },
+        { id: 'sv', type: 'storedValue', slot: 2, x: 200, y: 160 },
+        { id: 'a', type: 'add', x: 360, y: 0 },
+        { id: 'o', type: 'output', x: 520, y: 0 },
+      ],
+      [['t', 'rgb', 'm', 'a'], ['v', 'rgb', 'm', 'b'], ['m', 'out', 'a', 'a'], ['sv', 'rgb', 'a', 'b'], ['a', 'out', 'o', 'color']],
+    );
+    const compiled = compileShaderGraph(graph, material);
+    expect(compiled.ok).toBe(true);
+    expect(compiled.tevStages[0].colorRegId).toBe(GX.Register.REG2);
+    // Reading it back names the slot, and the allocator never took it for a spill.
+    expect(compiled.tevStages[1].colorInA).toBe(GX.CC.C2);
+  });
+
+  it('rasterises the bump-alpha and constant-black channels as well as the lighting ones', () => {
+    for (const channel of [GX.RasColorChannelID.ALPHA_BUMP, GX.RasColorChannelID.ALPHA_BUMP_N, GX.RasColorChannelID.COLOR_ZERO]) {
+      const graph = wire(
+        [
+          { id: 'v', type: 'vertexColor', channel, x: 0, y: 0 },
+          { id: 'o', type: 'output', x: 200, y: 0 },
+        ],
+        [['v', 'rgb', 'o', 'color']],
+      );
+      const compiled = compileShaderGraph(graph, material);
+      expect(compiled.diagnostics).toEqual([]);
+      expect(compiled.tevStages[0].channelId).toBe(channel);
+      // Only the material's own channels count as "used"; these come from the rasteriser.
+      expect(compiled.usage.channels).toEqual([]);
+    }
+  });
+
+  it('still runs a step whose result nothing reads', () => {
+    const graph = wire(
+      [
+        { id: 's0c', type: 'multiply', unusedResult: true, stageTemplate: createDefaultStage(), x: 0, y: 0 },
+        { id: 't', type: 'texture', sampler: 0, texCoord: 0, x: -200, y: 0 },
+        { id: 's1c', type: 'add', stageTemplate: createDefaultStage(), x: 200, y: 0 },
+        { id: 'o', type: 'output', x: 400, y: 0 },
+      ],
+      [['t', 'rgb', 's0c', 'a'], ['t', 'rgb', 's1c', 'a'], ['s1c', 'out', 'o', 'color']],
+    );
+    const compiled = compileShaderGraph(graph, material);
+    expect(compiled.ok).toBe(true);
+    // Two stages, in group order: the unread multiply first, then the add the output reads.
+    expect(compiled.tevStages).toHaveLength(2);
+    expect(compiled.tevStages[0].colorInB).toBe(GX.CC.TEXC);
+    expect(compiled.tevStages[1].colorInD).toBe(GX.CC.TEXC);
+  });
+
   it('uses the socket default when an input is unwired', () => {
     const graph = wire(
       [
@@ -458,6 +599,115 @@ describe('shader graph compiler', () => {
     expect(compiled.ok).toBe(true);
     // Multiply's `b` defaults to 1.
     expect(compiled.tevStages[0].colorInC).toBe(GX.CC.ONE);
+  });
+});
+
+/**
+ * The other direction: given stages, does the decompiler reach for the new nodes? These are the
+ * exact shapes the coverage script found in the character folder, written out by hand so the
+ * cases stay covered on a machine with no game files.
+ */
+describe('shader graph decompiler', () => {
+  function materialWith(stages: Partial<GxTevStageDoc>[], samplers = 2): GxMaterialDoc {
+    const doc = createDefaultMaterialDoc('test', samplers);
+    doc.tevStages = stages.map((patch) => ({ ...createPassThroughStage(), ...patch }));
+    return doc;
+  }
+
+  function roundTrips(doc: GxMaterialDoc): ShaderGraph {
+    const graph = decompileShader(doc);
+    const compiled = compileShaderGraph(graph, doc);
+    expect(compiled.diagnostics.filter((entry) => entry.severity === 'error')).toEqual([]);
+    expect(compiled.tevStages).toEqual(doc.tevStages);
+    return graph;
+  }
+
+  it('draws the character-model blend as nodes, not a Special step', () => {
+    // `d + lerp(0, texture, previous alpha)` — a kart body over its base coat.
+    const doc = materialWith([
+      {
+        colorInA: GX.CC.ZERO, colorInB: GX.CC.TEXC, colorInC: GX.CC.RASC, colorInD: GX.CC.ZERO,
+        alphaInA: GX.CA.ZERO, alphaInB: GX.CA.TEXA, alphaInC: GX.CA.KONST, alphaInD: GX.CA.ZERO,
+        texMap: 0, texCoordId: 0,
+      },
+      {
+        colorInA: GX.CC.ZERO, colorInB: GX.CC.TEXC, colorInC: GX.CC.APREV, colorInD: GX.CC.CPREV,
+        alphaInA: GX.CA.KONST, alphaInB: GX.CA.ZERO, alphaInC: GX.CA.ZERO, alphaInD: GX.CA.ZERO,
+        texMap: 1, texCoordId: 1,
+      },
+    ]);
+    const graph = roundTrips(doc);
+    expect(graph.nodes.filter((node) => node.type === 'rawStage')).toEqual([]);
+    expect(graph.nodes.some((node) => node.type === 'alphaAsColor')).toBe(true);
+    expect(graph.nodes.some((node) => node.type === 'storedValue' && node.slot === 'prev')).toBe(true);
+  });
+
+  it('draws a vertex-colour alpha read as a colour', () => {
+    const doc = materialWith([{
+      colorInA: GX.CC.ZERO, colorInB: GX.CC.TEXC, colorInC: GX.CC.RASA, colorInD: GX.CC.RASC,
+      texMap: 0, texCoordId: 0,
+    }]);
+    const graph = roundTrips(doc);
+    expect(graph.nodes.filter((node) => node.type === 'rawStage')).toEqual([]);
+    const source = graph.edges.find((edge) => edge.to.socket === 'alpha'
+      && graph.nodes.find((node) => node.id === edge.to.node)?.type === 'alphaAsColor');
+    expect(graph.nodes.find((node) => node.id === source?.from.node)?.type).toBe('vertexColor');
+  });
+
+  it('reads the working slot before anything has written it', () => {
+    const doc = materialWith([{
+      colorInA: GX.CC.ZERO, colorInB: GX.CC.TEXC, colorInC: GX.CC.ONE, colorInD: GX.CC.CPREV,
+      alphaInA: GX.CA.ZERO, alphaInB: GX.CA.ZERO, alphaInC: GX.CA.ZERO, alphaInD: GX.CA.APREV,
+      texMap: 0, texCoordId: 0,
+    }]);
+    const graph = roundTrips(doc);
+    expect(graph.nodes.filter((node) => node.type === 'rawStage')).toEqual([]);
+    expect(graph.nodes.filter((node) => node.type === 'storedValue')).toHaveLength(1);
+  });
+
+  it('keeps a stage half whose result nothing reads', () => {
+    const doc = materialWith([
+      {
+        alphaInA: GX.CA.ZERO, alphaInB: GX.CA.TEXA, alphaInC: GX.CA.KONST, alphaInD: GX.CA.ZERO,
+        colorInA: GX.CC.ZERO, colorInB: GX.CC.TEXC, colorInC: GX.CC.RASC, colorInD: GX.CC.ZERO,
+        texMap: 0, texCoordId: 0,
+      },
+      {
+        // Reads the colour of the stage before it, but overwrites its alpha without looking.
+        colorInA: GX.CC.ZERO, colorInB: GX.CC.TEXC, colorInC: GX.CC.ONE, colorInD: GX.CC.CPREV,
+        alphaInA: GX.CA.KONST, alphaInB: GX.CA.ZERO, alphaInC: GX.CA.ZERO, alphaInD: GX.CA.ZERO,
+        texMap: 1, texCoordId: 1,
+      },
+    ]);
+    const graph = roundTrips(doc);
+    expect(graph.nodes.filter((node) => node.type === 'rawStage')).toEqual([]);
+    expect(graph.nodes.some((node) => node.unusedResult === true)).toBe(true);
+  });
+
+  it('keeps the rasteriser channel a stage names, even the constant-black one', () => {
+    const doc = materialWith([{
+      colorInA: GX.CC.ZERO, colorInB: GX.CC.KONST, colorInC: GX.CC.TEXC, colorInD: GX.CC.ZERO,
+      alphaInA: GX.CA.ZERO, alphaInB: GX.CA.TEXA, alphaInC: GX.CA.RASA, alphaInD: GX.CA.ZERO,
+      channelId: GX.RasColorChannelID.COLOR_ZERO, texMap: 0, texCoordId: 0,
+    }]);
+    const graph = roundTrips(doc);
+    expect(graph.nodes.filter((node) => node.type === 'rawStage')).toEqual([]);
+    const channel = graph.nodes.find((node) => node.type === 'vertexColor');
+    expect(channel?.type === 'vertexColor' && channel.channel).toBe(GX.RasColorChannelID.COLOR_ZERO);
+  });
+
+  it('keeps a stage that reads a texture it does not bind as a Special step, and says why', () => {
+    const doc = materialWith([{
+      colorInA: GX.CC.ZERO, colorInB: GX.CC.ONE, colorInC: GX.CC.RASC, colorInD: GX.CC.ZERO,
+      alphaInA: GX.CC.ZERO, alphaInB: GX.CA.TEXA, alphaInC: GX.CA.RASA, alphaInD: GX.CA.ZERO,
+      texMap: GX.TexMapID.TEXMAP_NULL,
+    }]);
+    const report = decompileShaderReport(doc);
+    expect(report.rawStages).toBe(1);
+    expect(report.causes[0].kind).toBe('operand');
+    const raw = report.graph.nodes.find((node) => node.type === 'rawStage');
+    expect(raw?.type === 'rawStage' && raw.reason).toMatch(/no texture is bound/);
+    expect(compileShaderGraph(report.graph, doc).tevStages).toEqual(doc.tevStages);
   });
 });
 
