@@ -128,12 +128,20 @@ export class GrabManager {
     }
 
     public releaseGrab(): void {
+        // `_onPointerLockChange` can fire after the grab is already gone (the lock is released
+        // asynchronously), and the code below dereferences `grabOptions!`. Bail out instead of
+        // throwing inside a document-level event listener.
+        if (this.grabListener === null)
+            return;
+
         document.removeEventListener('mousemove', this._onMouseMove);
         document.removeEventListener('mouseup', this._onMouseUp);
         document.removeEventListener('mousedown', this._onMouseDown, { capture: true });
 
         if (this.currentGrabTarget !== null) {
             document.removeEventListener('pointerlockchange', this._onPointerLockChange);
+            document.removeEventListener('pointerlockerror', this._onPointerLockError);
+            this.currentGrabTarget = null;
 
             if (document.exitPointerLock !== undefined)
                 document.exitPointerLock();

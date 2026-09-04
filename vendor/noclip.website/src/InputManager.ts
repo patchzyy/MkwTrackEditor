@@ -48,6 +48,14 @@ export default class InputManager {
     public ondraggingmodechanged: (() => void) | null = null;
     private scrollListeners: Listener[] = [];
     private usePointerLock: boolean = true;
+    /**
+     * When false, this manager ignores the mouse and touch entirely.
+     *
+     * The MKW track editor turns it off (`Noclip3DViewport`): the handler below takes a
+     * GrabManager grab — and with it pointer lock — on *any* mousedown on the canvas, which made
+     * an ordinary click capture the cursor and turn into a camera move. The editor owns the
+     * pointer itself and drives the camera controllers explicitly.
+     */
     public isMouseEnabled: boolean = true;
 
     private touchGesture: TouchGesture = TouchGesture.None;

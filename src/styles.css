@@ -565,6 +565,19 @@ h4 {
   background: #05070a;
 }
 
+/*
+ * The viewport uses pointer *capture* rather than pointer lock, so the cursor stays the user's
+ * and the gesture in progress has to be legible from the cursor alone.
+ * `data-cursor` is written by Noclip3DViewport's gesture machine.
+ */
+.noclipCanvas[data-cursor='look'] {
+  cursor: grabbing;
+}
+
+.noclipCanvas[data-cursor='drag'] {
+  cursor: move;
+}
+
 .noclipUiHost {
   display: none;
 }
