@@ -985,6 +985,16 @@ export class MDL0ModelInstance {
         this.chr0NodeAnimator = BRRES.bindCHR0Animator(animationController, chr0, this.mdl0Model.mdl0.nodes);
     }
 
+    /**
+     * Editor extension: the bound CHR0 animator, or null. A host that needs the *animated* joint
+     * matrices on the CPU — the Model Studio's mesh picker, which has to hit the character where
+     * it is drawn and not where it was bound — has to run the same node walk this instance runs,
+     * and that walk needs this.
+     */
+    public getCHR0Animator(): BRRES.CHR0NodesAnimator | null {
+        return this.chr0NodeAnimator;
+    }
+
     public bindVIS0(animationController: AnimationController, vis0: BRRES.VIS0): void {
         this.vis0NodeAnimator = BRRES.bindVIS0Animator(animationController, vis0, this.mdl0Model.mdl0.nodes);
     }
