@@ -372,3 +372,108 @@ their render toggles, hidden models, post-effect files and animation state.
 
 The one thing a rebuild does not preserve is the scene's animation clock: a scene is created with
 `initialSceneTime: 0`.
+
+---
+
+## 10. Mouse model
+
+The viewport owns the mouse outright. `bootViewer` sets `viewer.inputManager.isMouseEnabled =
+false`, because noclip's `InputManager` registers its own `mousedown` on the canvas and hands it to
+`GlobalGrabManager.takeGrab(..., { takePointerLock: true })` for **any** button. That is what made
+an ordinary click take pointer lock, capture the cursor and turn every mouse movement into a camera
+turn. The camera controllers are now driven explicitly from `Noclip3DViewport` instead.
+
+The rules live in `src/ui/viewport/pointerIntent.ts` (pure, unit-tested in `pointerIntent.test.ts`);
+the handlers that apply them are in the `//#region Mouse model` block of `Noclip3DViewport.tsx`.
+
+### One gesture at a time
+
+Every `pointerdown` on the canvas:
+
+- calls `preventDefault()`, which suppresses the compatibility `mousedown` — nothing else on the
+  page, vendored or not, can react to the press;
+- focuses the canvas (keyboard fly needs it focused; `GrabManager` used to do this);
+- takes **pointer capture** for that pointer id;
+- records exactly one `ViewportGesture`. A second button pressed during a gesture is ignored.
+
+| Gesture | Started by | Ends as |
+| --- | --- | --- |
+| `select` | left press with nothing draggable under it | a selection if the pointer stayed within `CLICK_SLOP_PX` (4 px), otherwise a camera move |
+| `drag` | left press on a gizmo handle, an entity, a checkpoint end, a camera view point, a path-link handle, the checkpoint-draw tool, or a marquee | the edit is committed |
+| `camera` | right or middle press | camera only |
+
+There is no `onClick` handler any more. Selection is decided on release, from the coordinates of
+the **press**, which is why a drag that ends over the inspector can no longer re-pick (and clear)
+the selection at the release point.
+
+### Buttons
+
+| Input | Perspective view modes (`normal`, `dev`) | Orthographic view modes (`ortho`, `topdown`) |
+| --- | --- | --- |
+| Left click | select what is under the cursor | same |
+| Left drag on empty space | look around | orbit |
+| Right drag | first-person look | orbit |
+| Middle drag | look | pan |
+| Wheel | dolly the free camera (shift = 4x) | zoom, through noclip's own `InputManager.dz` |
+| `W A S D Q E`, shift | fly, **while a look gesture is held** — the pre-existing `withSuppressedCameraMovementKeys` rule | – |
+| `Escape` during a drag | cancel: the renderer is put back where the document has it | same |
+
+Shift-click adds to the selection and never starts a drag. Ctrl/Cmd also add to the selection and
+additionally snap a drag to collision features. Alt-click inserts a route point.
+
+`FPSCameraController` ignores `InputManager.dz` (upstream noclip spends the wheel on the move-speed
+slider in the app shell, which this fork does not have), so the perspective wheel dolly is applied
+by the viewport in `dollyFreeCamera`.
+
+### Capture, not lock
+
+Drags use `setPointerCapture`, so a gizmo, entity, checkpoint, camera view point, path link,
+marquee or checkpoint-draw drag keeps every move after the pointer leaves the canvas, leaves the
+dock and leaves the window, and it ends when the button comes up *anywhere*. The canvas shows the
+gesture with `data-cursor` (`look` / `drag`, styled in `src/styles.css`) instead of hiding the
+cursor.
+
+Pointer lock is asked for by **one** gesture only: a right-button first-person look
+(`usesPointerLock`). A left click never asks for it. If the browser refuses — it does in the probe
+window, with `WrongDocumentError` — the look falls back to client-coordinate deltas and still works.
+
+Three independent nets make a stuck lock impossible:
+
+1. `endPointerGesture` always calls `releaseCameraLook`, which exits the lock, and it is reached
+   from `pointerup`, `pointercancel`, `lostpointercapture`, a `pointerup` anywhere on `window`,
+   `blur`, `visibilitychange`, `Escape` and unmount.
+2. A `pointerlockchange` with no camera gesture running exits the lock unconditionally.
+3. Losing the lock mid-gesture ends the gesture rather than leaving it running with no way to move.
+
+### Every drag lands, or is explicitly put back
+
+`shouldCommitOnEnd` says yes for every end reason except `escape`. A committing end runs
+`flushPendingInteractionCommit`; a cancelling end drops the pending commit and calls the drag's
+revert, which re-pushes the document's own transform at the renderer. Either way the rendered
+transform and the track document agree once the gesture is over. The previous code could drop a
+`moveTransformSelection` commit — it is not rAF-scheduled, only flushed at drag end — and leave a
+mesh drawn somewhere the document had never heard of.
+
+### Picking only hits faces that are drawn
+
+`EditorMeshPicker.pick` now honours each material's GX cull mode (`cullFacingSign` /
+`triangleFacing`; GX materials are drawn with `GfxFrontFaceMode.CW`). A `CullMode.ALL` draw is
+skipped entirely.
+
+Without this, a course whose own `course_model.brres` carries a sky dome answers *every* click with
+the dome: its near half is culled away visually, so you see the track through it, but the pick ray
+still crossed it first. On `gpDC` that meant 2 pickable meshes out of 138 — clicking simply could
+not select any scenery. With the cull mode applied the same view offers 34.
+
+### Dev hook additions
+
+`window.__mkwViewport` gained `getCameraMatrix()` and `getPointerState()`
+(`{ gesture, button, moved, drag, camera, pointerLocked, pointerLockDenied, cursor }`).
+
+### Probes
+
+`scripts/viewport-input-probe.mjs` drives all of this with real CDP mouse input
+(`Input.dispatchMouseEvent`), because synthetic `PointerEvent`s cannot exercise pointer capture,
+pointer lock or the compatibility mouse events. Unlike the other harnesses the probe body runs in
+Node: `scripts/probe-viewport-select.js`, `probe-viewport-gizmo-drag.js`,
+`probe-viewport-camera.js`.

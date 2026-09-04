@@ -73,6 +73,8 @@ interface EditorMeshDrawCache {
     nodeId: number;
     nodeName: string;
     materialName: string;
+    /** The material's GX cull mode, so picking matches what is actually drawn. */
+    cullMode: GX.CullMode;
     shapeInstanceIndex: number;
     /** Scene-space vertex positions, 3 floats per vertex. */
     positions: Float32Array;
@@ -86,6 +88,33 @@ interface EditorMeshDrawCache {
 export interface EditorMeshSource {
     archivePath: string;
     modelInstance: MDL0ModelInstance;
+}
+
+/**
+ * Which facing this cull mode throws away: `+1` front, `-1` back, `0` nothing.
+ *
+ * GX materials are drawn with `GfxFrontFaceMode.CW` (see `translateGfxMegaState` in
+ * `gx/gx_render.ts`), so a triangle is front-facing when its `(b-a) x (c-a)` normal points the
+ * same way as the view direction.
+ */
+function cullFacingSign(cullMode: GX.CullMode): number {
+    if (cullMode === GX.CullMode.FRONT) return 1;
+    if (cullMode === GX.CullMode.BACK) return -1;
+    return 0;
+}
+
+/** `+1` when the triangle faces away from the ray (front, under GX's CW convention), else `-1`. */
+function triangleFacing(positions: Float32Array, a: number, b: number, c: number, direction: vec3): number {
+    const abx = positions[b] - positions[a];
+    const aby = positions[b + 1] - positions[a + 1];
+    const abz = positions[b + 2] - positions[a + 2];
+    const acx = positions[c] - positions[a];
+    const acy = positions[c + 1] - positions[a + 1];
+    const acz = positions[c + 2] - positions[a + 2];
+    const nx = aby * acz - abz * acy;
+    const ny = abz * acx - abx * acz;
+    const nz = abx * acy - aby * acx;
+    return nx * direction[0] + ny * direction[1] + nz * direction[2] >= 0 ? 1 : -1;
 }
 
 const scratchMatrix = mat4.create();
@@ -219,6 +248,7 @@ export class EditorMeshPicker {
                     nodeId: op.nodeId,
                     nodeName: node?.name ?? `node${op.nodeId}`,
                     materialName: mdl0.materials[op.matId]?.name ?? '',
+                    cullMode: mdl0.materials[op.matId]?.gxMaterial.cullMode ?? GX.CullMode.NONE,
                     shapeInstanceIndex: drawOpIndex,
                     positions: geometry.positions,
                     indices: geometry.indices,
@@ -286,6 +316,11 @@ export class EditorMeshPicker {
 
         for (const cache of caches) {
             if (this.isDrawHidden(cache)) continue;
+            // A face the renderer culls is not on screen, so a click must not select it. Without
+            // this, a course whose own model carries a sky dome answers every click with the dome:
+            // its near half is culled away visually but the ray still crosses it first.
+            if (cache.cullMode === GX.CullMode.ALL) continue;
+            const cullFacing = cullFacingSign(cache.cullMode);
             const boxHit = rayAabbIntersection(origin[0], origin[1], origin[2], direction[0], direction[1], direction[2], cache.bounds);
             if (boxHit === null || boxHit > bestDistance) continue;
             const positions = cache.positions;
@@ -294,6 +329,7 @@ export class EditorMeshPicker {
                 const a = indices[t] * 3;
                 const b = indices[t + 1] * 3;
                 const c = indices[t + 2] * 3;
+                if (cullFacing !== 0 && triangleFacing(positions, a, b, c, direction) === cullFacing) continue;
                 const hit = rayTriangleIntersection(
                     origin[0], origin[1], origin[2],
                     direction[0], direction[1], direction[2],

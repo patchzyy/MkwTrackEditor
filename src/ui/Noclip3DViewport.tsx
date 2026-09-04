@@ -76,6 +76,25 @@ import {
   updateMeshSelectionTransform,
   type MeshSelectionEntry,
 } from './viewport/meshSelection';
+import {
+  CLICK_SLOP_PX,
+  beginGesture,
+  cameraLookDelta,
+  cameraModeForButton,
+  cursorForGesture,
+  isAdditiveSelection as isAdditiveSelectionModifier,
+  isCollisionSnap as isCollisionSnapModifier,
+  movedBeyondSlop,
+  readModifiers,
+  shouldCommitOnEnd,
+  shouldSelectOnRelease,
+  toViewportMouseButton,
+  usesPointerLock,
+  type CameraGestureMode,
+  type GestureEndReason,
+  type PointerModifiers,
+  type ViewportGesture,
+} from './viewport/pointerIntent';
 
 /** One step of a "Refresh track" scene rebuild, reported to the shell. */
 export interface SceneReloadEvent {
@@ -545,7 +564,9 @@ interface CameraViewPointDragState {
 
 type ActiveDragState = DragState | GizmoDragState | CheckpointDragState | CameraViewPointDragState;
 
+/** The camera half of a pointer gesture: only set while the pointer is actually driving the view. */
 interface CameraLookDragState {
+  mode: CameraGestureMode;
   lastClientX: number;
   lastClientY: number;
   pointerId: number;
@@ -623,8 +644,7 @@ type RouteVisibilityKey = KmpVisibilityKey;
 type DofMode = 'full' | 'reduced' | 'off';
 
 const MKW_RENDER_SCALE = 0.1;
-const ENTITY_DRAG_START_THRESHOLD_PX = 4;
-const MAX_CAMERA_LOOK_DELTA_PX = 240;
+const ENTITY_DRAG_START_THRESHOLD_PX = CLICK_SLOP_PX;
 const ROUTE_INSERT_SNAP_MAX_DISTANCE = 900;
 /** Shorter drags than this are treated as a mis-click rather than a new checkpoint. */
 const MIN_CHECKPOINT_DRAW_WIDTH = 200;
@@ -654,14 +674,6 @@ const startSlotPixelOffsets = [
   { x: 67.5, y: 251.5 },
   { x: 99.5, y: 270.5 },
 ] as const;
-
-function isAdditiveSelectionModifier(event: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }): boolean {
-  return event.shiftKey || event.ctrlKey || event.metaKey;
-}
-
-function isCollisionSnapModifier(event: { ctrlKey: boolean; metaKey: boolean }): boolean {
-  return event.ctrlKey || event.metaKey;
-}
 
 function getTrackViewBounds(track: TrackDocument): TrackViewBounds | null {
   const min = vec3.fromValues(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
@@ -884,6 +896,12 @@ export function Noclip3DViewport({
   const draggingEntityRef = useRef<ActiveDragState | null>(null);
   const pendingEntityDragRef = useRef<PendingEntityDragState | null>(null);
   const cameraLookDragRef = useRef<CameraLookDragState | null>(null);
+  /** The one gesture the viewport is currently running. Exactly one pointer at a time. */
+  const pointerGestureRef = useRef<ViewportGesture | null>(null);
+  /** Puts the renderer back where the document says the thing is, for a cancelled drag. */
+  const dragRevertRef = useRef<(() => void) | null>(null);
+  /** Why the browser refused pointer lock, for the dev hook. A refusal is not an error. */
+  const pointerLockDeniedRef = useRef<string | null>(null);
   const [status, setStatus] = useState('Drop a Mario Kart Wii .szs track anywhere in the editor');
   const [viewerReady, setViewerReady] = useState(false);
   const [smokeViewportSample, setSmokeViewportSample] = useState<'pending' | 'blank' | 'nonblank'>('pending');
@@ -931,7 +949,6 @@ export function Noclip3DViewport({
   const [marqueeSelection, setMarqueeSelection] = useState<MarqueeSelectionState | null>(null);
   const marqueeSelectionRef = useRef<MarqueeSelectionState | null>(null);
   const lastPointerRef = useRef<{ x: number; y: number; snapToFeatures: boolean; altKey: boolean } | null>(null);
-  const suppressNextClickRef = useRef(false);
   const onMoveEntityRef = useRef(onMoveEntity);
   const onRotateEntityRef = useRef(onRotateEntity);
   const onScaleEntityRef = useRef(onScaleEntity);
@@ -1045,6 +1062,10 @@ export function Noclip3DViewport({
         return;
       }
       const viewer: Viewer = result.viewer;
+      // The editor owns the mouse. noclip's InputManager otherwise takes a GrabManager grab (and
+      // pointer lock) on *any* mousedown on the canvas, which captured the cursor and turned every
+      // click into a camera turn. The viewport drives the camera controllers explicitly instead.
+      viewer.inputManager.isMouseEnabled = false;
       viewerRef.current = viewer;
       setViewerReady(true);
       const resizeObserver = new ResizeObserver(() => resizeToDisplay());
@@ -1123,119 +1144,76 @@ export function Noclip3DViewport({
     };
   }, []);
 
+  // Anything that can interrupt a gesture without a pointerup: the window losing focus, the
+  // pointer lock being dropped with Escape, or Escape itself. All of them end the gesture through
+  // the same door, so a drag can never be left half-applied.
   useEffect(() => {
-    const handleBlur = () => releaseCameraLook();
-    window.addEventListener('blur', handleBlur);
-    return () => {
-      window.removeEventListener('blur', handleBlur);
-      releaseCameraLook();
-    };
-  }, []);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const handleNativePointerDown = (event: globalThis.PointerEvent) => {
-      if (event.button !== 2 || draggingEntityRef.current || !supportsMouseLook(viewModeRef.current)) return;
+    const handleBlur = () => endPointerGesture('blur');
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || !pointerGestureRef.current) return;
       event.preventDefault();
-      event.stopPropagation();
-      canvas.focus();
-      try {
-        canvas.setPointerCapture(event.pointerId);
-      } catch {}
-      cameraLookDragRef.current = {
-        lastClientX: event.clientX,
-        lastClientY: event.clientY,
-        pointerId: event.pointerId,
-        pointerLocked: document.pointerLockElement === canvas,
-        skipNextDelta: false,
-      };
-      setViewportCameraLookActive(true);
-      if (viewerRef.current) viewerRef.current.inputManager.buttons = event.buttons;
-      try {
-        canvas.requestPointerLock?.();
-      } catch {}
+      endPointerGesture('escape');
     };
-
-    const handleNativePointerMove = (event: globalThis.PointerEvent) => {
-      const cameraLook = cameraLookDragRef.current;
-      if (!cameraLook || event.pointerId !== cameraLook.pointerId) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const viewer = viewerRef.current;
-      if (!viewer) return;
-      const pointerLocked = document.pointerLockElement === canvas;
-      if (cameraLook.skipNextDelta || cameraLook.pointerLocked !== pointerLocked) {
-        cameraLookDragRef.current = {
-          lastClientX: event.clientX,
-          lastClientY: event.clientY,
-          pointerId: event.pointerId,
-          pointerLocked,
-          skipNextDelta: false,
-        };
-        return;
-      }
-      const dx = pointerLocked ? event.movementX : event.clientX - cameraLook.lastClientX;
-      const dy = pointerLocked ? event.movementY : event.clientY - cameraLook.lastClientY;
-      if (!Number.isFinite(dx) || !Number.isFinite(dy) || Math.abs(dx) > MAX_CAMERA_LOOK_DELTA_PX || Math.abs(dy) > MAX_CAMERA_LOOK_DELTA_PX) {
-        cameraLookDragRef.current = {
-          lastClientX: event.clientX,
-          lastClientY: event.clientY,
-          pointerId: event.pointerId,
-          pointerLocked,
-          skipNextDelta: false,
-        };
-        return;
-      }
-      viewer.inputManager.buttons = event.buttons || 2;
-      applyDirectCameraLook(viewer, dx, dy);
-      cameraLookDragRef.current = {
-        lastClientX: event.clientX,
-        lastClientY: event.clientY,
-        pointerId: event.pointerId,
-        pointerLocked,
-        skipNextDelta: false,
-      };
-    };
-
-    const handleNativePointerRelease = (event: globalThis.PointerEvent) => {
-      const cameraLook = cameraLookDragRef.current;
-      if (!cameraLook || event.pointerId !== cameraLook.pointerId) return;
-      event.preventDefault();
-      event.stopPropagation();
-      releaseCameraLook(canvas);
-    };
-
-    const handleNativeContextMenu = (event: globalThis.MouseEvent) => {
-      event.preventDefault();
-    };
-
     const handlePointerLockChange = () => {
+      const locked = document.pointerLockElement === canvasRef.current;
       const cameraLook = cameraLookDragRef.current;
-      if (!cameraLook) return;
-      cameraLookDragRef.current = {
-        ...cameraLook,
-        pointerLocked: document.pointerLockElement === canvas,
-        skipNextDelta: true,
-      };
+      if (!cameraLook) {
+        // Nothing is driving the camera, so nothing may hold the cursor. This is the safety net
+        // that makes "it kept capturing their cursor" impossible however the lock was taken.
+        if (locked) document.exitPointerLock?.();
+        return;
+      }
+      // Losing the lock mid-gesture (Escape, or the browser dropping it) ends the look rather
+      // than leaving a gesture running with no way to move it.
+      if (cameraLook.pointerLocked && !locked) {
+        endPointerGesture('lostcapture');
+        return;
+      }
+      cameraLookDragRef.current = { ...cameraLook, pointerLocked: locked, skipNextDelta: true };
     };
-
-    canvas.addEventListener('pointerdown', handleNativePointerDown);
-    canvas.addEventListener('pointermove', handleNativePointerMove);
-    canvas.addEventListener('pointerup', handleNativePointerRelease);
-    canvas.addEventListener('pointercancel', handleNativePointerRelease);
-    canvas.addEventListener('contextmenu', handleNativeContextMenu);
+    // Last resort. Pointer capture should deliver the release to the canvas, but if it is ever
+    // lost silently the button coming up anywhere still has to end the gesture — otherwise a drag
+    // runs forever and the renderer and the document drift apart.
+    const handleWindowPointerRelease = (event: globalThis.PointerEvent) => {
+      const gesture = pointerGestureRef.current;
+      if (!gesture || event.pointerId !== gesture.pointerId) return;
+      endPointerGesture(event.type === 'pointercancel' ? 'pointercancel' : 'pointerup');
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') endPointerGesture('blur');
+    };
+    // The wheel dollies the free camera. `FPSCameraController` ignores `InputManager.dz` (upstream
+    // noclip spends it on the move-speed slider in the app shell, which this fork does not have),
+    // so without this the wheel does nothing at all in the perspective view modes. The
+    // orthographic controllers do read `dz`, and are left alone.
+    const handleWheel = (event: WheelEvent) => {
+      const viewer = viewerRef.current;
+      if (!viewer || playtestSessionRef.current || cameraPreviewStateRef.current.active) return;
+      if (!(viewer.cameraController instanceof FPSCameraController)) return;
+      event.preventDefault();
+      dollyFreeCamera(viewer, -Math.sign(event.deltaY), event.shiftKey);
+    };
+    canvasRef.current?.addEventListener('wheel', handleWheel, { passive: false });
+    const wheelCanvas = canvasRef.current;
+    window.addEventListener('blur', handleBlur);
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('pointerup', handleWindowPointerRelease);
+    window.addEventListener('pointercancel', handleWindowPointerRelease);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     document.addEventListener('pointerlockchange', handlePointerLockChange);
     return () => {
-      canvas.removeEventListener('pointerdown', handleNativePointerDown);
-      canvas.removeEventListener('pointermove', handleNativePointerMove);
-      canvas.removeEventListener('pointerup', handleNativePointerRelease);
-      canvas.removeEventListener('pointercancel', handleNativePointerRelease);
-      canvas.removeEventListener('contextmenu', handleNativeContextMenu);
+      window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('pointerup', handleWindowPointerRelease);
+      window.removeEventListener('pointercancel', handleWindowPointerRelease);
+      wheelCanvas?.removeEventListener('wheel', handleWheel);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       document.removeEventListener('pointerlockchange', handlePointerLockChange);
+      endPointerGesture('teardown');
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -1719,6 +1697,19 @@ export function Noclip3DViewport({
           sections: [...new Set(overlay.points.map((point) => point.section))].sort(),
         };
       },
+      /** The camera's world matrix, so a probe can prove a click did not move the view. */
+      getCameraMatrix: () => (viewerRef.current ? Array.from(viewerRef.current.camera.worldMatrix) : null),
+      /** What the mouse state machine currently thinks it is doing. */
+      getPointerState: () => ({
+        gesture: pointerGestureRef.current?.kind ?? null,
+        button: pointerGestureRef.current?.button ?? null,
+        moved: pointerGestureRef.current?.moved ?? false,
+        drag: draggingEntityRef.current?.kind ?? null,
+        camera: cameraLookDragRef.current?.mode ?? null,
+        pointerLocked: typeof document !== 'undefined' && document.pointerLockElement === canvasRef.current,
+        pointerLockDenied: pointerLockDeniedRef.current,
+        cursor: canvasRef.current?.dataset.cursor ?? null,
+      }),
       /** The overlay handle under a screen point — how probes locate a camera view-point handle. */
       pickHandleAt: (clientX: number, clientY: number) =>
         canvasRef.current ? pickSceneHandle(sceneRef.current, clientX, clientY, canvasRef.current) : null,
@@ -2145,28 +2136,130 @@ export function Noclip3DViewport({
     return true;
   }
 
+  //#region Mouse model
+  //
+  // One code path owns the mouse (noclip's own grab is switched off in `bootViewer`). Every
+  // press starts exactly one gesture, that gesture holds *pointer capture* — not pointer lock —
+  // until the button is released anywhere, and every way it can end goes through
+  // `endPointerGesture`. The rules themselves are in `src/ui/viewport/pointerIntent.ts`.
+
+  /** Which camera gesture the current view mode and playback state allow. */
+  function cameraGestureOptions() {
+    const viewer = viewerRef.current;
+    return {
+      orthographic: viewer ? viewer.cameraController instanceof OrthoCameraController : false,
+      // A camera preview or a playtest is driving the camera; the mouse must not fight it.
+      mouseLookAllowed: !cameraPreviewStateRef.current.active && !playtestStateRef.current.active,
+    };
+  }
+
+  function updateCanvasCursor() {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.dataset.cursor = cursorForGesture(pointerGestureRef.current);
+  }
+
+  /**
+   * Registers the gesture and takes pointer capture. Capture, not pointer lock: the drag keeps
+   * receiving moves outside the canvas and outside the window, and the cursor stays the user's.
+   */
+  function beginPointerGesture(
+    canvas: HTMLCanvasElement,
+    event: PointerEvent<HTMLCanvasElement>,
+    kind: 'select' | 'drag' | 'camera',
+    camera: CameraGestureMode | null = null,
+  ): ViewportGesture {
+    const gesture = beginGesture({
+      kind,
+      camera,
+      pointerId: event.pointerId,
+      button: toViewportMouseButton(event.button),
+      clientX: event.clientX,
+      clientY: event.clientY,
+      modifiers: readModifiers(event),
+    });
+    pointerGestureRef.current = gesture;
+    try {
+      canvas.setPointerCapture(event.pointerId);
+    } catch {
+      // Synthetic pointer ids (the browser smoke test) have nothing to capture.
+    }
+    if (camera) startCameraGesture(canvas, gesture, event.clientX, event.clientY);
+    updateCanvasCursor();
+    return gesture;
+  }
+
+  function startCameraGesture(canvas: HTMLCanvasElement, gesture: ViewportGesture, clientX: number, clientY: number) {
+    if (!gesture.camera) return;
+    cameraLookDragRef.current = {
+      mode: gesture.camera,
+      lastClientX: clientX,
+      lastClientY: clientY,
+      pointerId: gesture.pointerId,
+      pointerLocked: typeof document !== 'undefined' && document.pointerLockElement === canvas,
+      skipNextDelta: false,
+    };
+    setViewportCameraLookActive(true);
+    if (viewerRef.current) {
+      viewerRef.current.inputManager.buttons = gesture.button === 'right' ? 2 : gesture.button === 'middle' ? 4 : 1;
+    }
+    // Only the right-button first-person look locks the pointer, and only because turning past
+    // the window edge has to keep working. It is released on every exit below.
+    if (usesPointerLock(gesture)) requestCanvasPointerLock(canvas);
+  }
+
+  /**
+   * Asks for pointer lock and swallows the refusal. A denial is not an error here: the gesture
+   * falls back to client-coordinate deltas, which turn the camera just as well inside the window.
+   * `requestPointerLock` returns a promise in current Chromium, so the rejection has to be caught
+   * or it surfaces as an unhandled rejection in the console.
+   */
+  function requestCanvasPointerLock(canvas: HTMLCanvasElement) {
+    pointerLockDeniedRef.current = null;
+    try {
+      const request = canvas.requestPointerLock?.() as unknown;
+      if (request && typeof (request as PromiseLike<void>).then === 'function') {
+        void (request as Promise<void>).catch((error: unknown) => {
+          pointerLockDeniedRef.current = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+        });
+      }
+    } catch (error) {
+      pointerLockDeniedRef.current = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    }
+  }
+
   function handleCanvasPointerDown(event: PointerEvent<HTMLCanvasElement>) {
     if (playtestSessionRef.current) return;
-    if (event.button === 2) return;
-    if (event.button !== 0 || draggingEntityRef.current) return;
-    if (event.altKey) {
-      event.preventDefault();
-      event.stopPropagation();
+    const button = toViewportMouseButton(event.button);
+    if (button === 'other') return;
+    // One gesture at a time: a second button while a drag runs must not steal the pointer.
+    if (pointerGestureRef.current) return;
+
+    const canvas = event.currentTarget;
+    // Cancelling `pointerdown` suppresses the compatibility `mousedown`, which is what used to
+    // reach noclip's InputManager and pointer-lock the cursor on an ordinary click.
+    event.preventDefault();
+    event.stopPropagation();
+    // GrabManager used to focus the canvas for us; keyboard fly needs it focused.
+    canvas.focus({ preventScroll: true });
+
+    if (button !== 'left') {
+      beginPointerGesture(canvas, event, 'camera', cameraModeForButton(button, cameraGestureOptions()));
       return;
     }
+    if (draggingEntityRef.current) return;
+
     const additiveSelection = isAdditiveSelectionModifier(event);
     const scene = sceneRef.current as SceneGfx & {
       pickEditorHandle?: (normalizedX: number, normalizedY: number) => SceneOverlayPick | null;
     } | null;
-    const scenePick = pickSceneHandle(scene, event.clientX, event.clientY, event.currentTarget);
+    const scenePick = event.altKey ? null : pickSceneHandle(scene, event.clientX, event.clientY, canvas);
 
     // Dragging one group's connection handle onto another group's wires the two together.
     const linkHandle = scenePick?.kind === 'point' ? parsePathLinkHandleId(scenePick.id) : null;
     if (linkHandle && pathLinkSection === linkHandle.section) {
       const anchor = getPathGroupHandlePosition(linkHandle.section, linkHandle.groupIndex, linkHandle.side);
       if (anchor) {
-        event.preventDefault();
-        event.stopPropagation();
         const next: PathLinkDragState = {
           section: linkHandle.section,
           fromGroup: linkHandle.groupIndex,
@@ -2177,112 +2270,137 @@ export function Noclip3DViewport({
         };
         pathLinkDragRef.current = next;
         setPathLinkDrag(next);
-        event.currentTarget.setPointerCapture(event.pointerId);
+        beginPointerGesture(canvas, event, 'drag');
         return;
       }
     }
 
     // "Draw a checkpoint": a plain left-drag across the track becomes one checkpoint line.
-    if (drawTool === 'checkpoint' && onDrawCheckpoint && !additiveSelection) {
+    if (drawTool === 'checkpoint' && onDrawCheckpoint && !additiveSelection && !event.altKey) {
       const start = placeFromScreen(event.clientX, event.clientY, 0, isCollisionSnapModifier(event));
       if (start) {
-        event.preventDefault();
-        event.stopPropagation();
         const next: CheckpointDrawState = { start, current: start };
         checkpointDrawRef.current = next;
         setCheckpointDraw(next);
-        event.currentTarget.setPointerCapture(event.pointerId);
+        beginPointerGesture(canvas, event, 'drag');
         return;
       }
     }
 
     const pickedHandle = pickToGizmoHandle(scenePick);
     const transformTarget = pickTransformSelectionFromPick(scenePick);
-    const entity = transformTarget?.entity ?? pickEntityFromPick(scenePick) ?? pickEntityFromScreenPosition(event.clientX, event.clientY);
+    const entity = event.altKey
+      ? null
+      : transformTarget?.entity ?? pickEntityFromPick(scenePick) ?? pickEntityFromScreenPosition(event.clientX, event.clientY);
+
     if (additiveSelection && !scenePick && !entity) {
-      event.preventDefault();
-      event.stopPropagation();
       const nextMarquee = { additive: true, startX: event.clientX, startY: event.clientY, currentX: event.clientX, currentY: event.clientY };
       marqueeSelectionRef.current = nextMarquee;
       setMarqueeSelection(nextMarquee);
-      event.currentTarget.setPointerCapture(event.pointerId);
+      beginPointerGesture(canvas, event, 'drag');
       return;
     }
-    if (additiveSelection && scenePick && scenePick.kind !== 'point') return;
-    if (event.shiftKey) return;
-    if (scenePick?.kind === 'center') {
-      const drag = transformTarget && viewerRef.current ? createCenterGizmoDragState(transformTarget.selection, toolRef.current, event.clientX, event.clientY, event.currentTarget, viewerRef.current) : null;
-      if (!transformTarget || !drag) return;
-      event.preventDefault();
-      event.stopPropagation();
+    // Shift is "add to the selection", never "grab this", and an additive press on a gizmo is
+    // a selection too. Both still decide on release.
+    if (event.shiftKey || (additiveSelection && scenePick && scenePick.kind !== 'point')) {
+      beginPointerGesture(canvas, event, 'select');
+      return;
+    }
+
+    const startTransformDrag = (drag: ActiveDragState | null) => {
+      if (!transformTarget || !drag) return false;
       if (transformTarget.kind === 'kmp' && transformTarget.entity) onSelect(transformTarget.entity.id);
       onInteractionStart?.();
       setActiveGizmoHandle(pickedHandle);
       setHoveredGizmoHandle(pickedHandle);
-      setDragPreview({ id: transformTarget.selection.id, position: transformTarget.selection.position, rotation: transformTarget.selection.rotation, scale: transformTarget.selection.scale });
+      const selection = transformTarget.selection;
+      setDragPreview({ id: selection.id, position: selection.position, rotation: selection.rotation, scale: selection.scale });
+      // Escape puts the renderer back where the document still says the thing is.
+      dragRevertRef.current = () => revertTransformSelection(transformTarget, selection);
       draggingEntityRef.current = drag;
-      event.currentTarget.setPointerCapture(event.pointerId);
+      beginPointerGesture(canvas, event, 'drag');
+      return true;
+    };
+
+    if (scenePick?.kind === 'center') {
+      const drag = transformTarget && viewerRef.current
+        ? createCenterGizmoDragState(transformTarget.selection, toolRef.current, event.clientX, event.clientY, canvas, viewerRef.current)
+        : null;
+      if (startTransformDrag(drag)) return;
+      beginPointerGesture(canvas, event, 'select');
       return;
     }
     if (scenePick?.kind === 'plane') {
-      const drag = transformTarget && viewerRef.current ? createPlaneGizmoDragState(transformTarget.selection, scenePick.plane, toolRef.current, event.clientX, event.clientY, event.currentTarget, viewerRef.current) : null;
-      if (!transformTarget || !drag) return;
-      event.preventDefault();
-      event.stopPropagation();
-      if (transformTarget.kind === 'kmp' && transformTarget.entity) onSelect(transformTarget.entity.id);
-      onInteractionStart?.();
-      setActiveGizmoHandle(pickedHandle);
-      setHoveredGizmoHandle(pickedHandle);
-      setDragPreview({ id: transformTarget.selection.id, position: transformTarget.selection.position, rotation: transformTarget.selection.rotation, scale: transformTarget.selection.scale });
-      draggingEntityRef.current = drag;
-      event.currentTarget.setPointerCapture(event.pointerId);
+      const drag = transformTarget && viewerRef.current
+        ? createPlaneGizmoDragState(transformTarget.selection, scenePick.plane, toolRef.current, event.clientX, event.clientY, canvas, viewerRef.current)
+        : null;
+      if (startTransformDrag(drag)) return;
+      beginPointerGesture(canvas, event, 'select');
       return;
     }
     if (scenePick?.kind === 'axis') {
-      const drag = transformTarget && viewerRef.current ? createGizmoDragState(transformTarget.selection, scenePick.axis, toolRef.current, event.clientX, event.clientY, event.currentTarget, viewerRef.current) : null;
-      if (!transformTarget || !drag) return;
-      event.preventDefault();
-      event.stopPropagation();
-      if (transformTarget.kind === 'kmp' && transformTarget.entity) onSelect(transformTarget.entity.id);
-      onInteractionStart?.();
-      setActiveGizmoHandle(pickedHandle);
-      setHoveredGizmoHandle(pickedHandle);
-      setDragPreview({ id: transformTarget.selection.id, position: transformTarget.selection.position, rotation: transformTarget.selection.rotation, scale: transformTarget.selection.scale });
-      draggingEntityRef.current = drag;
-      event.currentTarget.setPointerCapture(event.pointerId);
+      const drag = transformTarget && viewerRef.current
+        ? createGizmoDragState(transformTarget.selection, scenePick.axis, toolRef.current, event.clientX, event.clientY, canvas, viewerRef.current)
+        : null;
+      if (startTransformDrag(drag)) return;
+      beginPointerGesture(canvas, event, 'select');
       return;
     }
-    if (scenePick?.kind === 'checkpointEndpoint') {
-      if (!entity?.checkpoint) return;
-      event.preventDefault();
-      event.stopPropagation();
-      onSelect(entity.id);
+    if (scenePick?.kind === 'checkpointEndpoint' && entity?.checkpoint) {
+      const checkpointEntity = entity;
+      const side = scenePick.side;
+      onSelect(checkpointEntity.id);
       onInteractionStart?.();
-      draggingEntityRef.current = { kind: 'checkpointEndpoint', id: entity.id, side: scenePick.side };
-      event.currentTarget.setPointerCapture(event.pointerId);
+      draggingEntityRef.current = { kind: 'checkpointEndpoint', id: checkpointEntity.id, side };
+      dragRevertRef.current = () => revertOverlayDrag();
+      beginPointerGesture(canvas, event, 'drag');
       return;
     }
     if (scenePick?.kind === 'cameraViewPoint') {
       const cameraEntity = trackRef.current?.kmp?.entities.find((candidate) => candidate.id === scenePick.id);
-      if (!cameraEntity?.cameraView) return;
-      event.preventDefault();
-      event.stopPropagation();
-      onSelect(cameraEntity.id);
-      onInteractionStart?.();
-      draggingEntityRef.current = { kind: 'cameraViewPoint', id: cameraEntity.id, which: scenePick.which };
-      event.currentTarget.setPointerCapture(event.pointerId);
+      if (cameraEntity?.cameraView) {
+        onSelect(cameraEntity.id);
+        onInteractionStart?.();
+        draggingEntityRef.current = { kind: 'cameraViewPoint', id: cameraEntity.id, which: scenePick.which };
+        dragRevertRef.current = () => revertOverlayDrag();
+        beginPointerGesture(canvas, event, 'drag');
+        return;
+      }
+    }
+    if (entity) {
+      pendingEntityDragRef.current = { id: entity.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, additive: additiveSelection };
+      dragRevertRef.current = () => revertEntityTransform(entity);
+      beginPointerGesture(canvas, event, 'drag');
       return;
     }
-    if (!entity) return;
-    event.preventDefault();
-    event.stopPropagation();
-    pendingEntityDragRef.current = { id: entity.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, additive: additiveSelection };
-    event.currentTarget.setPointerCapture(event.pointerId);
+    // Nothing to grab: this is a click until it travels far enough to be a camera move.
+    beginPointerGesture(canvas, event, 'select');
   }
 
   function handleCanvasPointerMove(event: PointerEvent<HTMLCanvasElement>) {
     if (playtestSessionRef.current) return;
-    if (cameraLookDragRef.current && event.pointerId === cameraLookDragRef.current.pointerId) return;
+    const gesture = pointerGestureRef.current;
+    if (gesture && event.pointerId !== gesture.pointerId) return;
+
+    if (gesture && !gesture.moved && movedBeyondSlop(gesture, event.clientX, event.clientY)) {
+      gesture.moved = true;
+      // A left press on empty space turns into a camera move once it travels — the same gesture
+      // every other 3D editor has, and without ever taking the cursor away.
+      if (gesture.kind === 'select') {
+        const mode = cameraModeForButton('left', cameraGestureOptions());
+        if (mode) {
+          gesture.camera = mode;
+          startCameraGesture(event.currentTarget, gesture, gesture.startX, gesture.startY);
+        }
+      }
+      updateCanvasCursor();
+    }
+
+    if (cameraLookDragRef.current) {
+      applyCameraGestureMove(event);
+      return;
+    }
+
     lastPointerRef.current = {
       x: event.clientX,
       y: event.clientY,
@@ -2337,25 +2455,78 @@ export function Noclip3DViewport({
       updateActiveDrag(event.clientX, event.clientY, isCollisionSnapModifier(event));
       return;
     }
+    if (gesture) return;
     updateRouteInsertPreview(event.clientX, event.clientY, event.altKey, isCollisionSnapModifier(event));
     updateHoveredEntity(event.clientX, event.clientY, event.currentTarget);
   }
 
-  function clearActiveDrag(event?: PointerEvent<HTMLCanvasElement>) {
-    if (cameraLookDragRef.current && (!event || event.pointerId === cameraLookDragRef.current.pointerId || event.button === 2)) {
-      releaseCameraLook(event?.currentTarget ?? canvasRef.current);
-      return;
+  /** Feeds one mouse delta to whichever camera controller is installed. */
+  function applyCameraGestureMove(event: PointerEvent<HTMLCanvasElement>) {
+    const cameraLook = cameraLookDragRef.current;
+    const viewer = viewerRef.current;
+    if (!cameraLook || event.pointerId !== cameraLook.pointerId) return;
+    const canvas = canvasRef.current;
+    const pointerLocked = typeof document !== 'undefined' && document.pointerLockElement === canvas;
+    const skip = cameraLook.skipNextDelta || cameraLook.pointerLocked !== pointerLocked;
+    const delta = cameraLookDelta(
+      pointerLocked ? event.movementX : event.clientX - cameraLook.lastClientX,
+      pointerLocked ? event.movementY : event.clientY - cameraLook.lastClientY,
+      { skip },
+    );
+    cameraLookDragRef.current = {
+      ...cameraLook,
+      lastClientX: event.clientX,
+      lastClientY: event.clientY,
+      pointerLocked,
+      skipNextDelta: false,
+    };
+    if (!delta || !viewer) return;
+    viewer.inputManager.buttons = event.buttons;
+    applyCameraGesture(viewer, cameraLook.mode, delta.dx, delta.dy);
+  }
+
+  /**
+   * The single exit from every gesture: pointer capture and pointer lock are given up, the drag
+   * lands its edit (or, for Escape, is put back), and a press that never moved becomes a click.
+   */
+  function endPointerGesture(reason: GestureEndReason, event?: PointerEvent<HTMLCanvasElement>) {
+    const gesture = pointerGestureRef.current;
+    if (!gesture) return;
+    if (event && event.pointerId !== gesture.pointerId) return;
+    pointerGestureRef.current = null;
+
+    const canvas = event?.currentTarget ?? canvasRef.current;
+    releaseCameraLook(canvas);
+    if (canvas) {
+      try {
+        if (canvas.hasPointerCapture?.(gesture.pointerId)) canvas.releasePointerCapture(gesture.pointerId);
+      } catch {
+        // Already gone.
+      }
     }
+
+    finishActiveDrag(shouldCommitOnEnd(reason));
+    if (shouldSelectOnRelease(gesture, reason)) performSelectionClick(gesture, canvas);
+    updateCanvasCursor();
+  }
+
+  /** Ends whatever the gesture was editing. `commit` is false only when the user pressed Escape. */
+  function finishActiveDrag(commit: boolean) {
+    const canvas = canvasRef.current;
     if (marqueeSelectionRef.current) {
-      completeMarqueeSelection(event?.currentTarget ?? canvasRef.current);
+      if (commit) {
+        completeMarqueeSelection(canvas);
+      } else {
+        marqueeSelectionRef.current = null;
+        setMarqueeSelection(null);
+      }
       return;
     }
     if (checkpointDrawRef.current) {
       const draw = checkpointDrawRef.current;
       checkpointDrawRef.current = null;
       setCheckpointDraw(null);
-      suppressNextClickRef.current = true;
-      if (Math.hypot(draw.current.x - draw.start.x, draw.current.z - draw.start.z) >= MIN_CHECKPOINT_DRAW_WIDTH) {
+      if (commit && Math.hypot(draw.current.x - draw.start.x, draw.current.z - draw.start.z) >= MIN_CHECKPOINT_DRAW_WIDTH) {
         onDrawCheckpoint?.(draw.start, draw.current);
         onDrawToolFinished?.();
       }
@@ -2365,8 +2536,7 @@ export function Noclip3DViewport({
       const drag = pathLinkDragRef.current;
       pathLinkDragRef.current = null;
       setPathLinkDrag(null);
-      suppressNextClickRef.current = true;
-      if (drag.hoverGroup !== null && drag.hoverGroup !== drag.fromGroup) {
+      if (commit && drag.hoverGroup !== null && drag.hoverGroup !== drag.fromGroup) {
         const [from, to] = drag.fromSide === 'end' ? [drag.fromGroup, drag.hoverGroup] : [drag.hoverGroup, drag.fromGroup];
         // Dragging onto a group that is already connected takes the connection away again, so
         // the same gesture both wires and unwires.
@@ -2376,26 +2546,96 @@ export function Noclip3DViewport({
       return;
     }
     const pendingEntityDrag = pendingEntityDragRef.current;
-    if (pendingEntityDrag && (!event || event.pointerId === pendingEntityDrag.pointerId)) {
+    if (pendingEntityDrag) {
       pendingEntityDragRef.current = null;
-      suppressNextClickRef.current = true;
-      onSelect(pendingEntityDrag.id, { additive: pendingEntityDrag.additive });
+      // Pressing an entity and letting go without moving is how you select it.
+      if (commit) onSelect(pendingEntityDrag.id, { additive: pendingEntityDrag.additive });
     }
-    flushPendingInteractionCommit();
     const hadDrag = draggingEntityRef.current !== null;
+    if (commit) {
+      flushPendingInteractionCommit();
+    } else {
+      cancelPendingInteractionCommit();
+      dragRevertRef.current?.();
+    }
+    dragRevertRef.current = null;
     draggingEntityRef.current = null;
     setActiveGizmoHandle(null);
     setDragPreview(null);
     if (hadDrag) onInteractionEnd?.();
   }
 
+  function cancelPendingInteractionCommit() {
+    if (interactionCommitFrameRef.current !== null) {
+      cancelAnimationFrame(interactionCommitFrameRef.current);
+      interactionCommitFrameRef.current = null;
+    }
+    pendingInteractionCommitRef.current = null;
+  }
+
+  /** Escape during a gizmo drag: redraw the thing where the document still has it. */
+  function revertTransformSelection(target: TransformSelectionTarget, selection: ViewportTransformSelection) {
+    if (target.kind === 'kmp' && target.entity) {
+      revertEntityTransform(target.entity);
+      return;
+    }
+    syncRenderedTransformSelection(selection, selection.position, selection.rotation, selection.scale);
+  }
+
+  function revertEntityTransform(entity: KmpEntity) {
+    const current = trackRef.current?.kmp?.entities.find((candidate) => candidate.id === entity.id) ?? entity;
+    syncRenderedGobjTransform(current, current.position, current.rotation, current.scale);
+  }
+
+  /** Checkpoint ends and camera view points only live in the overlay, so redrawing it is enough. */
+  function revertOverlayDrag() {
+    syncSceneOverlay(trackRef.current, selectedIdRef.current);
+  }
+
+  /** A left press that never travelled: pick whatever sits under it. */
+  function performSelectionClick(gesture: ViewportGesture, canvas: HTMLCanvasElement | null) {
+    if (!canvas) return;
+    const clientX = gesture.startX;
+    const clientY = gesture.startY;
+    const modifiers: PointerModifiers = gesture.modifiers;
+    const scene = sceneRef.current as SceneGfx & {
+      pickEditorHandle?: (normalizedX: number, normalizedY: number) => SceneOverlayPick | null;
+    } | null;
+    if (modifiers.altKey) {
+      const candidate = onInsertRoutePoint ? resolveRouteInsertCandidate(clientX, clientY, isCollisionSnapModifier(modifiers)) : null;
+      if (candidate) onInsertRoutePoint?.(candidate.target, candidate.position);
+      return;
+    }
+    const scenePick = pickSceneHandle(scene, clientX, clientY, canvas);
+    const pickedTransformSelection = pickTransformSelectionFromPick(scenePick);
+    if (modeRef.current === 'model') {
+      // Only the gizmo's own handles belong to the gizmo. Anything else the overlay reports —
+      // including the marker drawn at the selected mesh's centre — must not stop the click from
+      // picking whatever geometry is actually under the cursor, or the mesh you can see becomes
+      // unselectable as soon as something near it is selected.
+      if (scenePick && (scenePick.kind === 'axis' || scenePick.kind === 'plane' || scenePick.kind === 'center')) return;
+      selectMeshFromClient(clientX, clientY, isAdditiveSelectionModifier(modifiers));
+      return;
+    }
+    if (pickedTransformSelection?.kind === 'external') {
+      onSelectTransformSelectionRef.current?.(pickedTransformSelection.selection.id);
+      return;
+    }
+    if (!trackRef.current?.kmp) return;
+    const picked = pickedTransformSelection?.entity ?? pickEntityFromPick(scenePick) ?? pickEntityFromScreenPosition(clientX, clientY);
+    onSelect(picked?.id ?? null, { additive: isAdditiveSelectionModifier(modifiers) });
+  }
+
   function handleCanvasPointerLeave() {
-    if (marqueeSelectionRef.current) return;
+    // A gesture owns the pointer until the button comes up; leaving the canvas must not end it.
+    if (pointerGestureRef.current) return;
     setHoveredGizmoHandle(null);
     if (hoveredIdRef.current !== null) setHoveredId(null);
     lastPointerRef.current = null;
     setRouteInsertPreview(null);
   }
+
+  //#endregion
 
 function handleGizmoPointerMove(clientX: number, clientY: number, drag: GizmoDragState, snapToFeatures = false) {
   const target = findTransformSelectionById(drag.id);
@@ -2563,60 +2803,26 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     if (Number.isFinite(objectId)) onAddObject?.(objectId, position);
   }
 
-  function handleCanvasClick(event: MouseEvent<HTMLCanvasElement>) {
-    if (playtestSessionRef.current) return;
-    if (suppressNextClickRef.current) {
-      suppressNextClickRef.current = false;
-      return;
-    }
-    const track = trackRef.current;
-    const canvas = canvasRef.current;
-    if (!track?.kmp || !canvas || draggingEntityRef.current) return;
-    const scene = sceneRef.current as SceneGfx & {
-      pickEditorHandle?: (normalizedX: number, normalizedY: number) => SceneOverlayPick | null;
-    } | null;
-    if (event.altKey) {
-      const candidate = onInsertRoutePoint ? resolveRouteInsertCandidate(event.clientX, event.clientY, isCollisionSnapModifier(event)) : null;
-      event.preventDefault();
-      event.stopPropagation();
-      if (candidate) onInsertRoutePoint?.(candidate.target, candidate.position);
-      return;
-    }
-    const scenePick = pickSceneHandle(scene, event.clientX, event.clientY, canvas);
-    const pickedTransformSelection = pickTransformSelectionFromPick(scenePick);
-    if (pickedTransformSelection?.kind === 'external') {
-      onSelectTransformSelectionRef.current?.(pickedTransformSelection.selection.id);
-      return;
-    }
-    if (modeRef.current === 'model') {
-      // Do not re-pick when the click was really the end of a gizmo drag.
-      if (scenePick && (scenePick.kind === 'axis' || scenePick.kind === 'plane' || scenePick.kind === 'center')) return;
-      selectMeshFromClient(event.clientX, event.clientY, isAdditiveSelectionModifier(event));
-      return;
-    }
-    const picked = pickedTransformSelection?.entity ?? pickEntityFromPick(scenePick) ?? pickEntityFromScreenPosition(event.clientX, event.clientY);
-    onSelect(picked?.id ?? null, { additive: isAdditiveSelectionModifier(event) });
-  }
-
   function handleCanvasContextMenu(event: MouseEvent<HTMLCanvasElement>) {
     event.preventDefault();
   }
 
+  /** Gives the pointer lock back and stops feeding the camera. Safe to call when idle. */
   function releaseCameraLook(canvas: HTMLCanvasElement | null = canvasRef.current) {
     const drag = cameraLookDragRef.current;
     if (!drag) return;
-    if (canvas?.hasPointerCapture?.(drag.pointerId)) canvas.releasePointerCapture(drag.pointerId);
-    viewerRef.current?.inputManager.onGrabReleased();
     cameraLookDragRef.current = null;
+    viewerRef.current?.inputManager.onGrabReleased();
     setViewportCameraLookActive(false);
-    if (canvas && document.pointerLockElement === canvas && document.exitPointerLock) document.exitPointerLock();
+    if (canvas && typeof document !== 'undefined' && document.pointerLockElement === canvas && document.exitPointerLock) {
+      document.exitPointerLock();
+    }
   }
 
   function completeMarqueeSelection(canvas: HTMLCanvasElement | null) {
     const marquee = marqueeSelectionRef.current;
     marqueeSelectionRef.current = null;
     setMarqueeSelection(null);
-    suppressNextClickRef.current = true;
     if (!canvas || !marquee) return;
     if (modeRef.current === 'model') {
       selectMeshesInMarquee(marquee, canvas);
@@ -3013,7 +3219,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     const state = playtestStateRef.current;
     if (state.active) return;
     endCameraPreview(viewer, true);
-    releaseCameraLook();
+    endPointerGesture('teardown');
     draggingEntityRef.current = null;
     pendingEntityDragRef.current = null;
     setViewportCameraLookActive(false);
@@ -3547,13 +3753,13 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
       <canvas
         ref={canvasRef}
         className="noclipCanvas"
-        onClick={handleCanvasClick}
         onContextMenu={handleCanvasContextMenu}
         onPointerDown={handleCanvasPointerDown}
         onPointerMove={handleCanvasPointerMove}
         onPointerLeave={handleCanvasPointerLeave}
-        onPointerUp={clearActiveDrag}
-        onPointerCancel={clearActiveDrag}
+        onPointerUp={(event) => endPointerGesture('pointerup', event)}
+        onPointerCancel={(event) => endPointerGesture('pointercancel', event)}
+        onLostPointerCapture={(event) => endPointerGesture('lostcapture', event)}
       />
       {marqueeSelection && <div className="marqueeSelection" style={getMarqueeStyle(marqueeSelection, canvasRef.current)} />}
       {smokeMode && (
@@ -4392,10 +4598,6 @@ function getVisibleEntitiesForRouteFilter(
   return entities.filter((entity) => isEntityVisibleForRouteFilter(entity, routeVisibility, kmp, routeUsage, forcedVisibleObjectRoutes));
 }
 
-function supportsMouseLook(viewMode: ViewMode): boolean {
-  return viewMode === 'normal' || viewMode === 'dev';
-}
-
 function getViewerAspect(viewer: Viewer): number {
   if (viewer.canvas.width > 0 && viewer.canvas.height > 0) return viewer.canvas.width / viewer.canvas.height;
   return viewer.camera.aspect || 1;
@@ -4965,6 +5167,44 @@ function getAxisDragPlaneNormal(axisDirection: Vec3, cameraForward: Vec3): Vec3 
   if (fallback) return fallback;
 
   return normalize(cross(axisDirection, { x: 0, y: 0, z: 1 })) ?? normalize(cross(axisDirection, { x: 1, y: 0, z: 0 }));
+}
+
+/**
+ * One mouse delta, applied to whichever camera controller is installed.
+ *
+ * noclip normally does this by letting `GrabManager` push deltas into `InputManager`, which the
+ * controllers read during `update`. The editor turns that off (it also grabbed pointer lock on
+ * every click), so the deltas are applied here instead, using the controllers' own formulas.
+ */
+function applyCameraGesture(viewer: Viewer, mode: CameraGestureMode, dx: number, dy: number) {
+  const controller = viewer.cameraController;
+  if (controller instanceof OrthoCameraController) {
+    const invertXMult = viewer.inputManager.invertX ? -1 : 1;
+    const invertYMult = viewer.inputManager.invertY ? -1 : 1;
+    if (mode === 'pan') {
+      controller.txVel += (dx * (-10 - Math.min(-controller.z, 0.01))) / -5000;
+      controller.tyVel += (dy * (-10 - Math.min(-controller.z, 0.01))) / 5000;
+    } else {
+      controller.xTarget += (dx / 200) * invertXMult;
+      controller.yTarget += (dy / 200) * invertYMult;
+    }
+    controller.forceUpdate = true;
+    return;
+  }
+  applyDirectCameraLook(viewer, dx, dy);
+}
+
+/** One wheel notch of forward/back movement, scaled to the free camera's own move speed. */
+const WHEEL_DOLLY_STEPS_PER_NOTCH = 12;
+
+function dollyFreeCamera(viewer: Viewer, steps: number, fast: boolean) {
+  const controller = viewer.cameraController;
+  if (!(controller instanceof FPSCameraController)) return;
+  const speed = controller.getKeyMoveSpeed() ?? 60;
+  const amount = steps * speed * WHEEL_DOLLY_STEPS_PER_NOTCH * (fast ? 4 : 1) * controller.sceneMoveSpeedMult;
+  mat4.translate(viewer.camera.worldMatrix, viewer.camera.worldMatrix, vec3.fromValues(0, 0, -amount));
+  viewer.camera.worldMatrixUpdated();
+  controller.cameraUpdateForced();
 }
 
 function applyDirectCameraLook(viewer: Viewer, dx: number, dy: number) {
