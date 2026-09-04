@@ -106,5 +106,46 @@ out.dockTabs = qa('.studioCenter [role="tab"]').map((n) => n.textContent.trim())
 // --- 5. Export of an untouched document is byte-identical --------------------------------------
 out.exportBefore = studio.exportBytes();
 
+// --- 6. Save to My Assets ------------------------------------------------------------------------
+// The record lands in the editor's own IndexedDB, which is what the content browser reads.
+const countAssets = () =>
+  new Promise((resolve) => {
+    const request = indexedDB.open('mkw-track-editor');
+    request.onerror = () => resolve(null);
+    request.onsuccess = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains('asset-library')) {
+        db.close();
+        resolve(0);
+        return;
+      }
+      const store = db.transaction('asset-library', 'readonly').objectStore('asset-library');
+      const all = store.getAll();
+      all.onsuccess = () => {
+        const names = all.result.map((entry) => entry.name);
+        db.close();
+        resolve(names);
+      };
+      all.onerror = () => {
+        db.close();
+        resolve(null);
+      };
+    };
+  });
+
+out.assetsBefore = await countAssets();
+clickText('Save to My Assets');
+await sleep(2500);
+out.assetsAfter = await countAssets();
+out.statusAfterSave = studio.status();
+
+// --- 7. Escape returns to the track editor ---------------------------------------------------------
 studio.setTransport({ playing: true });
+window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+await sleep(900);
+out.studioClosedByEscape = window.__mkwStudio === undefined;
+out.trackEditorBack = q('.topBar') !== null && q('.studioRoot') === null;
+await shot('studio-16-back-in-editor');
+await sleep(500);
+
 return out;

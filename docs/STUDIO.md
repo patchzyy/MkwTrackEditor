@@ -292,7 +292,7 @@ PROBE_STUDIO_OPEN=track PROBE_PREFIX=studiotrack PROBE_PORT=9442 PROBE_SIZE=1720
 
 | Probe | What it proves | A run |
 | --- | --- | --- |
-| `probe-studio-open.js` | The studio opens from the top bar with no track; the demo character and its bike are lit and textured; the animations are listed; scrubbing and switching CHR0 move the bones. | Brightest patch `rgb(129, 128, 112)`, 64/255 channel spread; 27 CHR0s across the two archives; pose signature 7068.761 at frame 0 → 7058.716 at frame 36 → 9043.313 on another CHR0. |
+| `probe-studio-open.js` | The studio opens from the top bar with no track; the demo character and its bike are lit and textured; the animations are listed; scrubbing and switching CHR0 move the bones; **Save to My Assets** reaches the library; `Esc` gives the editor back. | Brightest patch `rgb(129, 128, 112)`, 66/255 channel spread; 27 CHR0s across the two archives; pose signature 7068.761 at frame 0 → 7058.716 at frame 36 → 9043.313 on another CHR0; the asset library goes from `[]` to `["fk_lb_driver_model"]`; after `Esc` `window.__mkwStudio` is gone and the top bar is back. |
 | `probe-studio-material.js` | Clicking the model selects the material under the cursor; the inspector, the stage table and the graph fill in; two edits reach the picture; undo returns the exact bytes. | `funky_all_tx` on `polygon0`; 5 inspector sections, 3 stage rows, 11 graph nodes; texture swap moves the frame by 8.33/255, "draw nothing" by 36.6/255; after undo the frame is back within 0.02 and the export hash is the untouched one. |
 | `probe-studio-character.js` | A real `Character/*.szs` opens, renders and exports byte-identically. | `la_bike-fk-1.szs`: `driver_model.brres` (27 CHR0s) + `kart_model.brres`; brightest patch `rgb(136, 114, 87)`, 49/255 spread; export 229 977 bytes, the same length and hash as the input. |
 | `probe-studio-track.js` | Model mode → **Open in Model Studio** → edit → back → the track viewport shows it, and `Ctrl+Z` undoes it. | `course_model.brres` (40 materials) from `Z0.szs`; culling `Material.029` moves 6.8% of the track frame (3.67/255 mean); after undo + Refresh the frame is back within 0.02/255, the noise floor. |
@@ -300,3 +300,5 @@ PROBE_STUDIO_OPEN=track PROBE_PREFIX=studiotrack PROBE_PORT=9442 PROBE_SIZE=1720
 ![After undo, the material is back](screenshots/studio-08-after-undo.png)
 
 ![The track after undo](screenshots/studio-15-track-after-undo.png)
+
+![Escape gives the track editor back exactly as it was](screenshots/studio-16-back-in-editor.png)
