@@ -2,7 +2,7 @@ import { Boxes, Layers, Palette, Route as RouteIcon, Shapes, Video } from 'lucid
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getKmpCameraHeader, type KmpEntity, type Vec3 } from '../lib/kmp';
 import { getPathInfo, getReferenceCounts } from '../lib/kmpEdit';
-import { describeEntity, validateTrack, type TrackDocument } from '../lib/track';
+import { describeEntity, replaceArchiveFile, validateTrack, type TrackDocument } from '../lib/track';
 import objectNamesById from '../generated/mkwObjectNames.json';
 import { getAreaInspectorResources } from './areas/areaInspectorConfig';
 import { useCameraMode } from './camera/CameraMode';
@@ -41,6 +41,9 @@ import { PlaytestHud } from './playtest/PlaytestHud';
 import { PlaytestMenu } from './playtest/PlaytestMenu';
 import { PLAYTEST_STATUS_MESSAGE, usePlaytestSession } from './playtest/usePlaytestSession';
 import './playtest/playtest.css';
+import { ModelStudio } from './studio/ModelStudio';
+import type { StudioLaunchRequest } from './studio/studioLaunch';
+import type { StudioTrackBridge } from './studio/useStudioSession';
 import { TopBar } from './topbar/TopBar';
 import { clearRecentTracks, readRecentTracks, rememberRecentTrack, type RecentTrack } from './topbar/recentFiles';
 import { PanelRail } from './components/Panel';
@@ -73,6 +76,17 @@ export function App() {
   /** Bumped by "Refresh track"; the viewport rebuilds its scene whenever this changes. */
   const [sceneRevision, setSceneRevision] = useState(0);
   const [refreshingTrack, setRefreshingTrack] = useState(false);
+  /**
+   * The Model Studio. It is a workspace over the editor rather than a mode, so the track editor
+   * stays mounted underneath and comes back exactly as it was; `studio` is only what it opened
+   * with, plus the archive it writes back into when it was opened from the track.
+   */
+  const [studio, setStudio] = useState<{ open: boolean; initial: { fileName: string; bytes: Uint8Array } | null; archivePath: string | null }>({
+    open: false,
+    initial: null,
+    archivePath: null,
+  });
+  const studioTouchedTrackRef = useRef(false);
   const refreshingTrackRef = useRef(false);
   const toasts = useToastStore();
 
@@ -310,6 +324,92 @@ export function App() {
     showToast: toasts.showToast,
   });
 
+  // ------------------------------------------------------------------ Model Studio
+
+  /**
+   * Opens the Model Studio. With no argument it opens on the demo character, which is what the
+   * top-bar button does; with a track archive path it opens that archive and wires its material
+   * edits back into this track document, so they land in the same undo history as an in-place
+   * edit and are in the bytes Export writes.
+   */
+  const openModelStudio = useCallback(
+    (request?: StudioLaunchRequest) => {
+      if (request?.file) {
+        setStudio({ open: true, initial: request.file, archivePath: null });
+        return;
+      }
+      const path = request?.trackArchivePath;
+      if (!path) {
+        setStudio({ open: true, initial: null, archivePath: null });
+        return;
+      }
+      // The renderer names archives with noclip's `./` prefix and the track document stores them
+      // without it, so the studio is given the document's own spelling — that is the key
+      // `replaceArchiveFile` matches on when an edit comes back.
+      const wanted = path.replace(/^\.\//, '').toLowerCase();
+      const entry = (trackRef.current?.archiveEntries ?? []).find(
+        (candidate) => candidate.type === 'file' && candidate.data !== undefined && candidate.path.replace(/^\.\//, '').toLowerCase() === wanted,
+      );
+      if (!entry?.data) {
+        setStatus(`${path} is not in the loaded track, so it cannot be opened in the Model Studio.`);
+        return;
+      }
+      studioTouchedTrackRef.current = false;
+      setStudio({
+        open: true,
+        initial: { fileName: entry.path.split('/').pop() ?? entry.path, bytes: entry.data },
+        archivePath: entry.path,
+      });
+    },
+    [trackRef],
+  );
+
+  const openModelInStudioFromFiles = useCallback(
+    (files: FileList | null) => {
+      const file = files?.[0];
+      if (!file) return;
+      void file.arrayBuffer().then((buffer) => {
+        setStudio({ open: true, initial: { fileName: file.name, bytes: new Uint8Array(buffer) }, archivePath: null });
+      });
+    },
+    [],
+  );
+
+  /**
+   * How the studio writes back into the track: the same `replaceArchiveFile` +
+   * `history.applyEditorChange` path Material mode and Visual mode use, so undo, export and the
+   * "unsaved changes" dot all see a studio edit as an ordinary one.
+   */
+  const studioTrackBridge = useMemo<StudioTrackBridge | null>(() => {
+    if (!studio.open || studio.archivePath === null || !track || !studio.initial) return null;
+    return {
+      origin: { kind: 'track', archivePath: studio.archivePath, trackName: track.fileName },
+      bytes: studio.initial.bytes,
+      commit: (bytes, message) => {
+        const current = trackRef.current;
+        if (!current || studio.archivePath === null) return;
+        studioTouchedTrackRef.current = true;
+        history.applyEditorChange(
+          replaceArchiveFile(current, studio.archivePath, bytes),
+          selection.selectedIdRef.current,
+          true,
+          selection.selectedIdsRef.current,
+        );
+        setStatus(message);
+      },
+    };
+  }, [history, selection, studio.archivePath, studio.initial, studio.open, track, trackRef]);
+
+  const closeModelStudio = useCallback(() => {
+    setStudio({ open: false, initial: null, archivePath: null });
+    if (!studioTouchedTrackRef.current) return;
+    studioTouchedTrackRef.current = false;
+    // The track viewport is showing the archive as it was before the studio rewrote it, and the
+    // studio can edit far more than one live-swappable material, so the honest thing is the
+    // Refresh flow: rebuild the scene from the track as it now is.
+    refreshTrack();
+  }, [refreshTrack]);
+
   const selectedInspectorSection: InspectorSection = selected?.section === 'STGI' ? 'track' : 'object';
   const selectedInspector = selected ? (
     <SelectedEntityInspector
@@ -352,6 +452,7 @@ export function App() {
     setEditorMode,
     refreshScene: refreshTrack,
     sceneRefreshing: refreshingTrack,
+    openModelStudio,
   };
   const kmpModeUi = useKmpMode(modeContext);
   const cameraModeUi = useCameraMode(modeContext);
@@ -566,6 +667,8 @@ export function App() {
         refreshingTrack={refreshingTrack}
         unsavedChanges={unsavedChanges}
         onChangeEditorMode={setEditorMode}
+        onOpenModelStudio={() => openModelStudio()}
+        onOpenModelInStudio={openModelInStudioFromFiles}
         playtestControl={
           <PlaytestMenu
             options={playtest.options}
@@ -755,6 +858,14 @@ export function App() {
       <StatusBar message={playtest.active ? PLAYTEST_STATUS_MESSAGE : status} stats={statusStats} />
       <ToastViewport toasts={toasts.toasts} onDismiss={toasts.dismissToast} />
       <ShortcutOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      {studio.open && (
+        <ModelStudio
+          onClose={closeModelStudio}
+          trackBridge={studioTrackBridge}
+          initialOpen={studio.initial}
+          onSaveToAssets={(fileName, bytes) => library.importBytes(fileName, bytes)}
+        />
+      )}
     </main>
     </ToastProvider>
   );

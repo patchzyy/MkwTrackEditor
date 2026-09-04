@@ -61,6 +61,8 @@ export function TopBar({
   unsavedChanges,
   onChangeEditorMode,
   playtestControl,
+  onOpenModelStudio,
+  onOpenModelInStudio,
 }: {
   topBarRef: MutableRefObject<HTMLElement | null>;
   historyState: { undo: number; redo: number };
@@ -90,6 +92,10 @@ export function TopBar({
   onChangeEditorMode: (mode: EditorModeStub) => void;
   /** The Playtest button and its start popover, rendered next to the editor-mode switch. */
   playtestControl?: ReactNode;
+  /** Opens the Model Studio, the asset workspace for one model's shaders and animations. */
+  onOpenModelStudio?: () => void;
+  /** File menu: opens a picked model archive straight in the Model Studio. */
+  onOpenModelInStudio?: (files: FileList | null) => void;
 }) {
   return (
     <header ref={topBarRef} className="topBar">
@@ -108,6 +114,7 @@ export function TopBar({
           onExport={onExport}
           onOpenRecent={onOpenRecent}
           onClearRecent={onClearRecent}
+          onOpenModelInStudio={onOpenModelInStudio}
         />
         <ToolbarSeparator />
         <IconButton
@@ -137,6 +144,15 @@ export function TopBar({
       <div className="topBarCenter">
         <SegmentedControl label="Editor mode" value={editorMode} options={MODE_OPTIONS} onChange={onChangeEditorMode} />
         {playtestControl}
+        {onOpenModelStudio && (
+          <Button
+            icon={<Boxes size={15} />}
+            tooltip="Open the Model Studio: one model, its animations and its shaders, in their own workspace."
+            onClick={onOpenModelStudio}
+          >
+            Model Studio
+          </Button>
+        )}
       </div>
 
       <div className="topBarRight">

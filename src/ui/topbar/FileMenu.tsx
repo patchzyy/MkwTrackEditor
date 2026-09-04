@@ -1,4 +1,4 @@
-import { ChevronDown, Clock, Download, FileUp, FolderOpen, Package } from 'lucide-react';
+import { Boxes, ChevronDown, Clock, Download, FileUp, FolderOpen, Package } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { Button } from '../components/Button';
 import { MenuSurface, type MenuSection } from '../components/Menu';
@@ -16,6 +16,7 @@ export function FileMenu({
   onExport,
   onOpenRecent,
   onClearRecent,
+  onOpenModelInStudio,
 }: {
   canExport: boolean;
   recentTracks: RecentTrack[];
@@ -24,10 +25,13 @@ export function FileMenu({
   onExport: () => void;
   onOpenRecent: (entry: RecentTrack) => void;
   onClearRecent: () => void;
+  /** Opens one `.brres` / `.szs` / `.u8` model archive in the Model Studio. */
+  onOpenModelInStudio?: (files: FileList | null) => void;
 }) {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const trackInputRef = useRef<HTMLInputElement | null>(null);
   const commonInputRef = useRef<HTMLInputElement | null>(null);
+  const studioInputRef = useRef<HTMLInputElement | null>(null);
   const [open, setOpen] = useState(false);
 
   const rect = open ? triggerRef.current?.getBoundingClientRect() : undefined;
@@ -49,6 +53,16 @@ export function FileMenu({
           icon: <Package size={15} />,
           onSelect: () => commonInputRef.current?.click(),
         },
+        ...(onOpenModelInStudio
+          ? [
+              {
+                id: 'open-model-studio',
+                label: 'Open model in Studio…',
+                icon: <Boxes size={15} />,
+                onSelect: () => studioInputRef.current?.click(),
+              },
+            ]
+          : []),
         {
           id: 'export',
           label: 'Export track…',
@@ -123,6 +137,18 @@ export function FileMenu({
         tabIndex={-1}
         onChange={(event) => {
           onImportCommonArchive(event.currentTarget.files);
+          event.currentTarget.value = '';
+        }}
+      />
+      <input
+        ref={studioInputRef}
+        hidden
+        type="file"
+        accept=".brres,.szs,.u8"
+        aria-hidden="true"
+        tabIndex={-1}
+        onChange={(event) => {
+          onOpenModelInStudio?.(event.currentTarget.files);
           event.currentTarget.value = '';
         }}
       />

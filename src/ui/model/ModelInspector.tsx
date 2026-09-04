@@ -1,7 +1,8 @@
-import { Copy, Eye, EyeOff, RotateCcw, Trash2 } from 'lucide-react';
+import { Boxes, Copy, Eye, EyeOff, RotateCcw, Trash2 } from 'lucide-react';
 import { MESH_SELECTION_GRANULARITIES, type MeshSelectionGranularity } from '../../lib/brresEditor';
 import { DetailsSummaryBar } from '../inspector/DetailsSummaryBar';
 import { VectorInputs } from '../inspector/fields/VectorInputs';
+import type { OpenModelStudio } from '../studio/studioLaunch';
 import type { ModelEditing } from './useModelEditing';
 
 const GRANULARITY_LABELS: Record<MeshSelectionGranularity, string> = {
@@ -23,7 +24,7 @@ const GRANULARITY_HINTS: Record<MeshSelectionGranularity, string> = {
  * that is what the gizmo produces and what the exporter bakes, and it is the only reading that
  * makes sense for a mesh that has no transform of its own.
  */
-export function ModelInspector({ editing }: { editing: ModelEditing }) {
+export function ModelInspector({ editing, onOpenModelStudio }: { editing: ModelEditing; onOpenModelStudio?: OpenModelStudio }) {
   const placed = editing.activePlaced;
   const hasSelection = placed !== null || editing.active !== null;
 
@@ -135,6 +136,16 @@ export function ModelInspector({ editing }: { editing: ModelEditing }) {
               {!placed && (
                 <button className="inlineAction" type="button" onClick={editing.duplicateSelection} disabled={!editing.active}>
                   <Copy size={14} /> Duplicate
+                </button>
+              )}
+              {onOpenModelStudio && editing.active && (
+                <button
+                  className="inlineAction"
+                  type="button"
+                  title="Open this mesh's archive in the Model Studio, where its shaders and animations can be edited."
+                  onClick={() => onOpenModelStudio({ trackArchivePath: editing.active!.archivePath })}
+                >
+                  <Boxes size={14} /> Open in Model Studio
                 </button>
               )}
               <button className="inlineAction" type="button" onClick={editing.deleteSelection}>

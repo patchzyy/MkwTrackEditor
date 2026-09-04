@@ -53,7 +53,7 @@ export function useModelMode(ctx: EditorModeContext): ModelModeUi {
       transformSelections: [],
     },
     leftPanel: <ModelOutliner editing={editing} onPlaceObject={() => setPicking(true)} />,
-    inspector: <ModelInspector editing={editing} />,
+    inspector: <ModelInspector editing={editing} onOpenModelStudio={ctx.openModelStudio} />,
     topRightOverlay: picking ? (
       <PlaceObjectPanel
         assets={placeableAssets}

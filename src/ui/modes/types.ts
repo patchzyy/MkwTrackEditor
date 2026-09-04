@@ -8,6 +8,7 @@ import type { TrackDocument } from '../../lib/track';
 import type { Noclip3DViewport, TransformTool, ViewMode } from '../Noclip3DViewport';
 import type { ObjectOption } from '../objects/objectCatalog';
 import type { EditorModeStub } from '../state/types';
+import type { OpenModelStudio } from '../studio/studioLaunch';
 import type { useClipboard } from '../state/useClipboard';
 import type { useEditorHistory } from '../state/useEditorHistory';
 import type { useKmpEditActions } from '../state/useKmpEditActions';
@@ -54,6 +55,11 @@ export interface EditorModeContext {
   refreshScene: () => void;
   /** True while a `refreshScene` rebuild is in flight, so buttons can disable themselves. */
   sceneRefreshing: boolean;
+  /**
+   * Opens the Model Studio — the full-window workspace for one model's shaders and animations.
+   * Passing a track archive path opens that archive with its edits wired back into the track.
+   */
+  openModelStudio?: OpenModelStudio;
 }
 
 /**

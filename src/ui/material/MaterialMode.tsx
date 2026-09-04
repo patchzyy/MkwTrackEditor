@@ -220,6 +220,38 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
     setDocs((current) => (current === stored ? current : { ...current, ...stored }));
   }, [active, track]);
 
+  /**
+   * An archive can also be rewritten by something that is not this mode — the Model Studio edits
+   * the same `course_model.brres` and commits it into the same track document. A track version
+   * this mode did not produce and whose bytes for a listed archive differ therefore invalidates
+   * everything decoded from that archive, or the inspector would keep showing the old material.
+   */
+  const lastTrackRef = useRef<TrackDocument | null>(null);
+  useEffect(() => {
+    const previous = lastTrackRef.current;
+    lastTrackRef.current = track;
+    if (!track || previous === null || previous === track) return;
+    if (docsByTrackRef.current.has(track)) return;
+
+    const stalePaths: string[] = [];
+    for (const [path, bytes] of pinnedBytesRef.current) {
+      const current = findArchiveBytes(track, path);
+      if (current !== null && current !== bytes) stalePaths.push(path);
+    }
+    if (stalePaths.length === 0) return;
+
+    const staleKeys = new Set(stalePaths.map((path) => `${path.replace(/^\.\//, '').toLowerCase()}|`));
+    const isStale = (key: string) => [...staleKeys].some((prefix) => key.startsWith(prefix));
+    for (const path of stalePaths) pinnedBytesRef.current.delete(path);
+    setArchives((current) => {
+      const next = { ...current };
+      for (const path of stalePaths) delete next[path];
+      return next;
+    });
+    setDocs((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !isStale(key))));
+    setGraphs((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !isStale(key))));
+  }, [track]);
+
 
   // A material's graph starts as the decompiled stages, unless an authored one was stored for
   // exactly these stages in a previous session.
@@ -605,6 +637,11 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
           solo={solo}
           onToggleSolo={() => setSolo((value) => !value)}
           onFrame={frameSelection}
+          onOpenInStudio={
+            ctx.openModelStudio && selectedRef
+              ? () => ctx.openModelStudio?.({ trackArchivePath: selectedRef.archivePath })
+              : undefined
+          }
         />
         <div className="viewportOverlayPanel viewportRefreshPanel">
           <RefreshTrackButton onRefresh={refreshScene} refreshing={sceneRefreshing} hasTrack={track !== null} />
