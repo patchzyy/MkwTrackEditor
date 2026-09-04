@@ -101,7 +101,16 @@ function finish(code) {
 }
 
 // Installed before the page's own scripts, so the very first frames are measured too.
-const RECORDER = `(() => {
+// NO_REACT_TRACKS=1 removes `console.timeStamp` before React DOM initialises. React 19.2's
+// development build gates its "Components" performance track on that function existing, and the
+// track serialises every changed prop -- which, for a component that takes the whole
+// `TrackDocument`, is megabytes. This is a measurement switch, not a fix: it exists so a probe
+// can say how much of a dev-mode stall is React's dev instrumentation rather than the app.
+const REACT_TRACKS_OFF = process.env.NO_REACT_TRACKS === '1'
+  ? 'delete console.timeStamp;'
+  : '';
+
+const RECORDER = `${REACT_TRACKS_OFF}(() => {
   const state = { start: performance.now(), last: performance.now(), longest: 0, longestAt: 0, samples: 0, timeline: [] };
   window.__loadingGaps = state;
   const tick = () => {

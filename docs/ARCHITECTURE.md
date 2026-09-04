@@ -71,7 +71,7 @@ All hooks are plain functions returning an object; none of them render anything.
 | --- | --- |
 | `types.ts` | `EditorSnapshot`, `InspectorSection`, `EditorModeStub`. |
 | `useSelection.ts` | `selectedId` / `selectedIds` plus the synchronous `selectedIdRef` / `selectedIdsRef` mirrors and the select helpers. |
-| `useTrackDocument.ts` | The loaded `TrackDocument`, the BRRES editor project state, `Common.szs` handling (bundled, persisted via IndexedDB, or user-imported), the course asset database, content-browser BRRES previews, and the URL parameters. Owns `openFiles` / `importCommonArchive`. |
+| `useTrackDocument.ts` | The loaded `TrackDocument`, the BRRES editor project state, `Common.szs` handling (bundled, persisted via IndexedDB, or user-imported), the course asset database, content-browser BRRES previews, and the URL parameters. Owns `openFiles` / `importCommonArchive` and `openTrackBytes`, the single door every load path goes through (`?track=`, `?smokeTrack=`, the picker, drag-and-drop). Publishes `loadProgress` for the viewport's loading overlay. |
 | `useEditorHistory.ts` | Undo/redo stacks of whole `EditorSnapshot`s, `HISTORY_LIMIT`, edit sessions for viewport drags (`beginEditSession` / `endEditSession`), and the `applyEditorChange` / `applyTransientEditorChange` entry points. |
 | `useClipboard.ts` | Copy / paste / duplicate for the current selection. |
 | `useKmpEditActions.ts` | Every KMP mutation: move/rotate/scale, add object, add track record, insert/fork route point, object route helpers, delete, reorder, split/merge path groups, batch offset, batch object replace, fill between. |
@@ -94,9 +94,32 @@ history writes the track state). The cycle is broken by `trackDocument.bindHisto
 | `?smokeTrack=<url>` | Loads a track *and* turns on the browser smoke-test behaviour: a reduced BRRES summary budget, a reduced `Common.szs` preview set, and the `useSmokeHarness` instrumentation. Test-only. |
 | `?smokeCommon=<url>` | Overrides where `Common.szs` is fetched from. Test-only. |
 | `?smokeCallback=<url>` | Where the smoke harness POSTs its report. Test-only. |
+| `?reactTracks=1` | Development only: puts React's "Components" performance track back on. See `src/devPerformanceTracks.ts`. |
 
 `?track=` and `?smokeTrack=` are handled by two separate effects; `?smokeTrack=` wins if both are
 given. Nothing outside the smoke path reads any of the `smoke*` parameters.
+
+### Loading a track
+
+Opening a track is two jobs, and the user watches one progress bar across both
+(`src/lib/trackLoadProgress.ts`):
+
+1. **Reading** — `trackLoad.worker.ts`: Yaz0, U8 with layout, KMP, KCL, one summary per model
+   archive, then `buildEditorProjectState`. Off the main thread, so the page keeps painting.
+   Progress: "Unpacking the track archive", "Reading the track layout", "Model 3 of 15", ...
+   The finished `TrackDocument` comes back through a *transferring* structured clone, so nothing
+   is copied and the export stays byte-for-byte identical (`trackLoader.test.ts`).
+2. **Building** — the noclip scene, which has to be on the main thread because it talks to WebGL.
+   `SceneContext.onProgress` (a local addition to the vendored `SceneBase.ts`) reports "Building
+   the track model", "Placing objects — 142 of 146", and the scene yields between steps on an
+   8 ms budget.
+
+`Noclip3DViewport` owns the overlay: it takes `loadProgress` for the first half and produces the
+second half itself, so the bar never blinks out at the handover, and it comes down when the scene
+is ready *or* when it failed (the message goes to the status line as before).
+
+Measured on this machine with `scripts/loading-probe.mjs`, production build, a 9 MB retail track:
+the longest single stall during a load is ~210 ms, and the load takes about 1.6 s end to end.
 
 ## Inspector (`src/ui/inspector/`)
 
@@ -142,7 +165,11 @@ given. Nothing outside the smoke path reads any of the `smoke*` parameters.
 | --- | --- |
 | `u8.ts` | The `.szs` container. `parseU8WithLayout` captures everything about the source archive that is not implied by its entry list, so `buildU8` reproduces an untouched archive byte-for-byte. Rejects a file whose magic, size or node table is wrong, in words the status line can show. |
 | `yaz0.ts` | Yaz0 compression. `decodeYaz0` bounds the declared output size and detects a truncated stream instead of decoding it to zeroes; `encodeYaz0`'s `searchDepth` trades time for ratio (16 matches Nintendo's). |
-| `track.ts` | `TrackDocument`, `loadTrackBytes` / `loadTrackFile`, `exportTrack`, `bakeMeshEdits`, `validateTrack` and `validateExportBytes` (re-opens the exported bytes and validates them as if the user had just dropped them in). Also the object-pitfall checks that need the whole archive. |
+| `track.ts` | `TrackDocument`, `loadTrackBytes` / `loadTrackFile`, `exportTrack`, `bakeMeshEdits`, `validateTrack` and `validateExportBytes` (re-opens the exported bytes and validates them as if the user had just dropped them in). Also the object-pitfall checks that need the whole archive. `loadTrackBytes` reports progress and can skip the model previews; it is the same function on both loader paths. |
+| `trackLoader.ts` | **How a track gets opened.** `loadTrack()` runs `loadTrackBytes` plus `buildEditorProjectState` in `trackLoad.worker.ts` (one worker per load, terminated when it answers, cancellable with an `AbortSignal`) and falls back to `loadTrackOnThisThread` where there are no module workers — vitest, the Vite-SSR batch check, an old browser. Same progress callback either way. |
+| `trackLoad.worker.ts` | The worker body. No DOM, so it skips the model previews; the page renders those afterwards. Sends the finished document back with every reachable `ArrayBuffer` transferred rather than copied. |
+| `trackLoaderProtocol.ts` | The messages the two sides agree on, and `collectTransferables()`, which walks the document for buffers to move. Kept separate so a test can reach the types without importing a module that calls `self.addEventListener`. |
+| `trackLoadProgress.ts` | `TrackLoadProgress` and the two halves of the bar: reading owns 0–`READING_PHASE_END`, the scene build the rest. Also `yieldToHost()`, which waits for a frame *and then a task*, because a promise resolved inside a `requestAnimationFrame` callback resumes before the paint. |
 | `binary.ts` | `BinReader` / `BinWriter` / `align`. |
 
 ### Track data
@@ -195,6 +222,7 @@ given. Nothing outside the smoke path reads any of the `smoke*` parameters.
 | `vendor-reachability.mjs` | Recomputes the transitive import closure of `vendor/noclip.website/` from `src/**` and `scripts/**` and reports (or `--delete`s) anything outside it, so the trimmed fork does not re-accumulate dead weight. Also flags relative imports that do not resolve. |
 | `browser-smoke.mjs`, `browser-smoke-real-tracks.mjs` | The `?smokeTrack=` end-to-end browser checks. |
 | `camera-ui-probe.mjs`, `kmp-ui-probe.mjs`, `probe-model-ui.mjs`, `viewport-dev-probe.mjs` | Harnesses that drive a real off-screen Edge window and run a probe body against it. Headless Edge cannot run noclip, so these are not `--headless`. |
+| `loading-probe.mjs` | The same, but for the *load itself*: it installs a main-thread responsiveness recorder before any application code runs and starts the probe body immediately after navigating, so the loading overlay can be watched and screenshotted while it happens. `PROFILE=1` adds a CPU profile of the run; `NO_REACT_TRACKS=1` measures how much of a dev-mode stall is React's own instrumentation. Bodies: `probe-loading.js`, `probe-loading-refresh.js`. Pipe it through `summarize-loading-probe.mjs`. |
 | `probe-*.js` | The probe bodies those harnesses execute (`probe-kmp-mode-ui.js`, `probe-camera-ui.js`, `probe-model-mode-ui.js`, `probe-visual-ui.js`, `probe-material-ui.js`, and the older single-feature ones). |
 | `build-*.mjs` | The asset-database builders that generate what lives under `public/data/`. |
 

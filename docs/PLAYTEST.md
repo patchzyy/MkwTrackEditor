@@ -398,3 +398,14 @@ It opens the popover, starts a session, holds accelerate through the countdown i
 asserts the HUD reaches stage `race` with a rising speed, steers, restarts, exits, and checks the
 editor came back with the same KMP overlay it had before. Screenshots land in `docs/screenshots/`
 as `playtest-01-menu`, `-02-countdown`, `-03-racing`, `-04-back-in-editor`.
+
+`scripts/probe-playtest-hop.js` covers the hop button specifically, on a kart with manual drift:
+
+- accelerate + Shift at a standstill charges a stand-still mini-turbo (`data-playtest-charge`
+  reaches `standstill:1:100`) and releasing Shift fires it — measured **195 km/h** against
+  **115 km/h** for the same two seconds of plain acceleration;
+- Shift while moving still hops and drifts: the charge goes `drift:0` → `drift:1` (blue);
+- the same through a gamepad, with a fake `navigator.getGamepads` holding buttons 0 and 5.
+
+It needs manual drift — automatic drift ignores the hop button entirely, because `KartState`
+only reads `DriftInput` when `AutoDrift` is off — so the probe clicks "Manual" before starting.
