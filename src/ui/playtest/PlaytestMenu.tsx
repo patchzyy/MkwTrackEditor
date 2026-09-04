@@ -113,7 +113,7 @@ export function PlaytestMenu({
             </div>
           ))}
         </dl>
-        <p className="playtestMenuHint">A gamepad works too: left stick steers, A accelerates, B brakes, RB drifts.</p>
+        <p className="playtestMenuHint">A gamepad works too: left stick steers, A accelerates, B brakes, RB hops and drifts (and brakes).</p>
 
         <Button
           variant="primary"

@@ -13,12 +13,26 @@
 
 export type PlaytestTrick = 'none' | 'up' | 'down' | 'left' | 'right';
 
-/** Controller state for one frame. Mirrors Kinoko's `RaceInputState`. */
+/**
+ * Controller state for one frame. Mirrors Kinoko's `RaceInputState`.
+ *
+ * `brake` and `drift` are two *logical* buttons, but the game only has one physical one: the
+ * hop/drift button is the brake button. `RaceInputState` bit 0x2 means "Braking/Drifting" and bit
+ * 0x8 is set on top of it when the button went down while accelerating (see
+ * `KPadGhostFaceButtonsStream` in `vendor/Kinoko/source/game/system/KPadController.hh`). The
+ * runtime's `packPlaytestButtons` therefore sets 0x2 for `brake` **or** `drift`, which is what
+ * makes a hop button brake at a standstill and charge the stand-still mini-turbo
+ * (`KartMove::calcSsmtStart` needs the `Accelerate` and `Brake` status bits together).
+ */
 export interface PlaytestInput {
   accelerate: boolean;
+  /** Brake / reverse button. Also raised implicitly by `drift`; accelerate wins while moving. */
   brake: boolean;
   item: boolean;
-  /** Hop / drift button (R on GameCube, B on Wii Remote). */
+  /**
+   * Hop / drift button (R on GameCube, B on Wii Remote). Implies `brake`: holding it without
+   * accelerating brakes, and accelerate + hop at a standstill charges a stand-still mini-turbo.
+   */
   drift: boolean;
   /** -1..1. The runtime quantizes to the 15 stick positions the game accepts ((n - 7) / 7). */
   stickX: number;

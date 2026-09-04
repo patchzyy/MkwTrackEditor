@@ -23,6 +23,9 @@ const ACCELERATE_CODES = ['Space', 'KeyX'];
 // Down doubles as brake: on a keyboard "down = brake / reverse" is what everyone reaches for,
 // and it makes the stand-still mini-turbo (accelerate + brake at a standstill) discoverable.
 const BRAKE_CODES = ['KeyZ', 'ArrowDown', 'KeyS'];
+// The hop/drift button. In the game it is the same physical button as brake, so a held Shift
+// also raises `brake` (see `packPlaytestButtons` in `src/lib/playtest/kinokoRuntime.ts`); this
+// module keeps the two logical buttons apart and lets the runtime do the merge.
 const DRIFT_CODES = ['ShiftLeft', 'ShiftRight'];
 const ITEM_CODES = ['KeyC'];
 const TRICK_UP_CODES = ['KeyE'];
@@ -36,10 +39,10 @@ export interface PlaytestControlHint {
 
 export const PLAYTEST_CONTROL_HINTS: ReadonlyArray<PlaytestControlHint> = [
   { action: 'Accelerate', keys: 'Space / X' },
-  { action: 'Brake / reverse', keys: 'Z  or  ↓ / S' },
+  { action: 'Brake / reverse', keys: 'Z,  ↓ / S  or  Shift' },
   { action: 'Steer', keys: '← →  or  A D' },
-  { action: 'Hop / drift', keys: 'Shift' },
-  { action: 'Stand-still mini-turbo', keys: 'Hold accelerate + brake, release brake' },
+  { action: 'Hop / drift', keys: 'Shift  (brakes when not accelerating)' },
+  { action: 'Stand-still mini-turbo', keys: 'Hold accelerate + Shift, then release' },
   { action: 'Trick', keys: 'E / Q' },
   { action: 'Item', keys: 'C' },
   { action: 'Restart', keys: 'R' },

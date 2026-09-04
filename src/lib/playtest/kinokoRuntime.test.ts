@@ -12,7 +12,14 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { createKinokoRuntime } from './kinokoRuntime';
+import {
+  createKinokoRuntime,
+  packPlaytestButtons,
+  PLAYTEST_BUTTON_ACCELERATE,
+  PLAYTEST_BUTTON_BRAKE,
+  PLAYTEST_BUTTON_DRIFT,
+  PLAYTEST_BUTTON_ITEM,
+} from './kinokoRuntime';
 import {
   DEFAULT_PLAYTEST_COURSE_OPTIONS,
   NEUTRAL_PLAYTEST_INPUT,
@@ -57,6 +64,39 @@ async function makeRuntime(): Promise<PlaytestRuntime> {
 function input(overrides: Partial<PlaytestInput>): PlaytestInput {
   return { ...NEUTRAL_PLAYTEST_INPUT, ...overrides };
 }
+
+describe('packPlaytestButtons', () => {
+  it("packs the four logical buttons into Kinoko's bitmask", () => {
+    expect(packPlaytestButtons(input({}))).toBe(0);
+    expect(packPlaytestButtons(input({ accelerate: true }))).toBe(PLAYTEST_BUTTON_ACCELERATE);
+    expect(packPlaytestButtons(input({ brake: true }))).toBe(PLAYTEST_BUTTON_BRAKE);
+    expect(packPlaytestButtons(input({ item: true }))).toBe(PLAYTEST_BUTTON_ITEM);
+  });
+
+  it('raises the brake bit for the hop button, because the game has one button for both', () => {
+    // `RaceInputState` bit 0x2 is "Braking/Drifting"; 0x8 only says it happened while
+    // accelerating. A hop that does not set 0x2 can neither brake nor charge a stand-still
+    // mini-turbo (`KartMove::calcSsmtStart` needs Accelerate + Brake).
+    expect(packPlaytestButtons(input({ drift: true }))).toBe(
+      PLAYTEST_BUTTON_BRAKE | PLAYTEST_BUTTON_DRIFT,
+    );
+    expect(packPlaytestButtons(input({ accelerate: true, drift: true }))).toBe(
+      PLAYTEST_BUTTON_ACCELERATE | PLAYTEST_BUTTON_BRAKE | PLAYTEST_BUTTON_DRIFT,
+    );
+    // Brake and hop together are still just those bits; nothing double-counts.
+    expect(packPlaytestButtons(input({ accelerate: true, brake: true, drift: true }))).toBe(
+      PLAYTEST_BUTTON_ACCELERATE | PLAYTEST_BUTTON_BRAKE | PLAYTEST_BUTTON_DRIFT,
+    );
+  });
+
+  it('never sets a bit outside the low nibble that RaceInputState validates', () => {
+    const all = packPlaytestButtons(
+      input({ accelerate: true, brake: true, item: true, drift: true }),
+    );
+    expect(all & ~0xf).toBe(0);
+    expect(all).toBe(0xf);
+  });
+});
 
 describe.skipIf(!haveFixtures)('kinokoRuntime', () => {
   it('simulates a retail course and reaches racing speed', async () => {
@@ -227,6 +267,85 @@ describe.skipIf(!haveFixtures)('kinokoRuntime', () => {
       expect(() => runtime.loadCourse(fake, DEFAULT_PLAYTEST_COURSE_OPTIONS)).toThrow(PlaytestError);
       expect(runtime.disposed).toBe(true);
       expect(() => runtime.step()).toThrow(PlaytestError);
+    } finally {
+      runtime.dispose();
+    }
+  }, 120_000);
+
+  it('charges a stand-still mini-turbo from the hop button alone', async () => {
+    const runtime = await makeRuntime();
+    try {
+      runtime.loadCourse(read(nintendoTrack!), DEFAULT_PLAYTEST_COURSE_OPTIONS);
+
+      // Sit still through the intro and the countdown.
+      runtime.setInput(input({}));
+      let guard = 0;
+      while (runtime.readRaceState().stage !== 'race' && guard++ < 600) runtime.step();
+      expect(runtime.readRaceState().stage).toBe('race');
+
+      // Accelerate + hop at a standstill: this is the stand-still mini-turbo in the real game.
+      runtime.setInput(input({ accelerate: true, drift: true }));
+      for (let i = 0; i < 90; i++) runtime.step();
+
+      const charging = runtime.readKartState();
+      expect(charging.miniTurbo.kind).toBe('standstill');
+      expect(charging.miniTurbo.level).toBe(1);
+      expect(Math.abs(charging.speed)).toBeLessThan(10);
+
+      // Releasing the hop button fires the boost.
+      runtime.setInput(input({ accelerate: true }));
+      let boosted = false;
+      let peak = 0;
+      for (let i = 0; i < 30; i++) {
+        runtime.step();
+        const state = runtime.readKartState();
+        boosted ||= state.boosting;
+        peak = Math.max(peak, state.speed);
+      }
+      expect(boosted).toBe(true);
+      expect(peak).toBeGreaterThan(30);
+    } finally {
+      runtime.dispose();
+    }
+  }, 120_000);
+
+  it('still hops and drifts with the same button while moving', async () => {
+    const runtime = await makeRuntime();
+    try {
+      runtime.loadCourse(read(nintendoTrack!), DEFAULT_PLAYTEST_COURSE_OPTIONS);
+
+      runtime.setInput(input({ accelerate: true }));
+      let guard = 0;
+      while (runtime.readRaceState().stage !== 'race' && guard++ < 600) runtime.step();
+      // Holding accelerate through the whole countdown burns out, which costs about 100 frames;
+      // give the kart time to actually get going before measuring the cruising speed.
+      for (let i = 0; i < 300; i++) runtime.step();
+      const cruising = runtime.readKartState().speed;
+      expect(cruising).toBeGreaterThan(20);
+
+      // Hop and hold a left drift: the extra brake bit must not stop the kart.
+      runtime.setInput(input({ accelerate: true, drift: true, stickX: -1 }));
+      let drifted = false;
+      let chargedLevel = -1;
+      let speedIntoDrift = 0;
+      // 60 frames is long enough to hop, land, drift and charge a blue mini-turbo, and short
+      // enough that a hard lock does not put the kart into the scenery on every course.
+      for (let i = 0; i < 60; i++) {
+        runtime.step();
+        const state = runtime.readKartState();
+        drifted ||= state.drifting;
+        if (state.miniTurbo.kind === 'drift') chargedLevel = Math.max(chargedLevel, state.miniTurbo.level);
+        if (i === 20) {
+          speedIntoDrift = state.speed;
+          // Mid-drift the kart is fast, so accelerate beats the brake bit and the charge is a
+          // drift mini-turbo, not a stand-still one. (Once a wall stops the kart, accelerate +
+          // hop legitimately becomes a stand-still charge again, so only check while moving.)
+          expect(state.miniTurbo.kind).not.toBe('standstill');
+        }
+      }
+      expect(drifted).toBe(true);
+      expect(chargedLevel).toBeGreaterThanOrEqual(0);
+      expect(speedIntoDrift).toBeGreaterThan(cruising * 0.5);
     } finally {
       runtime.dispose();
     }

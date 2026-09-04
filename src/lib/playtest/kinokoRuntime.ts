@@ -100,6 +100,33 @@ const TRICK_CODES: Record<PlaytestTrick, number> = {
 /** How many log lines to keep for attaching to a `PlaytestError`. */
 const LOG_HISTORY = 32;
 
+/** Button bits of Kinoko's `RaceInputState` (`KPadController.hh`). */
+export const PLAYTEST_BUTTON_ACCELERATE = 0x1;
+/** "Braking/Drifting": the physical button that both brakes and hops. */
+export const PLAYTEST_BUTTON_BRAKE = 0x2;
+export const PLAYTEST_BUTTON_ITEM = 0x4;
+/** "Set if braking/drifting pressed after pressing accelerating", i.e. hop/drift. */
+export const PLAYTEST_BUTTON_DRIFT = 0x8;
+
+/**
+ * Packs a {@link PlaytestInput} into Kinoko's four-bit button mask.
+ *
+ * On a real controller the hop/drift button *is* the brake button: the game sees one button and
+ * sets bit 0x2 for it, then additionally sets bit 0x8 when it was pressed while accelerating
+ * (`KPadGhostFaceButtonsStream`, `KPadController.hh`). So a held hop button must set 0x2 as well
+ * as 0x8, otherwise it can neither brake nor charge a stand-still mini-turbo — `calcSsmtStart`
+ * requires both the `Accelerate` and the `Brake` status bits. While the kart is moving the
+ * accelerate bit wins, so the extra brake bit costs nothing during a drift.
+ */
+export function packPlaytestButtons(input: PlaytestInput): number {
+  return (
+    (input.accelerate ? PLAYTEST_BUTTON_ACCELERATE : 0) |
+    (input.brake || input.drift ? PLAYTEST_BUTTON_BRAKE : 0) |
+    (input.item ? PLAYTEST_BUTTON_ITEM : 0) |
+    (input.drift ? PLAYTEST_BUTTON_DRIFT : 0)
+  );
+}
+
 function vec3(): PlaytestVec3 {
   return { x: 0, y: 0, z: 0 };
 }
@@ -291,11 +318,7 @@ class KinokoRuntime implements PlaytestRuntime {
   }
 
   setInput(input: PlaytestInput): void {
-    const buttons =
-      (input.accelerate ? 0x1 : 0) |
-      (input.brake ? 0x2 : 0) |
-      (input.item ? 0x4 : 0) |
-      (input.drift ? 0x8 : 0);
+    const buttons = packPlaytestButtons(input);
 
     const stickX = quantizeStick(input.stickX);
     const stickY = quantizeStick(input.stickY);
