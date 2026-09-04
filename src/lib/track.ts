@@ -40,11 +40,6 @@ export interface TrackDocument {
 /** Where in the archive the geometry the Model mode edits lives. */
 export const COURSE_MODEL_PATH = './course_model.brres';
 
-export async function loadTrackFile(file: File): Promise<TrackDocument> {
-  const raw = new Uint8Array(await file.arrayBuffer());
-  return loadTrackBytes(raw, file.name);
-}
-
 export interface LoadTrackOptions {
   brresSummaryLimit?: number;
   /**
