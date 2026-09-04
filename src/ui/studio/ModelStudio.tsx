@@ -150,6 +150,43 @@ export function ModelStudio({ onClose, trackBridge, onSaveToAssets, initialOpen 
       materialDoc: () => sessionRef.current.materialDoc,
       updateMaterial: (next: unknown, status?: string) => sessionRef.current.updateMaterial(next as never, { status }),
       meshes: () => sessionRef.current.selectedMeshes,
+      /** Every material in what is open, so a probe can walk them all rather than click a tree. */
+      materials: () =>
+        sessionRef.current.archives.flatMap((archive) =>
+          (archive.materials?.models ?? []).flatMap((model) =>
+            model.materials.map((material) => ({
+              archivePath: archive.archivePath,
+              modelName: model.modelName,
+              materialName: material.materialName,
+              stageCount: material.stageCount,
+            })),
+          ),
+        ),
+      // Enough of the shader graph for a probe to say whether the editor could draw this material
+      // as nodes, and to press the "Special step" card's way out.
+      graph: () => {
+        const graph = sessionRef.current.graph;
+        return graph === null
+          ? null
+          : {
+              nodes: graph.nodes.map((node) => ({ id: node.id, type: node.type })),
+              edges: graph.edges.length,
+              rawStages: graph.nodes.filter((node) => node.type === 'rawStage').length,
+              rawReasons: graph.nodes.flatMap((node) => (node.type === 'rawStage' ? [node.reason ?? ''] : [])),
+            };
+      },
+      rawStagesConvertible: () => sessionRef.current.rawStagesConvertible,
+      convertRawStages: () => sessionRef.current.convertRawStages(),
+      setGraphNode: (nodeId: string, patch: Record<string, unknown>) => {
+        const graph = sessionRef.current.graph;
+        if (!graph) return false;
+        if (!graph.nodes.some((node) => node.id === nodeId)) return false;
+        sessionRef.current.setGraph({
+          ...graph,
+          nodes: graph.nodes.map((node) => (node.id === nodeId ? ({ ...node, ...patch } as typeof node) : node)),
+        });
+        return true;
+      },
       toggleAnimation: (archivePath: string, kind: string, name: string, enabled: boolean) =>
         sessionRef.current.toggleAnimation(archivePath, kind, name, enabled),
       transport: () => sessionRef.current.transport,
@@ -165,6 +202,14 @@ export function ModelStudio({ onClose, trackBridge, onSaveToAssets, initialOpen 
         if (!doc) return null;
         const result = exportStudioDocument(doc);
         return { fileName: result.fileName, bytes: Array.from(result.bytes.slice(0, 0)), length: result.bytes.byteLength, hash: fnv1a(result.bytes) };
+      },
+      /** Export what is open and open the result again, to check an edit survived the round trip. */
+      reopenExport: async () => {
+        const doc = sessionRef.current.doc;
+        if (!doc) return false;
+        const result = exportStudioDocument(doc);
+        await sessionRef.current.openBytes(result.fileName, result.bytes, null, false);
+        return true;
       },
       samplePixels: (box?: { x: number; y: number; width: number; height: number }) => viewportApiRef.current?.samplePixels(box) ?? null,
       capture: () => viewportApiRef.current?.capture() ?? null,

@@ -129,6 +129,10 @@ if (!appReady) {
 }
 
 await evaluate(`window.__probePrefix = ${JSON.stringify(process.env.PROBE_PREFIX ?? 'studio')};
+// Which model a body should open, and what to call its screenshots, so one probe can be run over
+// several archives without a copy per archive.
+window.__probeModel = ${JSON.stringify(process.env.PROBE_MODEL ?? '')} || null;
+window.__probeShot = ${JSON.stringify(process.env.PROBE_SHOT ?? '')} || null;
 window.__uiProbeQueue = [];
 window.__probeShotRequest = (name) => { window.__uiProbeQueue.push(name); return new Promise((r) => setTimeout(r, 60)); };
 window.__q = (sel) => document.querySelector(sel);

@@ -461,12 +461,16 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
     applyCompiled();
   }, [active, applyCompiled, compiled, doc, selectedRef]);
 
-  // Authored layouts survive reopening the track, but only while the stages still match.
+  // Authored layouts survive reopening the track, but only while the stages still match — and the
+  // key is the material's stages, so a graph is only stored once it really compiles to them. In
+  // the window between an edit to the graph and that edit reaching the material, it does not, and
+  // saving there would file the new graph under the old material's key.
   useEffect(() => {
     if (!active || !selectedRef || !graph || !doc) return;
+    if (!compiled?.ok || JSON.stringify(compiled.tevStages) !== JSON.stringify(doc.tevStages)) return;
     const timer = window.setTimeout(() => void saveStoredGraph(selectedRef, doc.tevStages, graph), 600);
     return () => window.clearTimeout(timer);
-  }, [active, doc, graph, selectedRef]);
+  }, [active, compiled, doc, graph, selectedRef]);
 
   /**
    * How many steps a fresh read of this material would leave as read-only cards. Compared against

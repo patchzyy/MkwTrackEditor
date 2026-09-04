@@ -584,11 +584,15 @@ export function useStudioSession({
     updateMaterial(next, { status: message });
   }, [compiled, materialDoc, selectedRef, updateMaterial]);
 
+  // Only ever store a graph that really compiles to the material's current stages: the key is
+  // those stages, so filing an edited graph under the pre-edit key would show it again for a
+  // material it no longer describes.
   useEffect(() => {
     if (!selectedRef || !graph || !materialDoc) return;
+    if (!compiled?.ok || JSON.stringify(compiled.tevStages) !== JSON.stringify(materialDoc.tevStages)) return;
     const timer = window.setTimeout(() => void saveStoredGraph(selectedRef, materialDoc.tevStages, graph), 600);
     return () => window.clearTimeout(timer);
-  }, [graph, materialDoc, selectedRef]);
+  }, [compiled, graph, materialDoc, selectedRef]);
 
   const resetGraphFromStages = useCallback(() => {
     if (!library || !materialDoc) return;
