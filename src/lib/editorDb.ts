@@ -6,14 +6,16 @@
 
 export const EDITOR_DB_NAME = 'mkw-track-editor';
 /** Bump when adding a store, and add the store in `createMissingStores`. */
-export const EDITOR_DB_VERSION = 2;
+export const EDITOR_DB_VERSION = 3;
 
 /** The user-imported `Common.szs` (one blob under the key `common-szs`). */
 export const BINARY_ASSETS_STORE = 'binary-assets';
 /** Custom BRRES archives the user dropped into the content browser, keyed by asset id. */
 export const ASSET_LIBRARY_STORE = 'asset-library';
+/** Files opened in the Model Studio, keyed by id, so "Recent" can reopen them offline. */
+export const STUDIO_RECENT_STORE = 'studio-recent';
 
-const ALL_STORES = [BINARY_ASSETS_STORE, ASSET_LIBRARY_STORE] as const;
+const ALL_STORES = [BINARY_ASSETS_STORE, ASSET_LIBRARY_STORE, STUDIO_RECENT_STORE] as const;
 
 function createMissingStores(db: IDBDatabase): void {
   for (const name of ALL_STORES) {

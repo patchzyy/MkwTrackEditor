@@ -1,0 +1,401 @@
+/*
+ * Model Studio.
+ *
+ * A full-window workspace layered over the track editor. It uses the same tokens as the rest of
+ * the editor (see docs/UI.md) and the same panel shapes, so it reads as the same application
+ * looking at a different thing — which is exactly what an Unreal asset editor does.
+ */
+
+.studioRoot {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  grid-template-rows: var(--topbar-height) 1fr var(--status-bar-height);
+  background: var(--surface-0);
+  color: var(--text);
+  font-size: var(--font-size-md);
+}
+
+.studioRoot.is-dragTarget::after {
+  content: 'Drop a .brres, .szs or .u8 to open it in the studio';
+  position: absolute;
+  inset: var(--space-4);
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent-border);
+  border-radius: var(--radius-xl);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: var(--font-size-lg);
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------- header */
+
+.studioHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-1);
+}
+
+.studioHeaderTitle {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  min-width: 0;
+  color: var(--text-secondary);
+}
+
+.studioHeaderTitle > svg {
+  align-self: center;
+  color: var(--text-muted);
+}
+
+.studioHeaderTitle strong {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.studioHeaderSubtitle {
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studioHeaderSpacer {
+  flex: 1;
+}
+
+.studioFileInput {
+  display: none;
+}
+
+/* ---------------------------------------------------------------- body */
+
+.studioBody {
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr) 320px;
+  min-height: 0;
+}
+
+.studioCenter {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface-0);
+}
+
+.studioInspector {
+  min-height: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
+  background: var(--surface-1);
+}
+
+/* ---------------------------------------------------------------- viewport */
+
+.studioViewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  outline: none;
+}
+
+.studioCanvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: grab;
+}
+
+.studioCanvas:active {
+  cursor: grabbing;
+}
+
+.studioViewportError {
+  position: absolute;
+  inset: auto var(--space-4) var(--space-4) var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-md);
+  background: var(--danger-soft);
+  color: var(--danger-text);
+  font-size: var(--font-size-sm);
+}
+
+.studioViewOverlay {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-overlay);
+  border-radius: var(--radius-lg);
+  background: var(--surface-overlay);
+  backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-2);
+}
+
+.studioViewOverlayRow {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.studioViewOverlayToggles {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.studioViewOverlayHint {
+  margin: 0;
+  max-width: 200px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* ---------------------------------------------------------------- transport */
+
+.studioTransport {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-1);
+}
+
+.studioTransportButtons {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.studioTransportScrubber {
+  flex: 1;
+  min-width: 120px;
+  accent-color: var(--accent);
+}
+
+.studioTransportReadout {
+  display: flex;
+  flex-direction: column;
+  min-width: 96px;
+  line-height: 1.2;
+}
+
+.studioTransportReadout strong {
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.studioTransportReadout span {
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.studioTransportLoop {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+}
+
+.studioTransportStatus {
+  min-width: 140px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- dock */
+
+.studioDockHandle {
+  height: 4px;
+  cursor: row-resize;
+  background: transparent;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.studioDockHandle:hover,
+.studioDockHandle.isActive {
+  background: var(--accent-border);
+}
+
+/* ---------------------------------------------------------------- outliner */
+
+.studioOutliner {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  background: var(--surface-1);
+}
+
+.studioOutlinerSearch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-dim);
+}
+
+.studioOutlinerSearch input {
+  flex: 1;
+  min-width: 0;
+  height: var(--control-height-sm);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-input);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.studioOutlinerBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-2) 0;
+}
+
+.studioTree {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.studioTreeRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 24px;
+  padding-right: var(--space-3);
+  cursor: default;
+  font-size: var(--font-size-sm);
+}
+
+.studioTreeRow:hover {
+  background: var(--surface-hover);
+}
+
+.studioTreeRow.is-material {
+  cursor: pointer;
+}
+
+.studioTreeRow.is-selected {
+  background: var(--selection);
+  box-shadow: inset 2px 0 0 var(--selection-border);
+}
+
+.studioTreeRow.is-disabled {
+  color: var(--text-disabled);
+}
+
+.studioTreeTwisty {
+  display: inline-flex;
+  justify-content: center;
+  width: 14px;
+  flex: none;
+}
+
+.studioTreeTwistyButton,
+.studioTreeEye,
+.studioTreePlay {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.studioTreeTwistyButton:hover,
+.studioTreeEye:hover,
+.studioTreePlay:hover:not(:disabled) {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+
+.studioTreeEye.is-hidden {
+  color: var(--text-disabled);
+}
+
+.studioTreePlay.is-playing {
+  color: var(--accent);
+}
+
+.studioTreePlay:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+.studioTreeIcon {
+  display: inline-flex;
+  width: 16px;
+  justify-content: center;
+  flex: none;
+  color: var(--text-dim);
+}
+
+.studioTreeLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studioTreeDetail {
+  flex: none;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+}
+
+/* ---------------------------------------------------------------- status bar */
+
+.studioStatusBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-3);
+  border-top: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.studioStatusSpacer {
+  flex: 1;
+}
+
+.studioStatusHint {
+  color: var(--text-dim);
+}
+
+@media (max-width: 1280px) {
+  .studioBody {
+    grid-template-columns: 224px minmax(0, 1fr) 288px;
+  }
+}
