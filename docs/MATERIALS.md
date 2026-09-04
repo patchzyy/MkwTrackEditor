@@ -205,19 +205,32 @@ hardware keeps two independent register sets. Lowering each is a post-order walk
 | `add`/`subtract` whose second input is a `lerp` or `multiply` used nowhere else | fused into one stage: `D` is the first input, `A/B/C` come from the fused node |
 | `scale` | folded into the stage that produced its input when that stage still has the default bias and scale; otherwise a pass-through stage carries it |
 | `compare` | `A/B/C/D` direct, bias `$HWB_COMPARE`, scale naming the comparison width |
+| `alphaAsColor` | the wired source's alpha as a *colour* operand: `CC.TEXA`, `CC.RASA`, `CC.APREV`, `CC.A0..A2`, or `KCSEL_K{n}_A` |
+| `storedValue` | reads a register back: `CPREV`/`C0..C2`, or `APREV`/`A0..A2` in the alpha pipeline |
 | `texture` | binds the stage's texture and coordinate; `TEXC` or `TEXA` |
 | `vertexColor` | binds the channel; `RASC` or `RASA` |
 | `constant` | binds `konstColorSel` / `konstAlphaSel`; `KONST` |
 | `register` | reads `C0..C2` (or `A0..A2`) as the register's *starting* colour |
+| `outputRegister` on a step | the stage's `colorRegId` / `alphaRegId`; the spill allocator never takes a register a graph asked for |
 | `value` | `ZERO` / `HALF` / `ONE`; the alpha input set has no half or one, so those come from a konst selection |
 | `indirectWarp` | wired into a texture's UV input, it becomes that stage's `indTex*` fields |
 | `rawStage` | copied out verbatim; its `prev` input only says what runs before it |
 
 Intermediates live in the previous-stage register when the next stage reads them straight away.
-When a sibling subtree is about to emit stages, or a value is read by more than one node, it is
-spilled into one of C0..C2 with a copy stage and freed after its last use. The allocator never
-takes a register some `register` node reads. Running out is an `error` diagnostic saying to split
-the material or reuse a texture.
+A value is only spilled into C0..C2 when something is about to *overwrite* the register it lives
+in and a later node still has a use for it — so two reads by the same stage, which is what
+`d + lerp(a, PREV, c)` is, cost nothing, and a stage that stores into C0..C2 rather than the
+working slot never triggers a spill at all. A sibling subtree that is about to emit stages spills
+whatever the half-lowered parent already has in hand. The allocator never takes a register a
+`register` node, a `storedValue` node or an `outputRegister` names. Running out is an `error`
+diagnostic saying to split the material or reuse a texture.
+
+A stage half whose result nothing downstream reads still runs on the hardware, and real files are
+full of them — a kart body works out an alpha in stage 0 that stage 1 overwrites without looking.
+The decompiler marks the cluster's root `unusedResult`, and the compiler emits it after the walk
+from the output, placed by its group so it lands where the file had it rather than at the end.
+Only the decompiler sets the flag, so a node the author unwires still simply stops doing
+anything.
 
 Zipping puts a colour op and an alpha op on the same stage when their texture, channel and
 indirect bindings agree (konst is two separate fields, so it never conflicts). Where they
@@ -240,17 +253,17 @@ inputs become shared source nodes: one `texture` per (sampler, coordinate) pair,
 `vertexColor` per channel, one `constant` per konst selection, one `register` per register the
 material starts with.
 
-`compileShaderGraph(decompileShader(m), m).tevStages` equals `m.tevStages` for all 8804 fixture
-materials. Two mechanisms get it there:
+`compileShaderGraph(decompileShader(m), m).tevStages` equals `m.tevStages` for every fixture
+material — 16671 of them in the measurement below. Two mechanisms get it there:
 
 - **`stageTemplate`.** Every cluster node carries the original stage. Fields the graph has no
   opinion about — the konst selection a stage names even when it reads no konst, the raster
   channel it names when it reads no vertex colour, the swap tables, the indirect setup — are taken
   from it. Without this, roughly half of all retail stages would only round trip approximately.
 - **`rawStage`.** Anything the node vocabulary genuinely cannot say becomes a read-only card
-  holding the stage verbatim: an alpha value used as a colour input (`CC.RASA`, `CC.APREV`), a
-  stage reading the previous-stage register before any stage wrote it, a comparison whose bias and
-  scale the `scale` node would fight over. 1335 of 13608 fixture stages (9.8%) end up this way.
+  holding the stage verbatim. There is one shape left that qualifies — a stage that reads the
+  texture unit while binding no texture — and it accounts for 30 of the 29616 stages measured
+  below (0.10%), all of them in custom course models.
 
 Which of the two applies is not guessed. `decompileShader` compiles what it built, compares it
 against the material, pins the first stage that came back different as a raw stage and tries
@@ -262,6 +275,59 @@ The colour and alpha halves of one stage find each other again through a node-id
 `s3c`, `s3cl`, `s3cs`, `s3a`, `s3r` all belong to stage 3. Nodes the editor creates have their own
 ids and no group, which is right — there is no original stage to line them up with.
 
+### How much of a real material the graph can draw
+
+`scripts/shader-graph-coverage.mjs` decompiles every material of every MDL0 in a corpus of real
+archives and records, per stage the decompiler had to keep verbatim, *why*: which operand the node
+vocabulary has no source for (`decompileShaderReport().causes`), or which `GxTevStageDoc` fields a
+recompile got back wrong. It is the tool that said what to build, and it is the regression test
+that says it stayed built.
+
+```bash
+node scripts/shader-graph-coverage.mjs --limit 400 --json coverage.json
+```
+
+A run over 2343 archives — 319 driver models, 1658 kart models, 328 course models and the object
+archives inside `Common.szs` — before and after this work:
+
+| Family | Materials | Stages | Raw before | Raw after |
+| --- | --- | --- | --- | --- |
+| driver | 1068 | 3177 | 66.3% | **0.00%** |
+| kart | 7028 | 13227 | 44.8% | **0.00%** |
+| course | 8489 | 13048 | 6.0% | **0.23%** |
+| object | 86 | 164 | 42.1% | **0.00%** |
+| all | 16671 | 29616 | 31.0% | **0.10%** |
+
+(The "before" column is the same script run against the code as it stood, over the smaller
+40-archives-per-family sample it was measured on; the shares are the comparable numbers.)
+
+The histogram of causes, before:
+
+| Cause | Count | driver | kart | course | object |
+| --- | --- | --- | --- | --- | --- |
+| colour input reads previous alpha (`CC.APREV`) | 947 | 116 | 778 | 10 | 43 |
+| colour input reads vertex-colour alpha (`CC.RASA`) | 155 | 122 | 0 | 14 | 19 |
+| recompiled differently: `alphaInB/C/D` | 362 | 0 | 306 | 54 | 2 |
+| recompiled differently: `channelId` | 82 | 0 | 41 | 41 | 0 |
+| colour input reads texture alpha (`CC.TEXA`) | 13 | 0 | 0 | 13 | 0 |
+| colour input reads a stored alpha (`CC.A0..A2`) | 4 | 0 | 0 | 1 | 3 |
+| everything else (`alphaScale`, `colorRegId`, `konst*Sel`, `indTex*`, `texMap`, …) | 110 | 0 | 31 | 73 | 6 |
+
+And after, over the full 16671-material corpus:
+
+| Cause | Count | driver | kart | course | object |
+| --- | --- | --- | --- | --- | --- |
+| alpha input reads texture alpha, with no texture bound | 30 | 0 | 0 | 30 | 0 |
+
+**What is still raw, and why.** A stage that names `TEXA` (or `TEXC`) while its `texMap` is
+`TEXMAP_NULL` reads a texture unit with nothing in it. On hardware that is undefined; in the graph
+a `texture` node always names a layer, so there is nothing honest to draw. Those 30 stages, spread
+over 30 materials in a handful of custom tracks, stay "Special step" cards whose sentence says
+exactly that, and the Stages tab shows every field. Two other defects retail content ships —
+sampling a slot the material has no layer for, and naming a lighting channel it does not have —
+*are* drawn as nodes now, with a warning badge rather than a refusal, because `applyMaterial` is
+the backstop that refuses the ones an edit introduces.
+
 ### Adding a node type
 
 1. Add it to `GraphNodeType`, give it an interface, add it to the `GraphNode` union and put its
@@ -271,9 +337,14 @@ ids and no group, which is right — there is no original stage to line them up 
    conflicts, register allocation and stage placement. If it is a source, return an `Operand` with
    the right `CC`/`CA` input and whatever bindings it needs. Add it to `MATH_TYPES` if it emits a
    stage — that is what tells the spill logic a subtree will overwrite the previous-stage register.
-3. Teach `decompile.ts` to emit it where it applies, if it has a stage shape to recognise.
-4. Add a unit test in `shaderGraph.test.ts` for the shape it lowers to, and check the retail round
-   trip still passes: it is the test that catches a node that quietly changes an existing lowering.
+3. Teach `decompile.ts` to emit it where it applies, if it has a stage shape to recognise, and
+   give it a `NODE_SUMMARY` line and a `nodeTypeTitle` in `src/ui/material/graphModel.ts` — plus a
+   place in `ADDABLE_NODE_TYPES`, and in `ADVANCED_NODE_TYPES` if it is the hardware showing
+   through rather than something a road needs.
+4. Add a unit test in `shaderGraph.test.ts` for the shape it lowers to *and* for the stage shape it
+   decompiles from, and re-run `node scripts/shader-graph-coverage.mjs`: the retail round trip is
+   the test that catches a node that quietly changes an existing lowering, and the coverage script
+   is the one that says whether the new node actually bought anything.
 
 ### Contract additions
 
@@ -283,7 +354,19 @@ ids and no group, which is right — there is no original stage to line them up 
 - `GraphNodeBase.stageTemplate?` — see above.
 - `GraphConstantNode.colorSel?` / `alphaSel?` — the exact konst selection, for the cases `slot`
   cannot name: the eight hardware fractions and the single-channel reads (`K1[GGG]`).
-- `'rawStage'` node type, with a `prev` input so a chain of them keeps its order.
+- `'rawStage'` node type, with a `prev` input so a chain of them keeps its order, and a `reason`
+  the decompiler writes for the card to show.
+- `GraphVertexColorNode.channel` widened from 0/1 to a whole `GX.RasColorChannelID`, so the
+  bump-alpha sources and the constant-black one round trip. 0 and 1 still mean what they did, which
+  is why the stored graph version did not have to change.
+- `GraphNodeBase.unusedResult?` — the root of a cluster nothing reads; see above.
+- `outputRegister?` on the step nodes (`multiply`, `add`, `subtract`, `lerp`, `scale`, `compare`).
+- `'storedValue'` and `'alphaAsColor'` node types.
+
+All of these are optional, so `ShaderGraph.version` stays 1 and a graph stored in IndexedDB by an
+older build loads unchanged — `graphModel.test.ts` asserts exactly that. What such a graph *does*
+still hold is read-only cards for steps this build can now draw, which is what the editor's
+one-click **Convert to nodes** is for; see the palette section below.
 
 `GxIndMatrixDoc.m` holds the effective coefficients (the 11-bit hardware values already multiplied
 by `2 ** scaleExp`) and `scaleExp` is the hardware's 6-bit exponent field less its bias of 27, so
@@ -432,21 +515,31 @@ texture's outputs read **Colour / Alpha**. The names are shared with the inspect
 | --- | --- |
 | **Material** | The output. Its `color` and `alpha` inputs are the last stage's result. There is exactly one, and it cannot be deleted or duplicated. |
 | **Texture** | Binds a layer and a texture-coordinate set to the stage: `TEXC` / `TEXA`. Shows the layer's thumbnail. |
-| **Vertex colour** | The rasterised lighting channel: `RASC` / `RASA`, and sets the stage's channel. |
+| **Vertex colour** | What the rasteriser hands the stage: **Vertex colour 1 / 2** (the two lighting channels), **Bump alpha** and **Bump alpha, inverted** (fed by an indirect stage), or **Nothing (black)**. |
 | **Colour** | One of the konst colours K0..K3 (`KONST`). The swatch edits the material's konst colour, so it previews live. Its **Advanced** block picks the exact selection (`colorSel` / `alphaSel`) for the cases the slot cannot name: the eight hardware fractions and the single-channel reads. |
-| **Register** | The starting value of C0, C1 or C2. The swatch edits the material's register. |
+| **Register** ("Start colour") | The starting value of C0, C1 or C2. The swatch edits the material's register. |
 | **Value** | The literals 0, 0.5 and 1, which the hardware supplies for free. |
 | **Multiply** | `a x b` — one stage, as `lerp(0, a, b)`. |
 | **Add** / **Subtract** | `a + b` / `a - b` — the stage's D input plus or minus the rest. |
 | **Lerp** | `lerp(a, b, t)` — exactly one whole TEV stage. |
 | **Scale** | Multiplies by 0.5 / 1 / 2 / 4 with an optional ±0.5 bias and a clamp. Free on a stage. |
-| **Compare** | The TEV compare ops: `(a op b) ? c : 0`, plus `d`. |
+| *(on every step node)* **Store result in** | Behind the card's **Advanced** disclosure: the working slot (the default) or one of the three stored slots. The compiler honours it and keeps the spill allocator off that slot. |
+| **Compare** | The TEV compare ops: `(a op b) ? c : 0`, plus `d`. All eight widths (`R8`, `GR16`, `BGR24`, `RGB8`, each `>` and `=`). |
 | **Indirect warp** | Routes an indirect stage into the texture sampled after it. |
+| **Alpha as colour** | An alpha source read into a *colour* input. The only place the two halves meet, and what nearly every character model blends two textures with. Only a source can feed it — a texture, a vertex colour, a constant, a start colour or a stored value — because a colour operand names a place, not another step's result; wire a step into it and the message says to store that step in a slot first. |
+| **Stored value** | Reads a slot back: the **Working slot** every step writes to unless told otherwise, or one of the three **Stored slots** (C0..C2). Also what a stage reading the working slot before anything wrote it decompiles to. |
 | **Comment** | A resizable note. Never compiles to anything. |
-| **Special step** (`rawStage`) | A stage the graph cannot express — a raster alpha read, a non-default swap table, a compare op the `compare` node does not cover. The decompiler emits one instead of guessing and the compiler copies it out verbatim. Read-only, and never in the palette. Its `prev` input carries no value; it only says which stage runs before it, so a chain of raw stages keeps its order. |
+| **Special step** (`rawStage`) | A stage the graph cannot express: on the corpus measured above, only a stage that reads a texture while binding none. The decompiler emits one instead of guessing and the compiler copies it out verbatim. Read-only, and never in the palette. Its `prev` input carries no value; it only says which stage runs before it, so a chain of raw stages keeps its order. **It is never a dead end**: the card says in one sentence what it is that cannot be drawn (the `reason` the decompiler wrote), points at the Stages tab, and offers **Convert to nodes** — a one-click re-read of the material's steps, which is what a graph saved before this editor learned a node needs. Reopening such a graph does that re-read automatically, because a graph the editor can actually edit is worth more than a remembered layout. |
+
+The palette has two sections. Everything above the line is what a material is normally made of;
+**Advanced** holds the four that are the hardware showing through — *Alpha as colour*, *Stored
+value*, *Compare* and *Warp coordinates*. Both are always visible: the heading is a signpost, not a
+disclosure, because a node nobody can find may as well not exist.
 
 Sockets carry either `rgb` or `alpha`; there is no `rgba` wire, because the colour and alpha
-pipelines are compiled separately and zipped onto the same stages. The maths nodes are
+pipelines are compiled separately and zipped onto the same stages. *Alpha as colour* is the single
+crossing point, and it only goes one way — a TEV colour operand can name an alpha source, but no
+alpha operand can name a colour, so there is no node for the other direction. The maths nodes are
 polymorphic: every socket takes the type of whatever is wired in first, and after that they all
 agree. A wire whose types do not match is refused with a shake and a message.
 
@@ -671,6 +764,7 @@ Pure logic is unit tested with no DOM (`npm test`):
 | `src/ui/material/materialSimple.byteExact.test.ts` | The same round trip through `applyMaterial` into real MDL0 bytes: touching every simple control without changing a choice leaves the archive byte-for-byte identical. Runs on the object archives inside the bundled `Common.szs`, so it has teeth under `MKW_TEST_FIXTURES=bundled` too. |
 | `src/ui/material/materialOutlinerModel.test.ts` | Archive naming and ordering, the tree, the search, the shared-shader badge, reference keys. |
 | `src/ui/material/graphStore.test.ts` | The stage hash and both storage keys. |
+| `src/lib/gxMaterial/shaderGraph.test.ts` | The retail round trip with a per-family raw-stage ceiling (zero for drivers, karts and objects; 1% for course models), a compile *and* a decompile test per node, and that every "Special step" carries a sentence. |
 | `src/ui/material/MaterialInspector.test.tsx` | The inspector, the outliner, the dock's tab state and the stage table, rendered with `renderToStaticMarkup`: the five simple sections, that the hardware controls really are behind closed disclosures, that only the colours the shader reads are shown, that the preset chips are on the graph tab, that node titles name the thing rather than the register — and the assertion that no raw GX enum identifier reaches the user. |
 
 `scripts/probe-refresh-track.js` covers Refresh on its own: it rebuilds twice to measure the noise

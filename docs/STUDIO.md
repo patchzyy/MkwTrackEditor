@@ -185,6 +185,12 @@ shader graph. Every control is the one Material mode uses, so everything in
 [`docs/MATERIALS.md`](MATERIALS.md) applies: the simple/advanced split, the node palette, the
 presets, the stage table, the graph's own undo stack, the stored graph layouts.
 
+Character models are what the shader graph was hardened against: a driver or a kart mixes its
+textures by reading one of them's alpha into a colour input, which used to come out as a wall of
+read-only "Special step" cards. Every material in the 1068 driver and 7028 kart models measured in
+`docs/MATERIALS.md` now draws as nodes, and the studio is the fastest way to see it — open a
+`Character/*.szs` or a bare `Driver/*.brres` and click a material.
+
 ![The material under the cursor, its stages and its graph](screenshots/studio-04-clicked-material.png)
 
 ![The node graph in the studio's dock](screenshots/studio-06-graph.png)
