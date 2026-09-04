@@ -5,6 +5,7 @@ import { readKmpFile, type KmpFile } from './kmpFile';
 import { validateKmpFile, validateTrackFiles, type ObjectResourceLookup, type TrackIssue } from './kmpValidation';
 import { parseKcl, type KclMesh } from './kcl';
 import { parseNoclipBrresSummary, type NoclipBrresSummary } from './noclipBrres';
+import { readingFraction, type TrackLoadProgressListener } from './trackLoadProgress';
 import { getObjFlowResourceNames, type CommonResourceArchive } from './objflow';
 import { bakeCourseModel, type BakeWarning } from './brres/bakeCourseModel';
 import type { ImportedMesh, MeshEdit } from './brresEditor';
@@ -39,18 +40,27 @@ export interface TrackDocument {
 /** Where in the archive the geometry the Model mode edits lives. */
 export const COURSE_MODEL_PATH = './course_model.brres';
 
-export async function loadTrackFile(file: File): Promise<TrackDocument> {
-  const raw = new Uint8Array(await file.arrayBuffer());
-  return loadTrackBytes(raw, file.name);
-}
-
 export interface LoadTrackOptions {
   brresSummaryLimit?: number;
+  /**
+   * Called at every stage boundary with a label and a 0..1 fraction of the *reading* phase
+   * (see `trackLoadProgress.ts`). The worker forwards these to the UI so the bar is driven by
+   * what actually happened rather than by an animation.
+   */
+  onProgress?: TrackLoadProgressListener;
+  /**
+   * Render a preview image for each model archive. Off in the worker, which has no DOM and no
+   * WebGL; the main thread fills the previews in afterwards, once the track is already open.
+   */
+  modelPreviews?: boolean;
 }
 
 export async function loadTrackBytes(raw: Uint8Array, fileName: string, options: LoadTrackOptions = {}): Promise<TrackDocument> {
+  const report = options.onProgress;
+  report?.({ stage: 'decompressing', label: 'Unpacking the track archive', fraction: readingFraction(0.02) });
   const compressed = isYaz0(raw);
   const archiveBytes = decodeYaz0(raw);
+  report?.({ stage: 'archive', label: 'Reading the archive contents', fraction: readingFraction(0.3) });
   const { entries: archiveEntries, layout: archiveLayout } = parseU8WithLayout(archiveBytes);
   const warnings: string[] = [];
   const courseKmp = findFile(archiveEntries, 'course.kmp');
@@ -62,6 +72,7 @@ export async function loadTrackBytes(raw: Uint8Array, fileName: string, options:
   let kmp: KmpDocument | undefined;
   let kmpFile: KmpFile | undefined;
   let kcl: KclMesh | undefined;
+  report?.({ stage: 'layout', label: 'Reading the track layout', fraction: readingFraction(0.4) });
   if (courseKmp?.data) {
     try {
       kmp = parseKmp(courseKmp.data);
@@ -74,6 +85,7 @@ export async function loadTrackBytes(raw: Uint8Array, fileName: string, options:
     warnings.push('This archive has no track layout (course.kmp), so there is nothing to edit in it.');
   }
 
+  report?.({ stage: 'collision', label: 'Reading the collision mesh', fraction: readingFraction(0.55) });
   if (courseKcl?.data) {
     try {
       kcl = parseKcl(courseKcl.data);
@@ -85,11 +97,21 @@ export async function loadTrackBytes(raw: Uint8Array, fileName: string, options:
     warnings.push('This archive has no collision mesh (course.kcl), so clicking the track will not snap to the ground.');
   }
 
-  for (const entry of archiveEntries.filter((candidate) => candidate.type === 'file' && candidate.path.toLowerCase().endsWith('.brres')).slice(0, brresSummaryLimit)) {
+  const summaryEntries = archiveEntries
+    .filter((candidate) => candidate.type === 'file' && candidate.path.toLowerCase().endsWith('.brres'))
+    .slice(0, brresSummaryLimit);
+  for (let index = 0; index < summaryEntries.length; index++) {
+    const entry = summaryEntries[index];
     if (!entry.data) continue;
     const name = entry.path.split('/').pop() ?? entry.path;
+    report?.({
+      stage: 'models',
+      label: 'Reading the track models',
+      detail: `Model ${index + 1} of ${summaryEntries.length}`,
+      fraction: readingFraction(0.6 + (0.4 * index) / summaryEntries.length),
+    });
     try {
-      const summary = await parseNoclipBrresSummary(entry.data);
+      const summary = await parseNoclipBrresSummary(entry.data, options.modelPreviews === false ? { thumbnail: false } : {});
       brresSummaries[entry.path] = summary;
       // `parseNoclipBrresSummary` never throws — it reports an unreadable archive in `error` so
       // one bad file cannot stop the track opening. Surfacing it here is what keeps a corrupt
@@ -99,6 +121,8 @@ export async function loadTrackBytes(raw: Uint8Array, fileName: string, options:
       warnings.push(`The model file ${name} could not be read: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+
+  report?.({ stage: 'models', label: 'Reading the track models', fraction: readingFraction(1) });
 
   return {
     fileName,

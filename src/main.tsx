@@ -1,3 +1,6 @@
+// Must come before react-dom: it decides whether to log every render (with its props) while it
+// is initialising, and on this app that costs ten seconds per track load in development.
+import './devPerformanceTracks';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './ui/App';

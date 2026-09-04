@@ -20,6 +20,8 @@ import {
   type ViewportTransformSelection,
 } from '../lib/brresRenderAdapter';
 import { buildU8 } from '../lib/u8';
+import { LoadingOverlay } from './components/LoadingOverlay';
+import { sceneFraction, yieldToHost, type TrackLoadProgress } from '../lib/trackLoadProgress';
 import { PLAYTEST_STEP_MS, planFixedSteps } from '../lib/playtest/playtestLoop';
 import type { PlaytestCameraState, PlaytestKartState, PlaytestRaceState } from '../lib/playtest/types';
 import { PlaytestCameraController } from './playtest/playtestCamera';
@@ -163,6 +165,12 @@ interface Noclip3DViewportProps {
   sceneRevision?: number;
   /** Progress of a `sceneRevision` rebuild, so the shell can show it and re-enable its button. */
   onSceneReload?: (event: SceneReloadEvent) => void;
+  /**
+   * Progress of the track being *read* (`useTrackDocument`). The viewport owns the loading
+   * overlay because the overlay belongs over the viewport, and because the second half of the
+   * bar -- building the scene -- only it knows about.
+   */
+  loadProgress?: TrackLoadProgress | null;
   fillBetweenPreviewPositions?: Vec3[];
   /**
    * A live playtest session. While it is set the viewport drives the physics runtime at a fixed
@@ -789,6 +797,7 @@ export function Noclip3DViewport({
   onChangeMeshGranularity,
   onVisualSceneChange,
   sceneRevision = 0,
+  loadProgress = null,
   onSceneReload,
   fillBetweenPreviewPositions = [],
   playtestSession = null,
@@ -1007,6 +1016,12 @@ export function Noclip3DViewport({
   const selected = track?.kmp?.entities.find((entity) => entity.id === selectedId) ?? null;
   const selectionHudLabel = transformSelection?.label ?? (selected ? getEntityLabel(selected) : null);
   const sceneKey = track ? getSceneKey(track) : null;
+  // What the scene build is doing right now, and which build has already settled. `settledScene`
+  // is derived state rather than a ref so the overlay can stay up between the document arriving
+  // and the scene effect running -- otherwise it would blink off for a frame in between.
+  const [sceneProgress, setSceneProgress] = useState<TrackLoadProgress | null>(null);
+  const [settledScene, setSettledScene] = useState<string | null>(null);
+  const sceneBuildKey = sceneKey === null ? null : `${sceneKey}#${sceneRevision}`;
   const gobjSignature = track ? getGobjSignature(track) : 'nogobj';
   const routeItems = track ? getRouteVisibilityItems(track) : [];
   trackRef.current = track;
@@ -1229,8 +1244,11 @@ export function Noclip3DViewport({
       setStatus('Drop a Mario Kart Wii .szs track anywhere in the editor');
       viewer.setScene(null);
       deliverVisualScene(null);
+      setSceneProgress(null);
+      setSettledScene(null);
       return;
     }
+    const buildKey = `${sceneKey}#${sceneRevision}`;
 
     let cancelled = false;
     const sceneViewer: Viewer = viewer;
@@ -1242,13 +1260,28 @@ export function Noclip3DViewport({
       // away, which is the reason the material editor never rebuilt in the first place.
       const savedController = isRebuild ? sceneViewer.cameraController : null;
       const savedCameraMatrix = isRebuild ? mat4.clone(sceneViewer.camera.worldMatrix) : null;
+      // The vendored renderer types its progress with a plain `string` stage, because it must not
+      // import from `src/`. Everything it emits is one of ours; narrow it at the boundary.
+      const reportSceneProgress = (progress: { stage: string; label: string; detail?: string; fraction: number }) => {
+        if (!cancelled) setSceneProgress(progress as TrackLoadProgress);
+      };
       try {
         if (isRebuild) onSceneReloadRef.current?.({ phase: 'start', message: 'Rebuilding the track with your edits...' });
         setStatus(isRebuild ? 'Rebuilding the track with your edits...' : 'Loading track in noclip Mario Kart Wii renderer...');
+        reportSceneProgress({
+          stage: 'scene-start',
+          label: isRebuild ? 'Rebuilding the track' : 'Building the track',
+          fraction: sceneFraction(0),
+        });
         sceneRef.current?.destroy(sceneViewer.gfxDevice);
         for (const item of destroyablePoolRef.current) item.destroy(sceneViewer.gfxDevice);
         destroyablePoolRef.current = [];
 
+        // Repacking a 30 MB archive is a few hundred milliseconds of its own; let the overlay
+        // paint the label first so the user sees the bar move rather than a frozen page.
+        reportSceneProgress({ stage: 'scene-packing', label: 'Packing the track for the renderer', fraction: sceneFraction(0.01) });
+        await yieldToHost();
+        if (cancelled) return;
         const archiveBytes = buildU8(loadingTrack.archiveEntries);
         const dataShare = new DataShare();
         const dataFetcher = makeLocalDataFetcher(commonArchiveUrl ?? smokeCommonUrl);
@@ -1261,6 +1294,7 @@ export function Noclip3DViewport({
           inputManager: sceneViewer.inputManager,
           viewerInput: sceneViewer.viewerRenderInput,
           initialSceneTime: 0,
+          onProgress: reportSceneProgress,
         };
         const scene = await createSceneFromU8Buffer(context, new ArrayBufferSlice(archiveBytes.buffer, archiveBytes.byteOffset, archiveBytes.byteLength));
         if (cancelled) {
@@ -1268,6 +1302,7 @@ export function Noclip3DViewport({
           if (isRebuild) onSceneReloadRef.current?.({ phase: 'failed', message: 'The refresh stopped because another track started loading.' });
           return;
         }
+        setSceneProgress({ stage: 'scene-finishing', label: 'Finishing the track', fraction: 1 });
         sceneRef.current = scene;
         // Everything the editor had pushed into the old scene went away with it; these maps say
         // what is applied *to the scene*, so they have to start empty or the effects below will
@@ -1294,10 +1329,15 @@ export function Noclip3DViewport({
         if (isRebuild) {
           onSceneReloadRef.current?.({ phase: 'done', message: 'Track refreshed. The viewport is drawing the track as it would export.' });
         }
+        setSettledScene(buildKey);
+        setSceneProgress(null);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         setStatus(message);
         if (isRebuild) onSceneReloadRef.current?.({ phase: 'failed', message: `The track could not be refreshed: ${message}` });
+        // The overlay must come down on failure too; the message is on the status line.
+        setSettledScene(buildKey);
+        setSceneProgress(null);
       }
     }
 
@@ -3628,6 +3668,15 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     controller.update(viewer.inputManager, 0);
   }
 
+  // One bar for the whole job. The reading phase (in the worker) owns the first 45 %, the scene
+  // build the rest; `settledScene` covers the handover, where the document exists but the scene
+  // effect has not run yet, so the overlay never blinks out mid-load.
+  const sceneOutstanding = sceneBuildKey !== null && settledScene !== sceneBuildKey;
+  const overlayProgress: TrackLoadProgress | null =
+    loadProgress ??
+    sceneProgress ??
+    (sceneOutstanding ? { stage: 'scene-start', label: 'Building the track', fraction: sceneFraction(0) } : null);
+
   return (
     <section
       ref={viewportRef}
@@ -3774,6 +3823,9 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
       {!playtestActive && <div className="rendererStatus">{status}</div>}
       {!playtestActive && selectionHudLabel && <div className="selectionHud">{selectionHudLabel}</div>}
       {overlay}
+      {!playtestActive && overlayProgress && (
+        <LoadingOverlay title={overlayProgress.label} detail={overlayProgress.detail} progress={overlayProgress.fraction} />
+      )}
     </section>
   );
 }

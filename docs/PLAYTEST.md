@@ -143,9 +143,17 @@ away rather than recycling it.
   Emscripten a `locateFile`, so Vite emits the binary as a normal hashed asset. Pass `wasmBinary`
   instead when you already have the bytes (the tests do this, because Node cannot resolve Vite's
   asset URL).
-- **Input.** `setInput()` maps the four buttons to Kinoko's bitmask and quantizes each stick axis
-  to the 15 positions the game accepts, `(n - 7) / 7` for n in 0..14. Anything else fails
-  `RaceInputState::isValid()` and the frame's input is thrown away, so quantizing is not optional.
+- **Input.** `setInput()` maps the four buttons to Kinoko's bitmask with `packPlaytestButtons()`
+  and quantizes each stick axis to the 15 positions the game accepts, `(n - 7) / 7` for n in
+  0..14. Anything else fails `RaceInputState::isValid()` and the frame's input is thrown away, so
+  quantizing is not optional.
+- **Hop is brake.** Mario Kart Wii has one physical button for both: `RaceInputState` bit 0x2 is
+  "Braking/Drifting" and bit 0x8 is set *on top of it* when the button went down while
+  accelerating (`KPadGhostFaceButtonsStream`, `KPadController.hh`). `packPlaytestButtons()`
+  therefore raises 0x2 for `brake` **or** `drift`. Without that, the hop button was pure 0x8: it
+  could not brake, and it could not charge a stand-still mini-turbo, because
+  `KartMove::calcSsmtStart` requires the `Accelerate` and `Brake` status bits together. While the
+  kart is moving the accelerate bit wins, so the extra brake bit costs a drift nothing.
 - **Traps.** Kinoko reports every unexpected condition with `PANIC` / `ASSERT`, which `printf` and
   then `abort()`. Under Emscripten that becomes a JavaScript `WebAssembly.RuntimeError` and the
   module instance is dead. Every entry point is wrapped: on a trap the runtime marks itself
@@ -284,10 +292,10 @@ While a session is running the CAME preview clock is skipped entirely; a playtes
 | Action | Keyboard | Gamepad (standard mapping) |
 | --- | --- | --- |
 | Accelerate | Space or X | A (0) |
-| Brake / reverse | Z, ↓ or S | B (1) |
+| Brake / reverse | Z, ↓, S or Shift | B (1), RB (5) or RT (7) |
 | Steer | ← → or A / D | left stick X |
 | Stick up/down | ↑ ↓ or W / S | left stick Y (up is positive) |
-| Stand-still mini-turbo | hold accelerate + brake at a standstill, release brake | same |
+| Stand-still mini-turbo | hold accelerate + Shift (or brake) at a standstill, release it | same |
 | Hop / drift | Shift | RB (5) or RT (7) |
 | Item | C | LB (4) |
 | Trick / wheelie | E (up), Q (down) | d-pad up / down |
@@ -390,3 +398,14 @@ It opens the popover, starts a session, holds accelerate through the countdown i
 asserts the HUD reaches stage `race` with a rising speed, steers, restarts, exits, and checks the
 editor came back with the same KMP overlay it had before. Screenshots land in `docs/screenshots/`
 as `playtest-01-menu`, `-02-countdown`, `-03-racing`, `-04-back-in-editor`.
+
+`scripts/probe-playtest-hop.js` covers the hop button specifically, on a kart with manual drift:
+
+- accelerate + Shift at a standstill charges a stand-still mini-turbo (`data-playtest-charge`
+  reaches `standstill:1:100`) and releasing Shift fires it — measured **195 km/h** against
+  **115 km/h** for the same two seconds of plain acceleration;
+- Shift while moving still hops and drifts: the charge goes `drift:0` → `drift:1` (blue);
+- the same through a gamepad, with a fake `navigator.getGamepads` holding buttons 0 and 5.
+
+It needs manual drift — automatic drift ignores the hop button entirely, because `KartState`
+only reads `DriftInput` when `AutoDrift` is off — so the probe clicks "Manual" before starting.

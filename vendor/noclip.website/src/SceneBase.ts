@@ -19,6 +19,22 @@ export interface GraphObjBase extends Destroyable {
     prepareToRender(device: GfxDevice, renderInstManager: GfxRenderInstManager, viewerInput: ViewerRenderInput): void;
 }
 
+/**
+ * One step of a cooperative scene build. Local addition for the track editor: building a Mario
+ * Kart Wii scene parses a dozen BRRES archives and uploads their textures, which is seconds of
+ * main-thread work, so the scene reports what it is doing and yields between steps.
+ */
+export interface SceneLoadProgress {
+    /** Stable identifier for the step. */
+    stage: string;
+    /** Title line for the loading overlay. */
+    label: string;
+    /** Second line, when there is something countable to say. */
+    detail?: string;
+    /** 0..1 through the whole "open a track" job, not just the scene build. */
+    fraction: number;
+}
+
 export interface SceneContext {
     device: GfxDevice;
     dataFetcher: DataFetcher;
@@ -28,6 +44,8 @@ export interface SceneContext {
     inputManager: InputManager;
     viewerInput: ViewerRenderInput;
     initialSceneTime: number;
+    /** Optional: receives the scene build's progress. See {@link SceneLoadProgress}. */
+    onProgress?: (progress: SceneLoadProgress) => void;
 }
 
 export interface SceneDesc {

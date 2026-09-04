@@ -36,7 +36,7 @@ export interface PlaytestHudView {
 }
 
 export interface PlaytestHudCharge {
-  /** `"Stand-still mini-turbo"`, `"Release brake!"`, `"Mini-turbo ready"`, ... */
+  /** `"Stand-still mini-turbo"`, `"Release to boost!"`, `"Mini-turbo ready"`, ... */
   label: string;
   /** 0..100, whole percent. */
   percent: number;
@@ -54,7 +54,7 @@ export function playtestHudCharge(miniTurbo: PlaytestMiniTurbo): PlaytestHudChar
       kind: 'standstill',
       level: miniTurbo.level >= 1 ? 1 : 0,
       percent: miniTurbo.level >= 1 ? 100 : percent,
-      label: miniTurbo.level >= 1 ? 'Release brake!' : 'Stand-still mini-turbo',
+      label: miniTurbo.level >= 1 ? 'Release to boost!' : 'Stand-still mini-turbo',
     };
   }
   if (miniTurbo.level >= 2) return { kind: 'drift', level: 2, percent: 100, label: 'Super mini-turbo ready' };

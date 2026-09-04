@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { NEUTRAL_PLAYTEST_INPUT } from '../../lib/playtest/types';
 import {
+  packPlaytestButtons,
+  PLAYTEST_BUTTON_ACCELERATE,
+  PLAYTEST_BUTTON_BRAKE,
+  PLAYTEST_BUTTON_DRIFT,
+} from '../../lib/playtest/kinokoRuntime';
+import {
+  PLAYTEST_CONTROL_HINTS,
   PLAYTEST_EXIT_CODE,
   PLAYTEST_RESTART_CODE,
   applyDeadZone,
@@ -144,5 +151,39 @@ describe('mergePlaytestInputs', () => {
   it('prefers whichever device is flicking a trick', () => {
     expect(mergePlaytestInputs(keys(), playtestInputFromGamepad(pad({ pressed: [12] }))).trick).toBe('up');
     expect(mergePlaytestInputs(keys('KeyQ'), playtestInputFromGamepad(pad())).trick).toBe('down');
+  });
+});
+
+describe('the hop button as brake', () => {
+  // The game has one physical button for hop/drift and brake. `playtestInput` keeps the two
+  // logical buttons apart; `packPlaytestButtons` is where they become the same bit, so check the
+  // end-to-end result here as well as in `kinokoRuntime.test.ts`.
+  it('sends Shift to the runtime as brake + drift, so it can brake and charge an SSMT', () => {
+    expect(packPlaytestButtons(keys('ShiftLeft'))).toBe(PLAYTEST_BUTTON_BRAKE | PLAYTEST_BUTTON_DRIFT);
+    expect(packPlaytestButtons(keys('Space', 'ShiftLeft'))).toBe(
+      PLAYTEST_BUTTON_ACCELERATE | PLAYTEST_BUTTON_BRAKE | PLAYTEST_BUTTON_DRIFT,
+    );
+  });
+
+  it('does the same for the gamepad bumper and trigger', () => {
+    for (const button of [5, 7]) {
+      const merged = mergePlaytestInputs(keys(), playtestInputFromGamepad(pad({ pressed: [0, button] })));
+      expect(merged.drift).toBe(true);
+      expect(packPlaytestButtons(merged)).toBe(
+        PLAYTEST_BUTTON_ACCELERATE | PLAYTEST_BUTTON_BRAKE | PLAYTEST_BUTTON_DRIFT,
+      );
+    }
+  });
+
+  it('does not make the brake button hop', () => {
+    expect(packPlaytestButtons(keys('KeyZ')) & PLAYTEST_BUTTON_DRIFT).toBe(0);
+    expect(packPlaytestButtons(playtestInputFromGamepad(pad({ pressed: [1] }))!) & PLAYTEST_BUTTON_DRIFT).toBe(0);
+  });
+
+  it('tells the user in the control hints that hop brakes', () => {
+    const hints = new Map(PLAYTEST_CONTROL_HINTS.map((hint) => [hint.action, hint.keys]));
+    expect(hints.get('Brake / reverse')).toContain('Shift');
+    expect(hints.get('Hop / drift')).toContain('Shift');
+    expect(hints.get('Stand-still mini-turbo')).toContain('Shift');
   });
 });
