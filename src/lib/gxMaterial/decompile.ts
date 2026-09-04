@@ -555,8 +555,6 @@ export function decompileShaderReport(material: GxMaterialDoc): DecompileReport 
   return { graph: result, causes: ordered, rawStages: rawIndices.length, stages: material.tevStages.length };
 }
 
-export const __debugBuildGraph = buildGraph;
-
 export function decompileShader(material: GxMaterialDoc): ShaderGraph {
   return decompileShaderReport(material).graph;
 }

@@ -319,6 +319,10 @@ And after, over the full 16671-material corpus:
 | --- | --- | --- | --- | --- | --- |
 | alpha input reads texture alpha, with no texture bound | 30 | 0 | 0 | 30 | 0 |
 
+![A driver model drawn entirely as nodes](screenshots/shader-driver-01-graph.png)
+
+![A kart body: two textures blended by one of them's alpha](screenshots/shader-kart-01-graph.png)
+
 **What is still raw, and why.** A stage that names `TEXA` (or `TEXC`) while its `texMap` is
 `TEXMAP_NULL` reads a texture unit with nothing in it. On hardware that is undefined; in the graph
 a `texture` node always names a layer, so there is nothing honest to draw. Those 30 stages, spread
@@ -327,6 +331,24 @@ exactly that, and the Stages tab shows every field. Two other defects retail con
 sampling a slot the material has no layer for, and naming a lighting channel it does not have —
 *are* drawn as nodes now, with a warning badge rather than a refusal, because `applyMaterial` is
 the backstop that refuses the ones an edit introduces.
+
+![The one shape that is still a Special step, saying so](screenshots/material-graph-03-special-step.png)
+
+The browser checks are `scripts/probe-studio-shader.js` (the Model Studio over a character archive)
+and `scripts/probe-material-graph.js` (Material mode over a track):
+
+```bash
+PROBE_PREFIX=shader PROBE_PORT=9451 PROBE_SIZE=1720x1000   PROBE_MODEL=/dev-tracks/la_bike-bk-1.szs PROBE_SHOT=shader-kart   node scripts/studio-probe.mjs "http://127.0.0.1:5235/" scripts/probe-studio-shader.js
+
+PROBE_PREFIX=matgraph PROBE_PORT=9455 PROBE_SIZE=1720x1000   node scripts/ui-shell-probe.mjs "http://127.0.0.1:5235/?track=/dev-tracks/Z0.szs"   scripts/probe-material-graph.js
+```
+
+The studio probe walks every material in the archive, then edits one through a node that did not
+exist before, measures that the rendered pixels move, exports, and opens the export again to check
+the edit is in the bytes. Runs at the time of writing: `la_bike-bk-1.szs` 13 materials / 29 stages,
+`mc_kart-ca-2.szs` 10 / 23, `Driver/bds-1.brres` 2 / 6 — zero Special steps in all three, and the
+untouched export byte-identical to what was opened. Material mode on `Z0.szs`: 54 materials in 11
+archives, zero Special steps.
 
 ### Adding a node type
 
@@ -535,6 +557,8 @@ The palette has two sections. Everything above the line is what a material is no
 **Advanced** holds the four that are the hardware showing through — *Alpha as colour*, *Stored
 value*, *Compare* and *Warp coordinates*. Both are always visible: the heading is a signpost, not a
 disclosure, because a node nobody can find may as well not exist.
+
+![The add-node palette, scrolled to its Advanced half](screenshots/material-graph-02-palette.png)
 
 Sockets carry either `rgb` or `alpha`; there is no `rgba` wire, because the colour and alpha
 pipelines are compiled separately and zipped onto the same stages. *Alpha as colour* is the single
