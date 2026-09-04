@@ -291,6 +291,13 @@ it runs -27..36. Both are exact.
 
 ## Editor
 
+> The same inspector and the same shader-graph dock are also the right-hand and bottom panels of
+> the **Model Studio** (`docs/STUDIO.md`), which drives them over a standalone model archive
+> instead of a track. Both take a `GxMaterialDoc` and a change callback and know nothing about
+> `TrackDocument`, so neither needed a fork; what differs is only who owns the bytes and the undo
+> stack. Material mode's **Open in Model Studio** button, under the viewport overlay, hands the
+> selected material's archive over.
+
 Material mode sits next to KMP / Camera / Model / Visual in the top bar. Like every other mode it
 is a hook (`useMaterialMode` in `src/ui/material/MaterialMode.tsx`) that returns a `ModeUi`; the
 shell composes it. KMP overlays are hidden while it is active, so the viewport shows what the game

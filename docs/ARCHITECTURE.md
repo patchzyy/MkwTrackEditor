@@ -11,7 +11,8 @@ geometry helpers in `src/lib/meshPick.ts` rather than duplicating them in the ve
 
 Companion documents: `docs/viewport-api.md` (the app ↔ viewport ↔ renderer contract),
 `docs/UI.md` (the design system and panel shell), `docs/PLAYTEST.md` (the in-browser playtest),
-`docs/MATERIALS.md` (the material and shader editor), `docs/WORKPLAN.md` (the shared brief).
+`docs/MATERIALS.md` (the material and shader editor), `docs/STUDIO.md` (the Model Studio),
+`docs/WORKPLAN.md` (the shared brief).
 
 ## Shell
 
@@ -22,6 +23,7 @@ Companion documents: `docs/viewport-api.md` (the app ↔ viewport ↔ renderer c
 | `src/ui/topbar/TopBar.tsx`, `FileMenu.tsx`, `recentFiles.ts` | Header bar: the file menu (open `.szs`, import `Common.szs`, recent files), undo/redo, export, and the editor-mode switch. |
 | `src/ui/components/` | The design system every panel is built from — `Button`, `Panel`, `Field`, `NumberInput`, `VectorInput`, `Select`, `Toggle`, `Tabs`, `SegmentedControl`, `TreeView`, `Menu`, `Popover`, `Tooltip`, `Toolbar`, `StatusBar`, `Toast`, `ShortcutOverlay`, `EmptyState`, `WelcomeOverlay`, `RefreshTrackButton`, `LoadingOverlay`, `AxisGizmo`, `ColorField` — plus the pure helpers behind them (`numberScrub.ts` for drag-to-scrub, `statusMessage.ts`, `treeModel.ts`) and `components.css`. Documented in `docs/UI.md`. |
 | `src/ui/Noclip3DViewport.tsx` | The viewport: canvas and scene lifecycle, picking, gizmos, drag/drop, camera control, camera playback, mesh picking and per-mesh transforms, and the `window.__mkwViewport` dev hook. See `docs/viewport-api.md`. |
+| `src/ui/studio/ModelStudio.tsx` | The Model Studio, a full-window workspace layered over the editor. `App` renders it when it is open and keeps the track editor mounted underneath. Documented in `docs/STUDIO.md`. |
 
 `NumberInput` is a text input carrying `role="spinbutton"` rather than `input[type=number]`, so it
 can support drag-to-scrub. Anything that looks for numeric fields (the UI probes, for instance) has
@@ -41,6 +43,31 @@ graph in place of the content browser).
 | `src/ui/model/` | Geometry: `ModelOutliner`, `ModelInspector`, `PlaceObjectPanel`, `useModelEditing.ts`. Selection is per-mesh and is baked into `course_model.brres` on export. |
 | `src/ui/visual/` | The track's look: `VisualOutliner` (archive/material/texture/animation browser), `VisualInspector`, `TextureInspector` + `TexturePreview`, `VisualRenderOverlay` (render presets), `visualArchive.ts`, `textureReplace.ts`, `visualScene.ts`, `useVisualArchive.ts`. |
 | `src/ui/material/` | One material at a time: `MaterialOutliner`, `MaterialInspector` + `sections/`, `ShaderGraphDock` (Graph / Stages), `GraphEditor` + `GraphNodeCard` + `graphModel.ts` (the node editor and its pure model), `StagesTable`, `graphStore.ts` (IndexedDB), `materialDoc.ts`, `materialOutlinerModel.ts`, `gxOptions.ts`, `materialScene.ts`. Documented in `docs/MATERIALS.md`. |
+
+## Model Studio (`src/ui/studio/`)
+
+A workspace over the track editor for one model: an orbit preview with its own canvas, `Viewer`
+and noclip scene, its animations on one transport, and the material inspector and shader graph
+reused verbatim from Material mode. It works with no track loaded, and when it was opened from a
+track archive its edits go back into the track document. Documented in `docs/STUDIO.md`.
+
+| File | Responsibility |
+| --- | --- |
+| `ModelStudio.tsx` | The workspace shell: header, layout, dock sizing, keyboard, and the `window.__mkwStudio` dev hook. |
+| `useStudioSession.ts` | All of the state: opening a file, the decoded material documents, the shader graph, the transport, the render toggles, the studio's own undo stack, and the bridge that commits an edit into a loaded track. |
+| `StudioViewport.tsx` | Canvas, `Viewer`, `StudioScene`, the orbit camera (never pointer lock), click/hover picking, and the frame readback the probes sample. |
+| `StudioOutliner.tsx` | Archives → models → materials, plus textures and animations, with an eye on what is drawn and a play button on what moves. |
+| `StudioTransportBar.tsx` | Play/pause, step, scrub, speed and loop under the viewport. |
+| `studioDocument.ts` | What is open: `.brres` / `.u8` / `.szs`, the BRRES list inside it, replacement, and export — including the rule that an untouched file exports byte for byte. |
+| `studioOutlinerModel.ts`, `animationTransport.ts` | The pure tree/search model and the pure transport maths. |
+| `studioScene.ts` | The structural contract for the vendored `StudioScene`, so `src/ui` never imports a vendored type. |
+| `studioRecent.ts`, `studioLaunch.ts` | Recent files in IndexedDB, and the request the rest of the editor makes to open the studio. |
+
+`vendor/noclip.website/src/MarioKartWii/StudioScene.ts` is the scene behind it: every MDL0 of the
+loaded archives as an `MDL0ModelInstance`, a three-point light rig in every light set (which is
+what stops a character rendering as a flat dark-blue silhouette), a ground grid, one animation
+clock, picking against the *animated* pose, and the same `reloadEditorMaterial` /
+`addEditorTexture` hot-swap API the track scene has.
 
 ## Playtest (`src/ui/playtest/`, `src/lib/playtest/`)
 
@@ -195,6 +222,7 @@ given. Nothing outside the smoke path reads any of the `smoke*` parameters.
 | `vendor-reachability.mjs` | Recomputes the transitive import closure of `vendor/noclip.website/` from `src/**` and `scripts/**` and reports (or `--delete`s) anything outside it, so the trimmed fork does not re-accumulate dead weight. Also flags relative imports that do not resolve. |
 | `browser-smoke.mjs`, `browser-smoke-real-tracks.mjs` | The `?smokeTrack=` end-to-end browser checks. |
 | `camera-ui-probe.mjs`, `kmp-ui-probe.mjs`, `probe-model-ui.mjs`, `viewport-dev-probe.mjs` | Harnesses that drive a real off-screen Edge window and run a probe body against it. Headless Edge cannot run noclip, so these are not `--headless`. |
+| `studio-probe.mjs`, `studio-dev-restart.sh` | The Model Studio's harness — it waits on `window.__mkwStudio`, so it can drive a studio session with no track loaded — and the dev-server restart the probes need, because Vite's watcher does not see edits inside a git worktree on this host. |
 | `probe-*.js` | The probe bodies those harnesses execute (`probe-kmp-mode-ui.js`, `probe-camera-ui.js`, `probe-model-mode-ui.js`, `probe-visual-ui.js`, `probe-material-ui.js`, and the older single-feature ones). |
 | `build-*.mjs` | The asset-database builders that generate what lives under `public/data/`. |
 
@@ -212,3 +240,5 @@ Unit tests sit next to what they cover. The ones that matter most:
 | `src/lib/meshExport.test.ts`, `meshEdits.test.ts`, `brres/*.test.ts` | The BRRES writer, end to end and per layer. `brres/resDic.test.ts` proves every rebuilt name tree resolves under the console-side lookup. |
 | `src/ui/visual/visualExport.test.ts` | A texture replacement and a fog edit applied to real tracks, exported, re-read and re-parsed. |
 | `src/ui/objects/objectProfiles.test.tsx`, `src/ui/inspector/Inspector.test.tsx`, `src/ui/labels.test.ts` | That every object has a usable inspector and that no raw section code reaches the user. |
+| `src/ui/studio/studioDocument.test.ts` | What the Model Studio opens and exports: an untouched `.brres` / `.u8` / `.szs` comes back byte for byte, and an edited archive still reproduces every file it did not touch. |
+| `src/ui/studio/animationTransport.test.ts`, `studioOutlinerModel.test.ts`, `studioRecent.test.ts` | The studio's transport maths, its outliner tree and search, and its recent-files list. |
