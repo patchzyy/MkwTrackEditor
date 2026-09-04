@@ -134,6 +134,11 @@ export function createBasicRRESRendererFromU8Buffer(device: GfxDevice, buffer: A
 
 export async function createSceneFromU8Buffer(context: SceneContext, buffer: ArrayBufferSlice) {
     const device = context.device;
+    // Local addition for the track editor: reading the node table of a 30 MB archive is long
+    // enough to drop a frame on its own, so say what is happening and let the page paint it.
+    context.onProgress?.({ stage: 'scene-packing', label: 'Reading the packed track', fraction: 0.46 });
+    if (context.onProgress !== undefined)
+        await new Promise<void>((resolve) => { requestAnimationFrame(() => { setTimeout(resolve, 0); }); });
     const arc = U8.parse(buffer);
 
     // If we have a course.kmp, that means we're a Mario Kart Wii archive.

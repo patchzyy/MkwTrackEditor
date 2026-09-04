@@ -16,7 +16,7 @@ import AnimationController from '../AnimationController.js';
 import { fillSceneParamsDataOnTemplate, GXRenderHelperGfx } from '../gx/gx_render.js';
 import { GfxDevice, GfxFrontFaceMode } from '../gfx/platform/GfxPlatform.js';
 import { computeModelMatrixSRT, computeModelMatrixS, MathConstants, scaleMatrix } from '../MathHelpers.js';
-import { SceneContext, GraphObjBase } from '../SceneBase.js';
+import { SceneContext, GraphObjBase, SceneLoadProgress } from '../SceneBase.js';
 import { EggLightManager, parseBLIGHT } from '../rres/Egg.js';
 import { GfxRendererLayer, GfxRenderInstList, GfxRenderInstManager } from '../gfx/render/GfxRenderInstManager.js';
 import { CameraController } from '../Camera.js';
@@ -437,6 +437,69 @@ function getObjFlowResourceNames(obj: ObjFlowObj): string[] {
             const baseName = resource.split('/').pop() ?? resource;
             return /\.[a-z0-9]+$/i.test(baseName) ? baseName : `${baseName}.brres`;
         });
+}
+
+/**
+ * Local addition for the track editor: a cooperative scene build.
+ *
+ * `createSceneFromU8Archive` parses a dozen BRRES archives, uploads their textures and spawns
+ * every KMP object. Run in one go that is several seconds of blocked main thread with nothing on
+ * screen. `SceneBuildReporter` splits it into steps that report what they are doing and hand the
+ * browser a chance to paint in between.
+ *
+ * The bar is shared with the worker that read the archive, so the fractions here are already
+ * offsets into the whole job: `SCENE_PHASE_START` is where reading finished.
+ */
+const SCENE_PHASE_START = 0.45;
+
+/** Yields on a time budget: after *every* object a 900-object track would take 900 frames. */
+class SceneBuildReporter {
+    private lastYield: number = this.now();
+
+    constructor(private readonly onProgress: ((progress: SceneLoadProgress) => void) | undefined, private readonly budgetMs: number = 8) {}
+
+    /** `fraction` is 0..1 through the scene build; it is rescaled onto the shared bar. */
+    public report(stage: string, label: string, fraction: number, detail?: string): void {
+        if (this.onProgress === undefined)
+            return;
+        const clamped = Math.max(0, Math.min(1, fraction));
+        this.onProgress({ stage, label, detail, fraction: SCENE_PHASE_START + clamped * (1 - SCENE_PHASE_START) });
+    }
+
+    /** Has this step been running longer than one frame's worth of work? */
+    public yieldDue(): boolean {
+        return this.onProgress !== undefined && this.now() - this.lastYield >= this.budgetMs;
+    }
+
+    /** Yields unconditionally; for the boundaries between genuinely heavy steps. */
+    public async yieldNow(): Promise<void> {
+        if (this.onProgress === undefined) {
+            // Nobody is watching (a headless or scripted build): do not pay for frames.
+            this.lastYield = this.now();
+            return;
+        }
+        await yieldToBrowser();
+        this.lastYield = this.now();
+    }
+
+    private now(): number {
+        return typeof performance !== 'undefined' ? performance.now() : Date.now();
+    }
+}
+
+/**
+ * Awaiting a promise resolved *inside* a `requestAnimationFrame` callback resumes as a microtask
+ * still inside that callback, so the work after the await runs before the frame is painted -- the
+ * page stays frozen and the yield buys nothing. Wait for a frame, then for a task after it.
+ */
+async function yieldToBrowser(): Promise<void> {
+    await new Promise<void>((resolve) => {
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => { setTimeout(resolve, 0); });
+            return;
+        }
+        setTimeout(resolve, 0);
+    });
 }
 
 class ModelCache {
@@ -4724,17 +4787,24 @@ class MarioKartWiiSceneDesc implements Viewer.SceneDesc {
     }
 
     public static async createSceneFromU8Archive(context: SceneContext, arc: U8.U8Archive): Promise<MarioKartWiiRenderer> {
+        const build = new SceneBuildReporter(context.onProgress);
+        build.report('scene-common', 'Loading the shared game objects', 0.02);
         const commonCache = await context.dataShare.ensureObject(`MarioKartWii/CommonCache`, async () => {
             const buffer = await context.dataFetcher.fetchData(`MarioKartWii/Race/Common.szs`);
+            build.report('scene-common', 'Loading the shared game objects', 0.04, 'Unpacking Common.szs');
+            await build.yieldNow();
             const commonArc = await loadSZS(buffer);
             const extraArcs: U8.U8Archive[] = [];
             try {
                 const extractedAssetBuffer = await context.dataFetcher.fetchData(`MarioKartWii/Race/Course/ExtractedAssets.u8`);
+                build.report('scene-common', 'Loading the shared game objects', 0.07, 'Reading the extracted assets');
+                await build.yieldNow();
                 extraArcs.push(U8.parse(extractedAssetBuffer));
             } catch {
             }
             try {
                 const previewDummyBuffer = await context.dataFetcher.fetchData(`MarioKartWii/Race/PreviewDummies.u8`);
+                await build.yieldNow();
                 extraArcs.push(U8.parse(previewDummyBuffer));
             } catch {
             }
@@ -4742,31 +4812,49 @@ class MarioKartWiiSceneDesc implements Viewer.SceneDesc {
         });
 
         const device = context.device;
+        build.report('scene-course', 'Reading the track layout', 0.1);
+        await build.yieldNow();
         const kmp = parseKMP(assertExists(arc.findFileData(`./course.kmp`)));
-        console.log(arc, kmp);
         const renderer = new MarioKartWiiRenderer(context, commonCache, arc, arc.findFileData(`./posteffect/posteffect.blight`) === null);
         const modelCache = renderer.modelCache, cache = renderer.renderHelper.renderCache;
 
+        // The course model is the single heaviest step: one BRRES parse plus every track texture
+        // uploaded to the GPU. Announce it before it starts and give the page a frame to draw
+        // that, so the overlay is not frozen on the previous label for a second and a half.
+        build.report('scene-course', 'Building the track model', 0.14);
+        await build.yieldNow();
         const courseRRES = modelCache.ensureRRES(device, renderer, `./course_model.brres`, arc.findFileData(`./course_model.brres`));
         const courseInstance = new CourseBGRenderer(this.createModelInstanceFromRRES(renderer, courseRRES, 'course'), './course_model.brres');
         courseInstance.modelInstance.setSortKeyLayer(GfxRendererLayer.OPAQUE);
         renderer.baseObjects.push(courseInstance);
         mat4.copy(courseInstance.modelMatrix, posMtx);
 
+        build.report('scene-sky', 'Building the sky', 0.3);
+        await build.yieldNow();
         const skyboxRRES = modelCache.ensureRRES(device, renderer, `./vrcorn_model.brres`, arc.findFileData(`./vrcorn_model.brres`));
         const skyboxInstance = new CourseBGRenderer(this.createModelInstanceFromRRES(renderer, skyboxRRES, 'vrcorn'), './vrcorn_model.brres');
         skyboxInstance.modelInstance.setSortKeyLayer(GfxRendererLayer.OPAQUE);
         renderer.baseObjects.push(skyboxInstance);
         mat4.copy(skyboxInstance.modelMatrix, posMtx);
 
+        build.report('scene-objects', 'Placing objects', 0.4, kmp.gobj.length > 0 ? `Object 1 of ${kmp.gobj.length}` : undefined);
+        await build.yieldNow();
         for (let i = 0; i < kmp.gobj.length; i++) {
             try {
                 this.spawnObjectFromKMP(device, renderer, arc, kmp.gobj[i], kmp.poti);
             } catch (error) {
                 console.warn(`Failed to spawn scene object ${hexzero(kmp.gobj[i].objectId, 4)}`, error);
             }
+            // The first object of a kind parses a whole BRRES and uploads its textures; the rest
+            // are cheap. Yielding on a time budget keeps the stall near one frame either way.
+            if (build.yieldDue()) {
+                build.report('scene-objects', 'Placing objects', 0.4 + (0.5 * (i + 1)) / kmp.gobj.length, `Object ${i + 1} of ${kmp.gobj.length}`);
+                await build.yieldNow();
+            }
         }
 
+        build.report('scene-effects', 'Applying the lighting and effects', 0.92);
+        await build.yieldNow();
         const blightData = arc.findFileData(`./posteffect/posteffect.blight`);
         if (blightData !== null) {
             const blightRes = parseBLIGHT(blightData);
@@ -4800,6 +4888,7 @@ class MarioKartWiiSceneDesc implements Viewer.SceneDesc {
             }
         }
 
+        build.report('scene-finishing', 'Finishing the track', 1);
         return renderer;
     }
 

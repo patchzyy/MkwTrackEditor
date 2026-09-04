@@ -613,6 +613,7 @@ export function App() {
             commonArchiveUrl={commonArchiveUrl}
             sceneRevision={sceneRevision}
             onSceneReload={onSceneReload}
+            loadProgress={trackDocument.loadProgress}
             tool={tool}
             viewMode={viewMode}
             collisionVisible={collisionVisible}

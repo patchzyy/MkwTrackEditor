@@ -6,7 +6,11 @@ import { loadCourseAssetDatabase, type CourseAssetDatabase } from '../../lib/cou
 import { parseNoclipBrresSummary, type NoclipBrresSummary } from '../../lib/noclipBrres';
 import { getObjFlowResourceNames, type CommonResourceArchive } from '../../lib/objflow';
 import { loadPersistedCommonSzs, savePersistedCommonSzs } from '../../lib/persistedCommon';
-import { loadTrackBytes, loadTrackFile, type TrackDocument } from '../../lib/track';
+import type { TrackDocument } from '../../lib/track';
+import { loadTrack } from '../../lib/trackLoader';
+import type { TrackLoadProgress } from '../../lib/trackLoadProgress';
+import { getBrresThumbnail } from '../../lib/thumbnail';
+import type { U8Entry } from '../../lib/u8';
 import type { EditorHistory } from './useEditorHistory';
 
 /** URL query parameters the editor understands. */
@@ -22,6 +26,12 @@ export interface EditorUrlParams {
 
 export interface TrackDocumentState extends EditorUrlParams {
   track: TrackDocument | null;
+  /**
+   * Live progress of the track currently being read, or `null` when nothing is loading. The
+   * viewport turns this into the loading overlay and continues the same bar with its own
+   * scene-build progress.
+   */
+  loadProgress: TrackLoadProgress | null;
   /** Mirrors `track` so callbacks can read the newest document synchronously. */
   trackRef: MutableRefObject<TrackDocument | null>;
   setTrack: Dispatch<SetStateAction<TrackDocument | null>>;
@@ -60,8 +70,16 @@ export function useTrackDocument({ setStatus }: { setStatus: Dispatch<SetStateAc
   const [courseAssetDb, setCourseAssetDb] = useState<CourseAssetDatabase | null>(null);
   const [commonBrresSummaries, setCommonBrresSummaries] = useState<Record<string, NoclipBrresSummary>>({});
   const [commonLoadStatus, setCommonLoadStatus] = useState('idle');
+  const [loadProgress, setLoadProgress] = useState<TrackLoadProgress | null>(null);
 
   const trackRef = useRef<TrackDocument | null>(track);
+  /**
+   * The entry list the current `projectState` was built from. The worker already built it for the
+   * track it just read, so the effect below must not immediately throw that away and parse every
+   * BRRES a second time on the main thread.
+   */
+  const projectStateEntriesRef = useRef<U8Entry[] | null>(null);
+  const loadAbortRef = useRef<AbortController | null>(null);
   const commonArchiveObjectUrlRef = useRef<string | null>(null);
   const historyRef = useRef<EditorHistory | null>(null);
 
@@ -93,6 +111,80 @@ export function useTrackDocument({ setStatus }: { setStatus: Dispatch<SetStateAc
     setStatus(`Loaded ${fileName}: ${loaded.archiveEntries.length} files, ${loaded.kmp?.entities.length ?? 0} editable track records`);
   }
 
+  /**
+   * The one way a track gets opened: file picker, drag-and-drop, `?track=` and `?smokeTrack=` all
+   * come through here. Reading happens in `trackLoad.worker.ts` when the browser has workers, so
+   * the page keeps painting and the overlay's bar moves with real progress.
+   */
+  async function openTrackBytes(bytes: Uint8Array, fileName: string, options: { brresSummaryLimit?: number } = {}) {
+    loadAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadAbortRef.current = controller;
+    setLoadProgress({ stage: 'fetching', label: `Opening ${fileName}`, fraction: 0 });
+    try {
+      const { track: loaded, projectState: loadedProjectState } = await loadTrack(bytes, fileName, {
+        brresSummaryLimit: options.brresSummaryLimit,
+        signal: controller.signal,
+        onProgress: (progress) => {
+          if (!controller.signal.aborted) setLoadProgress(progress);
+        },
+      });
+      if (controller.signal.aborted) return;
+      // Seed the Model-mode project state the worker already built, and record which entry list
+      // it belongs to so the effect below leaves it alone.
+      projectStateEntriesRef.current = loaded.archiveEntries;
+      setProjectState(loadedProjectState);
+      acceptLoadedTrack(loaded, fileName);
+      void fillInModelPreviews(loaded);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (loadAbortRef.current === controller) {
+        loadAbortRef.current = null;
+        setLoadProgress(null);
+      }
+    }
+  }
+
+  /**
+   * The worker has no DOM, so it reads the model archives without rendering a preview for them.
+   * The content browser wants those previews, but nothing is waiting on them: render them here
+   * afterwards, one per animation frame (the thumbnail service already paces itself), and patch
+   * them into the document in one go.
+   *
+   * Smallest archive first, so the tiles that are cheap to draw appear straight away. Measured
+   * on a production build of a retail track: 16-48 ms for the object archives, 125 ms for
+   * `vrcorn_model.brres` and 117 ms for a 4 MB `course_model.brres`. A render cannot be
+   * interrupted, so those are real hitches -- but they land after the track is on screen and the
+   * user can already drive the camera around, instead of in the middle of the load.
+   */
+  async function fillInModelPreviews(loaded: TrackDocument) {
+    const missing = Object.entries(loaded.brresSummaries)
+      .filter(([, summary]) => !summary.previewDataUrl && !summary.error)
+      .map(([path]) => ({ path, data: loaded.archiveEntries.find((entry) => entry.path === path)?.data }))
+      .filter((candidate): candidate is { path: string; data: Uint8Array } => !!candidate.data)
+      .sort((a, b) => a.data.byteLength - b.data.byteLength);
+    if (missing.length === 0) return;
+    const previews = new Map<string, string>();
+    for (const { path, data } of missing) {
+      const preview = await getBrresThumbnail(data);
+      if (preview) previews.set(path, preview);
+      // A newer track started loading; these previews are for a document nobody is looking at.
+      if (trackRef.current?.sourceId !== loaded.sourceId) return;
+    }
+    if (previews.size === 0) return;
+    setTrack((current) => {
+      if (!current || current.sourceId !== loaded.sourceId) return current;
+      const brresSummaries = { ...current.brresSummaries };
+      for (const [path, previewDataUrl] of previews) {
+        const summary = brresSummaries[path];
+        if (summary) brresSummaries[path] = { ...summary, previewDataUrl };
+      }
+      return { ...current, brresSummaries };
+    });
+  }
+
   useEffect(() => () => {
     if (commonArchiveObjectUrlRef.current) URL.revokeObjectURL(commonArchiveObjectUrlRef.current);
   }, []);
@@ -100,11 +192,18 @@ export function useTrackDocument({ setStatus }: { setStatus: Dispatch<SetStateAc
   useEffect(() => {
     let cancelled = false;
     if (!track) {
+      projectStateEntriesRef.current = null;
       setProjectState(null);
       return;
     }
+    // The archives are what the project state is derived from, so a change that leaves them alone
+    // (a selection, a KMP edit, the model previews arriving) must not re-parse every BRRES.
+    if (projectStateEntriesRef.current === track.archiveEntries) return;
+    const entries = track.archiveEntries;
     void buildEditorProjectState(track).then((state) => {
-      if (!cancelled) setProjectState(state);
+      if (cancelled) return;
+      projectStateEntriesRef.current = entries;
+      setProjectState(state);
     });
     return () => {
       cancelled = true;
@@ -183,15 +282,18 @@ export function useTrackDocument({ setStatus }: { setStatus: Dispatch<SetStateAc
     async function loadSmokeTrack() {
       try {
         setStatus('Loading browser smoke track...');
+        setLoadProgress({ stage: 'fetching', label: 'Downloading the track', fraction: 0 });
         const response = await fetch(url!);
         if (!response.ok) throw new Error(`Smoke track fetch failed: HTTP ${response.status}`);
         const pathName = new URL(url!, window.location.href).pathname;
         const fileName = decodeURIComponent(pathName.split('/').pop() || 'smoke.szs');
-        const loaded = await loadTrackBytes(new Uint8Array(await response.arrayBuffer()), fileName, { brresSummaryLimit: 4 });
         if (cancelled) return;
-        acceptLoadedTrack(loaded, fileName);
+        await openTrackBytes(new Uint8Array(await response.arrayBuffer()), fileName, { brresSummaryLimit: 4 });
       } catch (error) {
-        if (!cancelled) setStatus(error instanceof Error ? error.message : String(error));
+        if (!cancelled) {
+          setLoadProgress(null);
+          setStatus(error instanceof Error ? error.message : String(error));
+        }
       }
     }
     void loadSmokeTrack();
@@ -211,13 +313,17 @@ export function useTrackDocument({ setStatus }: { setStatus: Dispatch<SetStateAc
         const pathName = new URL(url!, window.location.href).pathname;
         const fileName = decodeURIComponent(pathName.split('/').pop() || 'track.szs');
         setStatus(`Loading ${fileName}...`);
+        setLoadProgress({ stage: 'fetching', label: `Downloading ${fileName}`, fraction: 0 });
         const response = await fetch(url!);
         if (!response.ok) throw new Error(`Track fetch failed: HTTP ${response.status}`);
-        const loaded = await loadTrackBytes(new Uint8Array(await response.arrayBuffer()), fileName);
+        const bytes = new Uint8Array(await response.arrayBuffer());
         if (cancelled) return;
-        acceptLoadedTrack(loaded, fileName);
+        await openTrackBytes(bytes, fileName);
       } catch (error) {
-        if (!cancelled) setStatus(error instanceof Error ? error.message : String(error));
+        if (!cancelled) {
+          setLoadProgress(null);
+          setStatus(error instanceof Error ? error.message : String(error));
+        }
       }
     }
     void loadStartupTrack();
@@ -263,9 +369,11 @@ export function useTrackDocument({ setStatus }: { setStatus: Dispatch<SetStateAc
     if (!file) return;
     try {
       setStatus(`Loading ${file.name}...`);
-      const loaded = await loadTrackFile(file);
-      acceptLoadedTrack(loaded, file.name);
+      setLoadProgress({ stage: 'fetching', label: `Opening ${file.name}`, fraction: 0 });
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      await openTrackBytes(bytes, file.name);
     } catch (error) {
+      setLoadProgress(null);
       setStatus(error instanceof Error ? error.message : String(error));
     }
   }
@@ -302,6 +410,7 @@ export function useTrackDocument({ setStatus }: { setStatus: Dispatch<SetStateAc
     track,
     trackRef,
     setTrack,
+    loadProgress,
     projectState,
     commonArchive,
     commonArchiveUrl,
