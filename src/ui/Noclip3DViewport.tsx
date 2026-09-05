@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type MutableRefObject, type PointerEvent, type ReactNode } from 'react';
-import { Eye, EyeOff, Move3D, RotateCcw, Scale3D } from 'lucide-react';
+import { CloudFog, Eye, EyeOff, Move3D, RotateCcw, Scale3D } from 'lucide-react';
 import { mat4, vec3, vec4 } from 'gl-matrix';
 import ArrayBufferSlice from '../../vendor/noclip.website/src/ArrayBufferSlice';
 import { CameraUpdateResult, FPSCameraController, OrthoCameraController, type Camera, type CameraController } from '../../vendor/noclip.website/src/Camera';
@@ -3735,6 +3735,16 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
             <option value="ortho">Ortho</option>
           </select>
         </label>
+        <button
+          type="button"
+          className={fogEnabled ? 'iconButton active' : 'iconButton'}
+          onClick={() => setFogEnabled((enabled) => !enabled)}
+          title={fogEnabled ? 'Disable course fog in this preview' : 'Enable course fog in this preview'}
+          aria-label={fogEnabled ? 'Disable course fog' : 'Enable course fog'}
+          aria-pressed={fogEnabled}
+        >
+          <CloudFog size={16} />
+        </button>
       </div>
       )}
       {!playtestActive && (
