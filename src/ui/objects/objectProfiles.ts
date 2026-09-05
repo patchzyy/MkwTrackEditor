@@ -28,6 +28,7 @@ export const guidanceOnlyObjectProfileNotes: Record<string, string> = {
   'Pylon Obstacle': 'This object does not use extra object settings here. Its setup comes from placement, spacing, and the line choice it creates.',
   'Rolling Ball': 'This object does not use extra object settings here. Its behavior is driven by mission logic and the related CPU setup, not per-object fields in this inspector.',
   'Toad Factory Alarm': 'This object does not use extra object settings here. Its setup comes from placement near the related machinery or hazard timing you want to emphasize.',
+  'Tournament Barrier': 'This barrier does not use extra object settings here. Its setup comes from exact placement, rotation, scale, and the matching course collision when it must physically block racers.',
   'Waterfall Effect': 'This object does not use extra object settings here. Its setup comes from placing the effect along the intended waterfall or flow volume so the particles support the scene.',
 };
 export interface ObjectInspectorProfile {
@@ -48,6 +49,13 @@ export function getObjectInspectorProfile(entity: KmpEntity, objFlow: CommonReso
       title: 'Invisible Barrier',
       summary: 'Invisible blocking volume. Use it when you need to stop glides, jumps, or out-of-bounds movement without adding visible geometry to the course.',
       tips: ['Scale it to the minimum volume that solves the problem so the invisible wall stays predictable.', 'Check the barrier from gameplay camera angles and from top view so it does not accidentally block a fair recovery line.'],
+    };
+  }
+  if (/(^|\s)(m_obj_kanban|m_obj_kanban_y)(\s|$)/.test(sourceText)) {
+    return {
+      title: 'Tournament Barrier',
+      summary: 'Visible Mii-kanban barrier used for tournament and WFC-era course layouts. Use the regular or yellow variant to close off a route while keeping the boundary obvious to players.',
+      tips: ['Place and rotate it from the racing line first, then use top or ortho view to keep the blocked width aligned with the surrounding road.', 'Keep the barrier just outside the intended driving space; pair it with course collision when players must not be able to pass through it.'],
     };
   }
   if (/(^|\s)(psea)(\s|$)/.test(sourceText)) {

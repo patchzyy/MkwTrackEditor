@@ -923,6 +923,9 @@ export function Noclip3DViewport({
   const [routeInsertPreview, setRouteInsertPreview] = useState<RouteInsertPreview | null>(null);
   const [routePanelOpen, setRoutePanelOpen] = useState(false);
   const [dofMode, setDofMode] = useState<DofMode>('off');
+  // Preview-only, matching Visual mode. Track view needs it as well: dense course fog can
+  // otherwise hide every mesh while the KMP overlays and transform gizmos are being used.
+  const [fogEnabled, setFogEnabled] = useState(true);
   const [internalRouteVisibility, setInternalRouteVisibility] = useState<Record<RouteVisibilityKey, boolean>>(createVisibilityState(true));
   // A stable signature so the controlled object identity does not re-run the overlay effect.
   const controlledVisibilitySignature = sectionVisibility
@@ -1445,6 +1448,13 @@ export function Noclip3DViewport({
     } | null;
     scene?.setEditorDOFMode?.(dofMode);
   }, [dofMode, viewerReady, sceneKey, sceneEpoch]);
+
+  useEffect(() => {
+    const scene = sceneRef.current as SceneGfx & {
+      setEditorFogEnabled?: (enabled: boolean) => void;
+    } | null;
+    scene?.setEditorFogEnabled?.(fogEnabled);
+  }, [fogEnabled, viewerReady, sceneKey, sceneEpoch]);
 
   // Push the editor mode into the renderer and reset mode-specific state.
   useEffect(() => {
@@ -3765,6 +3775,17 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
                     onChange={(event) => onChangeCollisionVisible?.(event.currentTarget.checked)}
                   />
                   <span>Collision</span>
+                </label>
+              </div>
+              <div className="routePanelSection">
+                <strong>Fog</strong>
+                <label className="routeVisibilityRow">
+                  <input
+                    type="checkbox"
+                    checked={fogEnabled}
+                    onChange={(event) => setFogEnabled(event.currentTarget.checked)}
+                  />
+                  <span>Course fog</span>
                 </label>
               </div>
               <div className="routePanelSection">

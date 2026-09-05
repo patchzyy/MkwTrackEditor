@@ -2,8 +2,8 @@
   "generatedFrom": "/mnt/g/Games/Wii/mkwii-europe/Race/Course",
   "generatedAt": "2026-05-06T00:58:34.817Z",
   "trackCount": 51,
-  "assetCount": 500,
-  "uniqueBaseNames": 198,
+  "assetCount": 502,
+  "uniqueBaseNames": 200,
   "assets": [
     {
       "id": "beginner_course.szs:./course_model.brres",
@@ -4432,6 +4432,24 @@
       "path": "./vrcorn_model.brres",
       "baseName": "vrcorn_model.brres",
       "kind": "skybox"
+    },
+    {
+      "id": "shared:M_obj_kanban.brres",
+      "source": "sharedObjectDir",
+      "trackFile": null,
+      "trackLabel": "Shared Object",
+      "path": "Object/M_obj_kanban.brres",
+      "baseName": "M_obj_kanban.brres",
+      "kind": "sharedObject"
+    },
+    {
+      "id": "shared:M_obj_kanban_y.brres",
+      "source": "sharedObjectDir",
+      "trackFile": null,
+      "trackLabel": "Shared Object",
+      "path": "Object/M_obj_kanban_y.brres",
+      "baseName": "M_obj_kanban_y.brres",
+      "kind": "sharedObject"
     },
     {
       "id": "shared:castle_tree1.brres",

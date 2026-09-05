@@ -4466,6 +4466,10 @@ class MarioKartWiiSceneDesc implements Viewer.SceneDesc {
             spawnSimpleObject(`StarRing`);
         } else if (objName === `M_obj_kanban`) {
             spawnSimpleObject(`M_obj_kanban`);
+        } else if (objName === `M_obj_kanban_y`) {
+            // Yellow tournament barrier. It is a separate GOBJ entry even though it shares
+            // most of its geometry with the regular Mii-kanban barrier.
+            spawnSimpleObject(`M_obj_kanban_y`);
         } else if (objName === `MiiStatueL1`) {
             spawnSimpleObject(`MiiStatueL1`);
         } else if (objName === `MiiStatueD1`) {

@@ -660,12 +660,12 @@ export class OrthoCameraController implements CameraController {
             this.xTarget += this.orbitSpeed * 1/25;
         }
 
-        let zTargetAdjAmt = inputManager.dz * 80.0;
-        if (inputManager.isKeyDown('KeyQ'))
-            zTargetAdjAmt -= 80.0;
-        if (inputManager.isKeyDown('KeyE'))
-            zTargetAdjAmt += 80.0;
-        this.zTarget += zTargetAdjAmt;
+        // Orthographic scale is perceived as a ratio, not a world-space distance. A fixed
+        // increment makes each wheel step look dramatically larger near the subject and too
+        // small far away. Apply a small multiplicative step instead, so every notch changes
+        // the visible scale by the same amount at every zoom level.
+        const zoomSteps = inputManager.dz + (inputManager.isKeyDown('KeyQ') ? -1 : 0) + (inputManager.isKeyDown('KeyE') ? 1 : 0);
+        this.zTarget *= Math.pow(1.12, zoomSteps);
         if (this.zTarget > -10)
             this.zTarget = -10;
         let zTargetDelta = this.zTarget - this.z;

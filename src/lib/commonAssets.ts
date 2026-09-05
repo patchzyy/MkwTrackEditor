@@ -4,7 +4,7 @@ import { getObjFlowResourceNames, mergeCommonResourceEntries, parseCommonResourc
 import { parseU8 } from './u8';
 import { featuredObjectIds } from '../ui/objects/objectCatalog';
 
-export const bundledCourseObjectResourceNames = new Set(['castle_tree1.brres', 'castle_tree2.brres', 'choropu.brres', 'kinoko_lift1.brres', 'kuribo.brres', 'npc_mii_a.brres', 'pakkun_f.brres', 'pendulum.brres']);
+export const bundledCourseObjectResourceNames = new Set(['castle_tree1.brres', 'castle_tree2.brres', 'choropu.brres', 'kinoko_lift1.brres', 'kuribo.brres', 'm_obj_kanban.brres', 'm_obj_kanban_y.brres', 'npc_mii_a.brres', 'pakkun_f.brres', 'pendulum.brres']);
 export async function withBundledCourseObjectResources(common: CommonResourceArchive, allowedBaseNames?: Set<string>): Promise<CommonResourceArchive> {
   try {
     const basePath = buildPublicAssetUrl('data/MarioKartWii/Race/Course/Object/');
