@@ -159,6 +159,25 @@ objectsRow.querySelector('.kmpTreeEye').click();
 await sleep(400);
 if (mkw.getKmpOverlay().points !== overlayBefore.points) return { error: 'showing the object layer again did not bring it back', log };
 
+// A selected object gets a model-sized outline (or a scale-aware fallback for model-less
+// objects such as airblock), not just the small point marker at its origin.
+expandRow(objectsRow);
+await sleep(200);
+const objectGroup = rows().find((row) => row.classList.contains('isGroup') && rows().indexOf(row) > rows().indexOf(objectsRow));
+if (!objectGroup) return { error: 'the objects section did not expand into object kinds', log };
+expandRow(objectGroup);
+await sleep(200);
+const objectRow = rows().find((row) => row.classList.contains('isEntity') && rows().indexOf(row) > rows().indexOf(objectGroup));
+if (!objectRow) return { error: 'the object kind did not expand into placed objects', log };
+clickRow(objectRow);
+await sleep(400);
+const selectedObjectOverlay = mkw.getKmpOverlay();
+note(`selected object bounds: ${selectedObjectOverlay.objectBounds}`);
+if (selectedObjectOverlay.objectBounds !== 1) return { error: 'selecting an object did not draw its bounding box', log };
+objectRow.querySelector('.kmpTreeLabel').dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+await sleep(500);
+await shot('kmp-ui-04-object-bounds');
+
 // --- 8. Multi-select: shift-range and the batch tools ------------------------
 expandRow(rowByLabel('Enemy routes'));
 await sleep(200);

@@ -664,7 +664,10 @@ export class OrthoCameraController implements CameraController {
         // increment makes each wheel step look dramatically larger near the subject and too
         // small far away. Apply a small multiplicative step instead, so every notch changes
         // the visible scale by the same amount at every zoom level.
-        const zoomSteps = inputManager.dz + (inputManager.isKeyDown('KeyQ') ? -1 : 0) + (inputManager.isKeyDown('KeyE') ? 1 : 0);
+        // InputManager records wheel-up as a positive dz. A negative exponent reduces the
+        // orthographic scale, which is the conventional "wheel up = zoom in" direction.
+        // Keep Q/E's existing keyboard direction independent of the wheel convention.
+        const zoomSteps = -inputManager.dz + (inputManager.isKeyDown('KeyQ') ? -1 : 0) + (inputManager.isKeyDown('KeyE') ? 1 : 0);
         this.zTarget *= Math.pow(1.12, zoomSteps);
         if (this.zTarget > -10)
             this.zTarget = -10;

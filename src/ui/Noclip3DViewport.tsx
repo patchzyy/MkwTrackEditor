@@ -370,6 +370,15 @@ interface SceneOverlayAreaVolume {
   invalid: boolean;
 }
 
+interface SceneOverlayObjectBounds {
+  id: string;
+  objectIndex: number;
+  objectId: number;
+  position: Vec3;
+  rotation: Vec3;
+  scale: Vec3;
+}
+
 interface SceneOverlayStartSlot {
   ownerId: string;
   slotIndex: number;
@@ -418,6 +427,7 @@ interface SceneOverlayData {
   collisionTriangles: SceneOverlayCollisionTriangle[];
   checkpointWalls: SceneOverlayCheckpointWall[];
   areaVolumes: SceneOverlayAreaVolume[];
+  objectBounds: SceneOverlayObjectBounds[];
   startSlots: SceneOverlayStartSlot[];
   fillBetweenPreview: SceneOverlayFillBetweenPreview[];
   routeDeviationSegments: SceneOverlayRouteDeviationSegment[];
@@ -1743,12 +1753,15 @@ export function Noclip3DViewport({
           lines: overlay.lines.length,
           checkpointWalls: overlay.checkpointWalls.length,
           areaVolumes: overlay.areaVolumes.length,
+          objectBounds: overlay.objectBounds.length,
           routeDeviationSegments: overlay.routeDeviationSegments.length,
           sections: [...new Set(overlay.points.map((point) => point.section))].sort(),
         };
       },
       /** The camera's world matrix, so a probe can prove a click did not move the view. */
       getCameraMatrix: () => (viewerRef.current ? Array.from(viewerRef.current.camera.worldMatrix) : null),
+      /** The projection matrix lets probes distinguish orthographic zoom from camera movement. */
+      getCameraProjectionMatrix: () => (viewerRef.current ? Array.from(viewerRef.current.camera.projectionMatrix) : null),
       /** What the mouse state machine currently thinks it is doing. */
       getPointerState: () => ({
         gesture: pointerGestureRef.current?.kind ?? null,
@@ -3986,7 +3999,7 @@ function buildSceneOverlayData(
 ): SceneOverlayData {
   const activeMeshSelection = meshTransformSelections.length > 0 ? meshTransformSelections[meshTransformSelections.length - 1] : null;
   if (activeMeshSelection) transformSelection = activeMeshSelection;
-  if (!track?.kmp && !transformSelection) return { tool, points: [], lines: [], centerHandle: null, axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [], startSlots: [], fillBetweenPreview: [], routeDeviationSegments: [], routeDeviationCaps: [], cameraGizmos, cameraChainLinks };
+  if (!track?.kmp && !transformSelection) return { tool, points: [], lines: [], centerHandle: null, axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [], objectBounds: [], startSlots: [], fillBetweenPreview: [], routeDeviationSegments: [], routeDeviationCaps: [], cameraGizmos, cameraChainLinks };
   const kmp = track?.kmp ?? null;
   const showCollision = viewMode === 'dev' && collisionVisible;
   const showKmpData = !!kmp && showKmpEditorOverlay;
@@ -4293,6 +4306,22 @@ function buildSceneOverlayData(
       hovered: entity.id === hoveredId && entity.id !== selectedId,
       invalid: invalidIds.has(entity.id),
     }));
+  const objectBounds: SceneOverlayObjectBounds[] = visibleEntities
+    .filter((entity): entity is KmpEntity & { section: 'GOBJ'; objectId: number; rotation: Vec3; scale: Vec3 } => (
+      entity.section === 'GOBJ' &&
+      entity.objectId !== undefined &&
+      !!entity.rotation &&
+      !!entity.scale &&
+      selectedSet.has(entity.id)
+    ))
+    .map((entity) => ({
+      id: entity.id,
+      objectIndex: entity.index,
+      objectId: entity.objectId,
+      position: previewTransform?.id === entity.id ? previewTransform.position : entity.position,
+      rotation: previewTransform?.id === entity.id && previewTransform.rotation ? previewTransform.rotation : entity.rotation,
+      scale: previewTransform?.id === entity.id && previewTransform.scale ? previewTransform.scale : entity.scale,
+    }));
   const selectedHiddenByRouteFilter = !!selectedEntity && !isEntityVisibleForRouteFilter(selectedEntity, routeVisibility, kmp!, routeUsage, forcedVisibleObjectRoutes);
   if (activeSelection && selectedPosition && !selectedHiddenByRouteFilter) {
     const length = getGizmoLength(activeSelection.position, cameraPosition, activeSelection.scale);
@@ -4371,7 +4400,7 @@ function buildSceneOverlayData(
     }
   }
 
-  return { tool, points, lines, centerHandle, axes, planes, checkpointEndpoints, collisionTriangles, checkpointWalls, areaVolumes, startSlots, fillBetweenPreview, routeDeviationSegments, routeDeviationCaps, cameraGizmos, cameraChainLinks };
+  return { tool, points, lines, centerHandle, axes, planes, checkpointEndpoints, collisionTriangles, checkpointWalls, areaVolumes, objectBounds, startSlots, fillBetweenPreview, routeDeviationSegments, routeDeviationCaps, cameraGizmos, cameraChainLinks };
 }
 
 function getRouteInsertCandidate(

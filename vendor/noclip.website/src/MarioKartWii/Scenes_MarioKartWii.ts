@@ -150,6 +150,15 @@ interface EditorOverlayAreaVolume {
     invalid: boolean;
 }
 
+interface EditorOverlayObjectBounds {
+    id: string;
+    objectIndex: number;
+    objectId: number;
+    position: { x: number; y: number; z: number; };
+    rotation: { x: number; y: number; z: number; };
+    scale: { x: number; y: number; z: number; };
+}
+
 interface EditorOverlayStartSlot {
     ownerId: string;
     slotIndex: number;
@@ -243,6 +252,7 @@ interface EditorOverlayData {
     collisionTriangles: EditorOverlayCollisionTriangle[];
     checkpointWalls: EditorOverlayCheckpointWall[];
     areaVolumes: EditorOverlayAreaVolume[];
+    objectBounds: EditorOverlayObjectBounds[];
     startSlots: EditorOverlayStartSlot[];
     fillBetweenPreview: EditorOverlayFillBetweenPreview[];
     routeDeviationSegments: EditorOverlayRouteDeviationSegment[];
@@ -267,7 +277,7 @@ const fallbackMaterialHacks: GXMaterialHacks = {
     lightingFudge: (p) => `(0.5 * (${p.ambSource} + 0.2) * ${p.matSource})`,
 };
 
-const emptyEditorOverlayData: EditorOverlayData = { tool: 'translate', points: [], lines: [], centerHandle: null, axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [], startSlots: [], fillBetweenPreview: [], routeDeviationSegments: [], routeDeviationCaps: [], cameraGizmos: [], cameraChainLinks: [] };
+const emptyEditorOverlayData: EditorOverlayData = { tool: 'translate', points: [], lines: [], centerHandle: null, axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [], objectBounds: [], startSlots: [], fillBetweenPreview: [], routeDeviationSegments: [], routeDeviationCaps: [], cameraGizmos: [], cameraChainLinks: [] };
 const editorOverlayLineOptions = { flags: DebugDrawFlags.DepthTint };
 const editorOverlayPointOptions = { flags: DebugDrawFlags.DepthTint };
 const editorOverlayFillBetweenPreviewColor = colorNewFromRGBA(1.0, 0.9, 0.3, 0.88);
@@ -275,6 +285,10 @@ const editorOverlayFillBetweenPreviewLineColor = colorNewFromRGBA(1.0, 0.9, 0.3,
 const editorOverlayAxisOptions = { flags: DebugDrawFlags.DepthTint };
 const editorOverlayCollisionOptions = { flags: DebugDrawFlags.DepthTint };
 const editorOverlayAreaUnitBox = new AABB(-1, -1, -1, 1, 1, 1);
+// airblock is an invisible 200-unit cube whose pivot is centered on its bottom face. The same
+// compact volume is a useful last-resort handle for any other object whose model failed to load.
+const editorOverlayFallbackObjectBox = new AABB(-100, 0, -100, 100, 200, 100);
+const editorOverlayObjectBoxColor = colorNewFromRGBA(1.0, 0.72, 0.2, 0.98);
 const editorOverlayPlaneColors = {
     xy: colorNewFromRGBA(1.0, 0.85, 0.2, 0.18),
     xz: colorNewFromRGBA(0.95, 0.35, 0.9, 0.18),
@@ -610,6 +624,8 @@ class MarioKartWiiRenderer {
     private editorMeshPickScratchDirection = vec3.create();
     private editorMeshPickScratchPoint = vec4.create();
     private editorMeshHighlightBox = new AABB();
+    private editorObjectBoundsBox = new AABB();
+    private editorObjectBoundsPart = new AABB();
     private editorMeshIncludeSkybox = false;
 
     constructor(context: SceneContext, public commonCache: CommonCache, public courseArc: U8.U8Archive, useFallbackLighting: boolean) {
@@ -1816,6 +1832,9 @@ class MarioKartWiiRenderer {
         for (let i = 0; i < this.editorOverlayData.areaVolumes.length; i++)
             this.drawEditorAreaVolume(this.editorOverlayData.areaVolumes[i]);
 
+        for (let i = 0; i < this.editorOverlayData.objectBounds.length; i++)
+            this.drawEditorObjectBounds(this.editorOverlayData.objectBounds[i]);
+
         if (!this.editorStartPreviewObjects.some((object) => object.visible))
             for (let i = 0; i < this.editorOverlayData.startSlots.length; i++)
                 this.drawEditorStartSlot(this.editorOverlayData.startSlots[i]);
@@ -2070,6 +2089,49 @@ class MarioKartWiiRenderer {
             mat4.identity(this.editorOverlayScratchMatrix);
             debugDraw.drawBoxLine(this.editorMeshHighlightBox, this.editorOverlayScratchMatrix, highlight.selected ? editorMeshBoxColor : color, editorOverlayLineOptions);
         }
+    }
+
+    private drawEditorObjectBounds(bounds: EditorOverlayObjectBounds): void {
+        let hasModelBounds = false;
+        this.editorObjectBoundsBox.reset();
+        for (const object of this.baseObjects) {
+            if (!(object instanceof GobjPreviewRenderer) || object.gobj.editorIndex !== bounds.objectIndex)
+                continue;
+            for (const modelInstance of object.getModelInstances()) {
+                const modelBounds = modelInstance.mdl0Model.mdl0.bbox;
+                if (modelBounds === null)
+                    continue;
+                this.editorObjectBoundsPart.transform(modelBounds, object.modelMatrix);
+                if (hasModelBounds)
+                    this.editorObjectBoundsBox.union(this.editorObjectBoundsBox, this.editorObjectBoundsPart);
+                else
+                    this.editorObjectBoundsBox.copy(this.editorObjectBoundsPart);
+                hasModelBounds = true;
+            }
+        }
+
+        if (hasModelBounds) {
+            mat4.identity(this.editorOverlayScratchMatrix);
+            this.renderHelper.debugDraw.drawBoxLine(this.editorObjectBoundsBox, this.editorOverlayScratchMatrix, editorOverlayObjectBoxColor, editorOverlayLineOptions);
+            return;
+        }
+
+        // Model-less objects still need a visible, scale-aware editing volume. This exactly
+        // matches airblock's documented 200x200x200 box and bottom-face pivot.
+        computeModelMatrixSRT(
+            this.editorOverlayScratchMatrix,
+            bounds.scale.x,
+            bounds.scale.y,
+            bounds.scale.z,
+            bounds.rotation.x * MathConstants.DEG_TO_RAD,
+            bounds.rotation.y * MathConstants.DEG_TO_RAD,
+            bounds.rotation.z * MathConstants.DEG_TO_RAD,
+            bounds.position.x,
+            bounds.position.y,
+            bounds.position.z,
+        );
+        mat4.mul(this.editorOverlayScratchMatrix, posMtx, this.editorOverlayScratchMatrix);
+        this.renderHelper.debugDraw.drawBoxLine(editorOverlayFallbackObjectBox, this.editorOverlayScratchMatrix, editorOverlayObjectBoxColor, editorOverlayLineOptions);
     }
 
     private drawEditorCheckpointWall(wall: EditorOverlayCheckpointWall): void {
