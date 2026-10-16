@@ -1,8 +1,11 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { patchBrresNodeTransform, type BrresTransform, type EditorProjectState } from '../../lib/brresEditor';
 import type { ViewportTransformSelection } from '../../lib/brresRenderAdapter';
+import type { GravityAreaPatch } from '../../lib/gravityField';
 import {
   appendKmpArea,
+  appendKmpGravityGate,
+  patchKmpAreaFields,
   appendKmpCamera,
   appendKmpCheckpoint,
   appendKmpGobj,
@@ -165,6 +168,32 @@ export function useKmpEditActions(context: KmpEditActionsContext) {
   function patchSelectedEntity(patch: (kmp: KmpDocument, entity: KmpEntity) => Uint8Array) {
     if (!track?.kmp || !selected) return;
     applyEditorChange(replaceCourseKmp(track, patch(track.kmp, selected)));
+  }
+
+  /** Gravity field edits: several AREA fields, possibly across a whole gate chain, in one step. */
+  function applyAreaPatches(patches: GravityAreaPatch[]) {
+    if (!track?.kmp || patches.length === 0) return;
+    applyEditorChange(replaceCourseKmp(track, patchKmpAreaFields(track.kmp, patches)));
+  }
+
+  /** Adds a gravity gate after the given gate and selects it. */
+  function extendGravityChain(entity: KmpEntity) {
+    if (!track?.kmp || entity.section !== 'AREA') return;
+    try {
+      const result = appendKmpGravityGate(track.kmp, entity.index);
+      const id = `AREA-${result.index}`;
+      applyEditorChange(replaceCourseKmp(track, result.bytes), id, true, [id]);
+      setStatus(`Added gravity gate ${result.index + 1} after gate ${entity.index + 1}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function selectArea(index: number) {
+    const id = `AREA-${index}`;
+    if (!track?.kmp?.entities.some((candidate) => candidate.id === id)) return;
+    selection.setSelectedId(id);
+    selection.setSelectedIds([id]);
   }
 
   function updateViewportTransformSelection(selectionTarget: ViewportTransformSelection, patch: Partial<BrresTransform>) {
@@ -642,6 +671,9 @@ export function useKmpEditActions(context: KmpEditActionsContext) {
     rotateEntity,
     scaleEntity,
     patchSelectedEntity,
+    applyAreaPatches,
+    extendGravityChain,
+    selectArea,
     updateViewportTransformSelection,
     addObject,
     addKmpPoint,

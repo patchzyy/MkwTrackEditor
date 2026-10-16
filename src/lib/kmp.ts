@@ -20,6 +20,12 @@ export type KmpSectionName =
 
 export type { Vec3 } from './kmpFile';
 import type { Vec3 } from './kmpFile';
+import {
+  gravityRecordsFromEntities,
+  planGravityChainExtension,
+  planGravityLinksAfterAreaRemoval,
+  planGravityLinksAfterAreaSwap,
+} from './gravityField';
 
 /**
  * The lossless structured KMP model, the path-graph editing helpers and the validation
@@ -96,6 +102,8 @@ export interface KmpEntity {
     setting2: number;
     routeIndex: number;
     enemyIndex: number;
+    /** u16 at 0x2E. Unused by Nintendo; gravity fields (type 11) keep their flags here. */
+    flags: number;
   };
   camera?: {
     type: number;
@@ -361,6 +369,7 @@ function parseSectionEntries(
         setting2: reader.u16(rawOffset + 0x2a),
         routeIndex: reader.u8(rawOffset + 0x2c),
         enemyIndex: reader.u8(rawOffset + 0x2d),
+        flags: recordSize >= 0x30 ? reader.u16(rawOffset + 0x2e) : 0,
       };
     }
     if (section === 'CAME' && recordSize >= 0x48) {
@@ -611,7 +620,22 @@ export type KmpAreaField = keyof NonNullable<KmpEntity['area']>;
 export function patchKmpAreaField(document: KmpDocument, entity: KmpEntity, field: KmpAreaField, value: number): Uint8Array {
   if (entity.section !== 'AREA' || entity.recordSize < 0x2e) return document.original;
   const out = new Uint8Array(document.original);
+  writeKmpAreaField(new DataView(out.buffer), entity, field, value);
+  return out;
+}
+
+/** Applies several AREA field changes (possibly on different AREAs) as one edit. */
+export function patchKmpAreaFields(document: KmpDocument, patches: ReadonlyArray<{ index: number; field: KmpAreaField; value: number }>): Uint8Array {
+  const out = new Uint8Array(document.original);
   const view = new DataView(out.buffer);
+  for (const patch of patches) {
+    const entity = document.entities.find((candidate) => candidate.section === 'AREA' && candidate.index === patch.index);
+    if (entity && entity.recordSize >= 0x2e) writeKmpAreaField(view, entity, patch.field, patch.value);
+  }
+  return out;
+}
+
+function writeKmpAreaField(view: DataView, entity: KmpEntity, field: KmpAreaField, value: number): void {
   const base = entity.rawOffset;
   switch (field) {
     case 'shape':
@@ -638,8 +662,10 @@ export function patchKmpAreaField(document: KmpDocument, entity: KmpEntity, fiel
     case 'enemyIndex':
       view.setUint8(base + 0x2d, value & 0xff);
       break;
+    case 'flags':
+      if (entity.recordSize >= 0x30) view.setUint16(base + 0x2e, value & 0xffff, false);
+      break;
   }
-  return out;
 }
 
 export type KmpCameraField = keyof NonNullable<KmpEntity['camera']>;
@@ -845,13 +871,26 @@ export function deleteKmpEntity(document: KmpDocument, entity: KmpEntity): Uint8
   if (entity.section === 'ENPT') return deleteKmpPathPoint(document, entity, 'ENPT', 'ENPH');
   if (entity.section === 'ITPT') return deleteKmpPathPoint(document, entity, 'ITPT', 'ITPH');
   if (entity.section === 'CKPT') return deleteKmpPathPoint(document, entity, 'CKPT', 'CKPH');
+  if (entity.section === 'AREA') {
+    // Gravity path gates link to other AREAs by index.
+    const remaining = parseKmp(deleteKmpFixedRecord(document, 'AREA', entity.index));
+    const patches = planGravityLinksAfterAreaRemoval(gravityRecordsFromEntities(remaining.entities), entity.index);
+    return patches.length > 0 ? patchKmpAreaFields(remaining, patches) : remaining.original;
+  }
   return deleteKmpFixedRecord(document, entity.section, entity.index);
 }
 
 export function moveKmpEntity(document: KmpDocument, entity: KmpEntity, direction: -1 | 1): Uint8Array {
   if (entity.section === 'STGI') throw new Error('Cannot reorder STGI track settings.');
   if (entity.routePoint) return moveKmpPotiPoint(document, entity.routePoint.routeIndex, entity.routePoint.pointIndex, direction);
-  return moveKmpFixedRecord(document, entity.section, entity.index, direction);
+  const moved = moveKmpFixedRecord(document, entity.section, entity.index, direction);
+  if (entity.section === 'AREA' && moved !== document.original) {
+    // Gravity gate links follow the two AREAs that swapped places.
+    const swapped = parseKmp(moved);
+    const patches = planGravityLinksAfterAreaSwap(gravityRecordsFromEntities(swapped.entities), entity.index, entity.index + direction);
+    return patches.length > 0 ? patchKmpAreaFields(swapped, patches) : moved;
+  }
+  return moved;
 }
 
 export function splitKmpPathGroup(document: KmpDocument, pointSectionName: 'ENPT' | 'ITPT' | 'CKPT', groupIndex: number, localPointIndex: number): Uint8Array {
@@ -915,6 +954,28 @@ export function appendKmpGobj(document: KmpDocument, objectId: number, position:
 
 export function appendKmpArea(document: KmpDocument, position: Vec3): Uint8Array {
   return appendKmpRecord(document, 'AREA', createAreaRecord(position));
+}
+
+/**
+ * Adds a gravity path gate after the gate at AREA `index`: a copy of it placed further along
+ * the chain, inserted between the gate and its current next gate. Returns the new AREA index.
+ */
+export function appendKmpGravityGate(document: KmpDocument, index: number): { bytes: Uint8Array; index: number } {
+  const source = document.entities.find((candidate) => candidate.section === 'AREA' && candidate.index === index);
+  const section = document.sections.find((candidate) => candidate.name === 'AREA');
+  if (!source || !section) throw new Error(`Cannot extend the chain: area ${index + 1} is missing.`);
+  if (section.count >= 0xff) throw new Error('Cannot extend the chain: the AREA limit (255) is reached.');
+  const placement = planGravityChainExtension(gravityRecordsFromEntities(document.entities), index);
+  if (!placement) throw new Error(`Cannot extend the chain: area ${index + 1} is not a gravity path gate.`);
+  const record = document.original.slice(source.rawOffset, source.rawOffset + SECTION_RECORD_SIZE.AREA);
+  const view = new DataView(record.buffer);
+  view.setFloat32(0x04, placement.position.x, false);
+  view.setFloat32(0x08, placement.position.y, false);
+  view.setFloat32(0x0c, placement.position.z, false);
+  view.setUint8(0x2d, placement.next);
+  const appended = parseKmp(appendKmpRecord(document, 'AREA', record));
+  const newIndex = section.count;
+  return { bytes: patchKmpAreaFields(appended, [{ index, field: 'enemyIndex', value: newIndex }]), index: newIndex };
 }
 
 export function appendKmpCamera(document: KmpDocument, position: Vec3): Uint8Array {

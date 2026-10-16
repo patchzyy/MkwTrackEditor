@@ -1,0 +1,179 @@
+/* Gravity field inspector (AREA type 11). `--gravity-color` is the field mode's colour, the
+   same one the viewport overlay uses. */
+
+.gravityField {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.gravityField__group {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.gravityField__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.gravityField__badge {
+  margin-left: auto;
+  padding: 1px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.gravityField__row {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.gravityField__hint {
+  grid-column: 2;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+}
+
+.gravityField__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* --- mode cards ------------------------------------------------------------ */
+
+.gravityField__modes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.gravityModeCard {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-input);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.gravityModeCard:hover {
+  border-color: var(--border-hover);
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.gravityModeCard .gravityModeGlyph {
+  color: var(--gravity-card);
+  opacity: 0.7;
+}
+
+.gravityModeCard.is-active {
+  border-color: var(--gravity-card);
+  background: color-mix(in srgb, var(--gravity-card) 14%, transparent);
+  color: var(--text);
+}
+
+.gravityModeCard.is-active .gravityModeGlyph {
+  opacity: 1;
+}
+
+.gravityModeCard:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+.gravityModeGlyph {
+  width: 26px;
+  height: 26px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* --- chain ----------------------------------------------------------------- */
+
+.gravityChain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.gravityChain__gate {
+  position: relative;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-input);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.gravityChain__gate + .gravityChain__gate::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: -5px;
+  width: 4px;
+  border-top: 1px solid var(--gravity-color);
+  opacity: 0.6;
+}
+
+.gravityChain__gate:hover {
+  border-color: var(--border-hover);
+  color: var(--text);
+}
+
+.gravityChain__gate.is-current {
+  border-color: var(--gravity-color);
+  background: var(--gravity-soft);
+  color: var(--text);
+  cursor: default;
+}
+
+/* --- strength -------------------------------------------------------------- */
+
+.gravityStrength {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.gravityStrength input[type='range'] {
+  width: 100%;
+  accent-color: var(--gravity-color);
+}

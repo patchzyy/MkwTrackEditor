@@ -461,7 +461,7 @@ export function describeEntity(entity: KmpEntity): string {
     case 'CKPT':
       return `checkpoint #${entity.index + 1}`;
     case 'AREA':
-      return `area trigger #${entity.index + 1}`;
+      return `${entity.area?.type === 11 ? 'gravity field' : 'area trigger'} #${entity.index + 1}`;
     case 'CAME':
       return `camera #${entity.index + 1}`;
     case 'JGPT':

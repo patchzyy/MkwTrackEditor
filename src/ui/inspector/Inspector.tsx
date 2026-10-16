@@ -22,7 +22,7 @@ import { useRegisterInspectorActions } from './InspectorActionsContext';
 import { InspectorHeader } from './InspectorHeader';
 import { describeKmpRecord, recordFieldPlan } from './recordSummary';
 import { AdvancedObjectSection } from './sections/AdvancedObjectSection';
-import { AreaSection } from './sections/AreaSection';
+import { AreaSection, type AreaGravityProps } from './sections/AreaSection';
 import { CameraSection } from './sections/CameraSection';
 import { CheckpointSection } from './sections/CheckpointSection';
 import { ObjectRouteSection } from './sections/ObjectRouteSection';
@@ -92,6 +92,10 @@ export function Inspector({
   onChangeRouteIndex,
   onChangeObjectSetting,
   onChangePresenceFlags,
+  gravityRecords,
+  onApplyAreaPatches,
+  onExtendGravityChain,
+  onSelectArea,
 }: {
   entity: KmpEntity;
   pathInfo: PathInfo | null;
@@ -138,8 +142,9 @@ export function Inspector({
   onChangeRouteIndex: (routeIndex: number) => void;
   onChangeObjectSetting: (settingIndex: number, value: number) => void;
   onChangePresenceFlags: (value: number) => void;
-}) {
+} & AreaGravityProps) {
   const summary = describeKmpRecord(entity);
+  const areaGravityProps: AreaGravityProps = { gravityRecords, onApplyAreaPatches, onExtendGravityChain, onSelectArea };
   const isObject = summary.kind === 'object';
   const hasRoute = entity.routeIndex !== undefined && entity.routeIndex !== NO_ROUTE;
   const showRouteRow = entity.routeIndex !== undefined && (isObject || hasRoute);
@@ -204,7 +209,7 @@ export function Inspector({
         onChangePotiRouteSetting={onChangePotiRouteSetting}
         onChangePotiPointSetting={onChangePotiPointSetting}
       />
-      <AreaSection scope="advanced" entity={entity} referenceCounts={referenceCounts} areaInspectorResources={areaInspectorResources} onChangeAreaField={onChangeAreaField} />
+      <AreaSection scope="advanced" entity={entity} referenceCounts={referenceCounts} areaInspectorResources={areaInspectorResources} onChangeAreaField={onChangeAreaField} {...areaGravityProps} />
       <CameraSection
         scope="advanced"
         entity={entity}
@@ -273,7 +278,7 @@ export function Inspector({
         onChangePotiRouteSetting={onChangePotiRouteSetting}
         onChangePotiPointSetting={onChangePotiPointSetting}
       />
-      <AreaSection scope="essentials" entity={entity} referenceCounts={referenceCounts} areaInspectorResources={areaInspectorResources} onChangeAreaField={onChangeAreaField} />
+      <AreaSection scope="essentials" entity={entity} referenceCounts={referenceCounts} areaInspectorResources={areaInspectorResources} onChangeAreaField={onChangeAreaField} {...areaGravityProps} />
       <CameraSection
         scope="essentials"
         entity={entity}

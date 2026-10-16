@@ -208,6 +208,7 @@ the longest single stall during a load is ~210 ms, and the load takes about 1.6 
 | `kmpGraph.ts` | The path graphs (`ENPT`/`ITPT`/`CKPT`) and every structural edit on them: insert, split, merge, link, unlink, reverse, delete, renumber key checkpoints, assign nearest respawns. |
 | `kmpEdit.ts` | React-free document editing: copy/paste, viewport drag previews, deletion selection, reference counts, and the numeric field codecs. |
 | `kmpValidation.ts` | Every rule behind the validation panel, with a level, a code and the entity it is about. |
+| `gravityField.ts` | Retro Rewind gravity fields (AREA type 11): the game's field math (volumes, path gate chains, priority resolution, AREA axes as `EGG::Quatf::fromRPY`), the multi-AREA edit plans the inspector applies (chain-wide flags, gate links, remapping on AREA delete/reorder), validation, and the viewport overlay geometry (volumes, chain lofts, animated flow arrows). The inspector lives in `src/ui/areas/GravityFieldSection.tsx`. |
 | `kcl.ts`, `kclRaycast.ts` | The collision mesh and the BVH the viewport raycasts against for ground snapping. |
 | `posteffects.ts` | `posteffect.bfg` / `.bblm` / `.bdof` / `.blight` read and write. |
 | `objflow.ts`, `commonAssets.ts`, `courseAssets.ts`, `persistedCommon.ts`, `assetPaths.ts` | The shared game-asset side: `ObjFlow.bin`, assembling the effective `Common.szs`, the extracted course-asset database, IndexedDB persistence, and `BASE_URL`-aware public asset URLs (which is what makes the build work under a GitHub Pages subpath). |

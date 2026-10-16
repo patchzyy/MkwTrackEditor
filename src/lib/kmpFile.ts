@@ -1075,7 +1075,10 @@ function clonePathGroup(group: KmpPathGroup): KmpPathGroup {
 // Friendly names for enum-like fields
 // ---------------------------------------------------------------------------
 
-/** AREA types 0x00-0x0A are Nintendo's; 0x0C+ are the community "AREA Expander" additions. */
+/**
+ * AREA types 0x00-0x0A are Nintendo's; 0x0B is Retro Rewind's gravity field (see gravityField.ts);
+ * 0x0C+ are the community "AREA Expander" additions.
+ */
 export const AREA_TYPE_NAMES: Record<number, string> = {
   0x00: 'Camera trigger',
   0x01: 'Weather effect control',
@@ -1088,6 +1091,7 @@ export const AREA_TYPE_NAMES: Record<number, string> = {
   0x08: 'Object group',
   0x09: 'Object group unloading',
   0x0a: 'Fall boundary',
+  0x0b: 'Gravity field',
   0x0c: 'Rail riding',
   0x0d: 'Pole bouncing',
   0x0e: 'Air movement',

@@ -5,6 +5,8 @@ import type { PathInfo, ReferenceCounts } from '../../lib/kmpEdit';
 import { BatchSelectionPanel } from './BatchSelectionPanel';
 import { DetailsSummaryBar } from './DetailsSummaryBar';
 import { Inspector } from './Inspector';
+import { AreaSection } from './sections/AreaSection';
+import { gravityRecordsFromEntities } from '../../lib/gravityField';
 
 const referenceCounts: ReferenceCounts = { routes: 2, cameras: 1, enemyPoints: 4, checkpoints: 3, respawns: 2 };
 const origin: Vec3 = { x: 0, y: 0, z: 0 };
@@ -100,7 +102,7 @@ describe('Inspector', () => {
         section: 'AREA',
         rotation: origin,
         scale: { x: 1, y: 1, z: 1 },
-        area: { shape: 0, type: 0, cameraIndex: 0xff, priority: 0, setting1: 0, setting2: 0, routeIndex: 0xff, enemyIndex: 0xff },
+        area: { shape: 0, type: 0, cameraIndex: 0xff, priority: 0, setting1: 0, setting2: 0, routeIndex: 0xff, enemyIndex: 0xff, flags: 0 },
       }),
     );
     expect(markup).toContain('What it does');
@@ -199,5 +201,60 @@ describe('DetailsSummaryBar', () => {
 
   it('renders nothing when every item is empty', () => {
     expect(renderToStaticMarkup(<DetailsSummaryBar items={[{ label: 'Selection', value: '  ' }]} />)).toBe('');
+  });
+});
+
+describe('Gravity field AREAs', () => {
+  const gravityArea = (index: number, routeIndex: number, enemyIndex: number, flags = 0) =>
+    entityOf({
+      section: 'AREA',
+      index,
+      id: `AREA-${index}`,
+      rotation: origin,
+      scale: { x: 1, y: 1, z: 1 },
+      position: { x: 0, y: 0, z: index * 10000 },
+      area: { shape: 0, type: 11, cameraIndex: 0xff, priority: 0, setting1: 1300, setting2: 10, routeIndex, enemyIndex, flags },
+    });
+
+  function renderGravity(entity: KmpEntity, all: KmpEntity[], scope: 'essentials' | 'advanced' = 'essentials'): string {
+    return renderToStaticMarkup(
+      <AreaSection
+        scope={scope}
+        entity={entity}
+        referenceCounts={referenceCounts}
+        areaInspectorResources={{ fogPresets: [], bloomPresets: [] }}
+        onChangeAreaField={noop}
+        gravityRecords={gravityRecordsFromEntities(all)}
+        onApplyAreaPatches={noop}
+        onSelectArea={noop}
+      />,
+    );
+  }
+
+  it('replaces the raw AREA rows with gravity controls', () => {
+    const area = gravityArea(0, 3, 1, 1);
+    const markup = renderGravity(area, [area]);
+    expect(markup).toContain('Field mode');
+    expect(markup).toContain('Outside tube');
+    expect(markup).toContain('Volume');
+    expect(markup).toContain('Strength');
+    expect(markup).toContain('Gravity resets');
+    expect(markup).toContain('On leaving');
+    expect(markup).toContain('Camera');
+    expect(markup).not.toContain('Enemy route point');
+    expect(markup).not.toContain('Gate chain');
+  });
+
+  it('shows the chain of a path gate and only the priority in Advanced', () => {
+    const gates = [gravityArea(0, 5, 1), gravityArea(1, 5, 0xff, 2)];
+    const markup = renderGravity(gates[0], gates);
+    expect(markup).toContain('Gate chain');
+    expect(markup).toContain('gate 1 of 2');
+    expect(markup).toContain('Next gate');
+    expect(markup).toContain('Applies to the whole chain.');
+    expect(markup).not.toContain('>Volume<');
+    const advanced = renderGravity(gates[0], gates, 'advanced');
+    expect(advanced).toContain('Overlap priority');
+    expect(advanced).not.toContain('Spare setting');
   });
 });

@@ -24,6 +24,7 @@ import {
   patchKmpStageFlareColor,
   type KmpEntity,
 } from '../../lib/kmp';
+import type { GravityAreaRecord } from '../../lib/gravityField';
 import type { PathInfo, ReferenceCounts } from '../../lib/kmpEdit';
 import type { AreaInspectorResources } from '../areas/areaInspectorConfig';
 import type { ObjectOption } from '../objects/objectCatalog';
@@ -41,6 +42,7 @@ export function SelectedEntityInspector({
   objectProfile,
   objectOptions,
   objectVariantOptions,
+  gravityRecords,
   actions,
 }: {
   entity: KmpEntity;
@@ -51,6 +53,8 @@ export function SelectedEntityInspector({
   objectProfile: ObjectInspectorProfile | null;
   objectOptions: ObjectOption[];
   objectVariantOptions: ObjectOption[];
+  /** Every AREA as gravity records (gate links and chains span AREAs). */
+  gravityRecords?: readonly (GravityAreaRecord | undefined)[];
   actions: KmpEditActions;
 }) {
   const { patchSelectedEntity } = actions;
@@ -101,6 +105,10 @@ export function SelectedEntityInspector({
   onChangeRouteIndex={(routeIndex) => patchSelectedEntity((kmp, entity) => patchKmpEntityRouteIndex(kmp, entity, routeIndex))}
   onChangeObjectSetting={(settingIndex, value) => patchSelectedEntity((kmp, entity) => patchKmpGobjSetting(kmp, entity, settingIndex, value))}
   onChangePresenceFlags={(value) => patchSelectedEntity((kmp, entity) => patchKmpGobjPresenceFlags(kmp, entity, value))}
+  gravityRecords={gravityRecords}
+  onApplyAreaPatches={actions.applyAreaPatches}
+  onExtendGravityChain={entity.section === 'AREA' ? () => actions.extendGravityChain(entity) : undefined}
+  onSelectArea={actions.selectArea}
 />
   );
 }

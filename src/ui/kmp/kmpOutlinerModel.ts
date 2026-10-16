@@ -10,6 +10,16 @@ import { KMP_NULL_INDEX_8, KMP_NULL_INDEX_16, type KmpFile } from '../../lib/kmp
 import { computeLapPathValidity, getCheckpointGraph } from '../../lib/kmpGraph';
 import type { TrackIssue } from '../../lib/kmpValidation';
 import { areaTypeName, cameraTypeName } from '../../lib/kmpFile';
+import { GRAVITY_AREA_TYPE, GravityMode, getGravityMode, getGravityVolume, gravityModeOptions, gravityVolumeOptions } from '../../lib/gravityField';
+
+/** Outliner detail of a gravity field: its mode, and its volume or next gate. */
+function gravityAreaDetail(routeIndex: number, enemyIndex: number, shape: number): string {
+  const mode = getGravityMode({ routeIndex });
+  const modeLabel = gravityModeOptions.find((option) => option.value === mode)?.label ?? 'Parallel';
+  if (mode === GravityMode.Path) return enemyIndex === 0xff ? 'Gate, end' : `Gate → ${enemyIndex + 1}`;
+  const volume = gravityVolumeOptions.find((option) => option.value === getGravityVolume({ enemyIndex, shape }))?.label ?? 'Box';
+  return `${modeLabel} ${volume.toLowerCase()}`;
+}
 import {
   KMP_OUTLINER_SECTIONS,
   pathGroupColor,
@@ -370,7 +380,9 @@ export function buildKmpOutliner({ file, objectName, issues = [] }: BuildKmpOutl
       meta('area'),
       file.areas.map((area, index) => ({
         label: `${areaTypeName(area.type)} ${index + 1}`,
-        detail: `${area.shape === 1 ? 'Cylinder' : 'Box'} · priority ${area.priority}`,
+        detail: area.type === GRAVITY_AREA_TYPE
+          ? `${gravityAreaDetail(area.routeIndex, area.enemyPointIndex, area.shape)} · priority ${area.priority}`
+          : `${area.shape === 1 ? 'Cylinder' : 'Box'} · priority ${area.priority}`,
       })),
     ),
   );

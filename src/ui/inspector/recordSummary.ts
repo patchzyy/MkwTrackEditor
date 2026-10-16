@@ -212,13 +212,16 @@ export interface KmpRecordSummary {
 }
 
 /** Everything the inspector header needs to introduce the selected record. */
-export function describeKmpRecord(entity: Pick<KmpEntity, 'section' | 'index' | 'rotation' | 'scale'>): KmpRecordSummary {
+const GRAVITY_FIELD_DESCRIPTION = 'A volume with its own gravity: karts drive on walls, ceilings, planets or through loops inside it (Retro Rewind).';
+
+export function describeKmpRecord(entity: Pick<KmpEntity, 'section' | 'index' | 'rotation' | 'scale'> & { area?: { type: number } }): KmpRecordSummary {
   const kind = kmpRecordKind(entity.section);
   const plan = RECORD_PLANS[kind];
+  const gravity = kind === 'area' && entity.area?.type === 11;
   return {
     kind,
-    typeName: plan.typeName,
-    description: plan.description,
+    typeName: gravity ? 'Gravity field' : plan.typeName,
+    description: gravity ? GRAVITY_FIELD_DESCRIPTION : plan.description,
     ordinal: entity.index + 1,
     hasPosition: kind !== 'stage',
     hasRotation: entity.rotation !== undefined,

@@ -241,6 +241,40 @@ interface EditorOverlayMeshHighlight {
     selected: boolean;
 }
 
+type EditorOverlayGravityRgba = [number, number, number, number];
+type EditorOverlayVec = { x: number; y: number; z: number; };
+
+/** Gravity field overlay (AREA type 11), built by src/lib/gravityField.ts in game units. */
+interface EditorOverlayGravity {
+    lines: Array<{ a: EditorOverlayVec; b: EditorOverlayVec; color: EditorOverlayGravityRgba; }>;
+    triangles: Array<{ a: EditorOverlayVec; b: EditorOverlayVec; c: EditorOverlayVec; color: EditorOverlayGravityRgba; }>;
+    /** Polylines gravity flows along; arrowheads are animated along them. */
+    flows: Array<{ points: EditorOverlayVec[]; color: EditorOverlayGravityRgba; arrowSize: number; phase: number; }>;
+    labels: Array<{ position: EditorOverlayVec; text: string; color: EditorOverlayGravityRgba; }>;
+}
+
+/** A gravity flow converted once to scene units, animated every frame. */
+interface PreparedGravityFlow {
+    points: vec3[];
+    /** Cumulative length at each point (scene units). */
+    distances: number[];
+    color: Color;
+    arrowSize: number;
+    phase: number;
+    heads: number;
+}
+
+/** The gravity overlay converted once to scene units and colours. */
+interface PreparedGravityOverlay {
+    lines: Array<{ a: vec3; b: vec3; color: Color; }>;
+    triangles: Array<{ a: vec3; b: vec3; c: vec3; color: Color; }>;
+    flows: PreparedGravityFlow[];
+    labels: Array<{ position: vec3; text: string; color: Color; }>;
+}
+
+/** Milliseconds an arrowhead takes to travel a gravity flow line. */
+const editorGravityFlowPeriodMs = 1800;
+
 interface EditorOverlayData {
     tool: 'translate' | 'rotate' | 'scale';
     points: EditorOverlayPoint[];
@@ -259,6 +293,7 @@ interface EditorOverlayData {
     routeDeviationCaps: EditorOverlayRouteDeviationCap[];
     cameraGizmos?: EditorOverlayCameraGizmo[];
     cameraChainLinks?: EditorOverlayCameraChainLink[];
+    gravity?: EditorOverlayGravity;
 }
 
 type EditorViewMode = 'normal' | 'dev' | 'topdown' | 'ortho';
@@ -594,6 +629,8 @@ class MarioKartWiiRenderer {
     public modelCache = new ModelCache();
     public materialHacks?: GXMaterialHacks;
     private editorOverlayData: EditorOverlayData = emptyEditorOverlayData;
+    private editorGravityOverlay: PreparedGravityOverlay | null = null;
+    private editorOverlayTimeMs = 0;
     private editorStartPreviewObjects: EditorStartPreviewRenderer[] = [];
     /** The player kart while a playtest session is running; hidden the rest of the time. */
     private editorPlaytestKartObject: EditorStartPreviewRenderer | null = null;
@@ -688,6 +725,7 @@ class MarioKartWiiRenderer {
 
     public setEditorOverlayData(data: EditorOverlayData): void {
         this.editorOverlayData = data;
+        this.editorGravityOverlay = this.prepareEditorGravityOverlay(data.gravity);
         this.syncEditorStartPreviewObjects(this.renderHelper.device);
     }
 
@@ -1714,6 +1752,7 @@ class MarioKartWiiRenderer {
 
     protected prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
         this.animationController.setTimeInMilliseconds(this.calcEditorAnimationTimeMs(viewerInput.time));
+        this.editorOverlayTimeMs = viewerInput.time;
         mat4.copy(this.editorOverlayClipFromWorldMatrix, viewerInput.camera.clipFromWorldMatrix);
         mat4.invert(this.editorWorldFromClipMatrix, this.editorOverlayClipFromWorldMatrix);
         vec3.set(this.editorCameraWorldPosition, viewerInput.camera.worldMatrix[12], viewerInput.camera.worldMatrix[13], viewerInput.camera.worldMatrix[14]);
@@ -1831,6 +1870,9 @@ class MarioKartWiiRenderer {
 
         for (let i = 0; i < this.editorOverlayData.areaVolumes.length; i++)
             this.drawEditorAreaVolume(this.editorOverlayData.areaVolumes[i]);
+
+        if (this.editorGravityOverlay !== null)
+            this.drawEditorGravityOverlay(this.editorGravityOverlay);
 
         for (let i = 0; i < this.editorOverlayData.objectBounds.length; i++)
             this.drawEditorObjectBounds(this.editorOverlayData.objectBounds[i]);
@@ -2214,7 +2256,115 @@ class MarioKartWiiRenderer {
     }
 
     private drawEditorAreaMarker(point: EditorOverlayPoint): void {
-        this.drawEditorTextMarker(point, 'A');
+        // Gravity fields mark themselves with their own letter in their field mode's colour.
+        if (point.markerText !== undefined && point.color !== undefined && !point.selected && !point.hovered && !point.invalid) {
+            this.renderHelper.debugDraw.drawWorldTextRU(
+                point.markerText,
+                this.toScenePosition(this.editorOverlayScratchA, point.position),
+                colorNewFromRGBA(point.color[0], point.color[1], point.color[2], 0.95),
+                undefined,
+                undefined,
+                { ...editorOverlayPointOptions, fontSize: 28, textAlign: 'center' },
+            );
+            return;
+        }
+        this.drawEditorTextMarker(point, point.markerText ?? 'A');
+    }
+
+    private prepareEditorGravityOverlay(gravity: EditorOverlayGravity | undefined): PreparedGravityOverlay | null {
+        if (gravity === undefined || (gravity.lines.length === 0 && gravity.triangles.length === 0 && gravity.flows.length === 0))
+            return null;
+        const toScene = (p: EditorOverlayVec) => vec3.fromValues(p.x * scaleFactor, p.y * scaleFactor, p.z * scaleFactor);
+        const toColor = (c: EditorOverlayGravityRgba) => colorNewFromRGBA(c[0], c[1], c[2], c[3]);
+        const flows: PreparedGravityFlow[] = [];
+        for (const flow of gravity.flows) {
+            if (flow.points.length < 2)
+                continue;
+            const points = flow.points.map(toScene);
+            const distances = [0];
+            for (let i = 1; i < points.length; i++)
+                distances.push(distances[i - 1] + vec3.distance(points[i - 1], points[i]));
+            const total = distances[distances.length - 1];
+            if (total <= 0)
+                continue;
+            const arrowSize = flow.arrowSize * scaleFactor;
+            // Roughly one arrowhead per 7 arrow lengths, so long streams stay readable.
+            const heads = Math.max(1, Math.min(6, Math.round(total / (arrowSize * 7))));
+            flows.push({ points, distances, color: toColor(flow.color), arrowSize, phase: flow.phase, heads });
+        }
+        return {
+            lines: gravity.lines.map((line) => ({ a: toScene(line.a), b: toScene(line.b), color: toColor(line.color) })),
+            triangles: gravity.triangles.map((tri) => ({ a: toScene(tri.a), b: toScene(tri.b), c: toScene(tri.c), color: toColor(tri.color) })),
+            flows,
+            labels: gravity.labels.map((label) => ({ position: toScene(label.position), text: label.text, color: toColor(label.color) })),
+        };
+    }
+
+    private drawEditorGravityOverlay(gravity: PreparedGravityOverlay): void {
+        const debugDraw = this.renderHelper.debugDraw;
+        for (let i = 0; i < gravity.triangles.length; i++) {
+            const tri = gravity.triangles[i];
+            debugDraw.drawTriSolidP(tri.a, tri.b, tri.c, tri.color, editorOverlayPointOptions);
+        }
+        for (let i = 0; i < gravity.lines.length; i++) {
+            const line = gravity.lines[i];
+            debugDraw.drawLine(line.a, line.b, line.color, undefined, editorOverlayLineOptions);
+        }
+        const cycle = this.editorOverlayTimeMs / editorGravityFlowPeriodMs;
+        for (let i = 0; i < gravity.flows.length; i++)
+            this.drawEditorGravityFlow(gravity.flows[i], cycle);
+        for (let i = 0; i < gravity.labels.length; i++) {
+            const label = gravity.labels[i];
+            debugDraw.drawWorldTextRU(label.text, label.position, label.color, undefined, undefined, { ...editorOverlayPointOptions, fontSize: 18, textAlign: 'center' });
+        }
+    }
+
+    /** Arrowheads travelling along a flow line, fading in at its start and out at its end. */
+    private drawEditorGravityFlow(flow: PreparedGravityFlow, cycle: number): void {
+        const total = flow.distances[flow.distances.length - 1];
+        const tip = this.editorOverlayScratchA;
+        const direction = this.editorOverlayScratchB;
+        for (let h = 0; h < flow.heads; h++) {
+            let u = cycle + flow.phase + h / flow.heads;
+            u -= Math.floor(u);
+            const along = u * total;
+            let k = 1;
+            while (k < flow.distances.length - 1 && flow.distances[k] < along)
+                k++;
+            const d0 = flow.distances[k - 1];
+            const span = flow.distances[k] - d0;
+            const f = span > 0 ? (along - d0) / span : 0;
+            vec3.lerp(tip, flow.points[k - 1], flow.points[k], f);
+            vec3.sub(direction, flow.points[k], flow.points[k - 1]);
+            if (vec3.squaredLength(direction) <= 1e-12)
+                continue;
+            vec3.normalize(direction, direction);
+            const fade = Math.sin(Math.PI * u);
+            const color = colorNewFromRGBA(flow.color.r, flow.color.g, flow.color.b, flow.color.a * fade);
+            this.drawEditorGravityArrowhead(tip, direction, flow.arrowSize, color);
+        }
+    }
+
+    private drawEditorGravityArrowhead(tip: vec3, direction: vec3, size: number, color: Color): void {
+        const { right, up } = this.getEditorGizmoBasis(direction);
+        const base = vec3.scaleAndAdd(this.editorOverlayScratchC, tip, direction, -size);
+        const radius = size * 0.42;
+        const debugDraw = this.renderHelper.debugDraw;
+        const fill = colorNewFromRGBA(color.r, color.g, color.b, color.a * 0.55);
+        const corner0 = this.editorOverlayScratchD;
+        const corner1 = this.editorOverlayScratchE;
+        const segments = 6;
+        for (let i = 0; i < segments; i++) {
+            const t0 = (i / segments) * MathConstants.TAU;
+            const t1 = ((i + 1) / segments) * MathConstants.TAU;
+            vec3.scaleAndAdd(corner0, base, right, Math.cos(t0) * radius);
+            vec3.scaleAndAdd(corner0, corner0, up, Math.sin(t0) * radius);
+            vec3.scaleAndAdd(corner1, base, right, Math.cos(t1) * radius);
+            vec3.scaleAndAdd(corner1, corner1, up, Math.sin(t1) * radius);
+            debugDraw.drawTriSolidP(tip, corner0, corner1, fill, editorOverlayPointOptions);
+            debugDraw.drawLine(tip, corner0, color, undefined, editorOverlayLineOptions);
+            debugDraw.drawLine(corner0, corner1, color, undefined, editorOverlayLineOptions);
+        }
     }
 
     private drawEditorStartSlot(slot: EditorOverlayStartSlot): void {
@@ -2496,9 +2646,10 @@ class MarioKartWiiRenderer {
         const halfZ = Math.max(Math.abs(area.scale.z), 0.0001) * editorOverlayAreaHalfExtent;
         mat4.identity(dst);
         mat4.translate(dst, dst, [area.position.x * scaleFactor, area.position.y * scaleFactor, area.position.z * scaleFactor]);
-        mat4.rotateX(dst, dst, area.rotation.x * MathConstants.DEG_TO_RAD);
-        mat4.rotateY(dst, dst, area.rotation.y * MathConstants.DEG_TO_RAD);
+        // The game builds AREA axes with EGG::Quatf::fromRPY: R = Rz * Ry * Rx (X applied first).
         mat4.rotateZ(dst, dst, area.rotation.z * MathConstants.DEG_TO_RAD);
+        mat4.rotateY(dst, dst, area.rotation.y * MathConstants.DEG_TO_RAD);
+        mat4.rotateX(dst, dst, area.rotation.x * MathConstants.DEG_TO_RAD);
         mat4.translate(dst, dst, [0, halfY, 0]);
         mat4.scale(dst, dst, [halfX, halfY, halfZ]);
         return dst;

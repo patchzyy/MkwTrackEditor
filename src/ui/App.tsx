@@ -1,6 +1,7 @@
 import { Boxes, Layers, Palette, Route as RouteIcon, Shapes, Video } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getKmpCameraHeader, type KmpEntity, type Vec3 } from '../lib/kmp';
+import { gravityRecordsFromEntities } from '../lib/gravityField';
 import { getPathInfo, getReferenceCounts } from '../lib/kmpEdit';
 import { describeEntity, replaceArchiveFile, validateTrack, type TrackDocument } from '../lib/track';
 import objectNamesById from '../generated/mkwObjectNames.json';
@@ -124,6 +125,7 @@ export function App() {
   );
   const cameraHeader = useMemo(() => (analysisTrack?.kmp ? getKmpCameraHeader(analysisTrack.kmp) : null), [analysisTrack]);
   const referenceCounts = useMemo(() => getReferenceCounts(analysisTrack?.kmp ?? null), [analysisTrack?.kmp]);
+  const gravityRecords = useMemo(() => (track?.kmp ? gravityRecordsFromEntities(track.kmp.entities) : []), [track?.kmp]);
   const validation = useMemo(() => (analysisTrack ? validateTrack(analysisTrack, { common: commonArchive }) : []), [analysisTrack, commonArchive]);
   const areaInspectorResources = useMemo(() => getAreaInspectorResources(analysisTrack), [analysisTrack]);
   const postEffectResources = useMemo(() => getTrackPostEffectResources(analysisTrack), [analysisTrack]);
@@ -421,6 +423,7 @@ export function App() {
       objectProfile={selectedObjectProfile}
       objectOptions={objectOptions}
       objectVariantOptions={selectedObjectVariantOptions}
+      gravityRecords={gravityRecords}
       actions={editActions}
     />
   ) : null;

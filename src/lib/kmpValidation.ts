@@ -13,6 +13,7 @@ import {
   cameraUsesRoute,
   type KmpFile,
 } from './kmpFile';
+import { GRAVITY_AREA_TYPE, findGravityIssues, isGravityPathGate, type GravityAreaRecord } from './gravityField';
 import {
   computeLapPathValidity,
   getCheckpointGraph,
@@ -368,11 +369,38 @@ function validateAreas(file: KmpFile): TrackIssue[] {
         entityId,
       });
     }
-    if (area.scale.x === 0 || area.scale.y === 0 || area.scale.z === 0) {
+    // Gravity fields report their own size problems (a path gate's depth is unused).
+    if (area.type !== GRAVITY_AREA_TYPE && (area.scale.x === 0 || area.scale.y === 0 || area.scale.z === 0)) {
       issues.push({ level: 'warning', code: 'area.zero-size', message: `Area #${index + 1} has zero size in at least one direction and can never be entered.`, entityId });
     }
   }
+  issues.push(...validateGravityFields(file));
   return issues;
+}
+
+/** Gravity fields (AREA type 11): broken gate links, unlinked gates, sharp twists, zero sizes. */
+function validateGravityFields(file: KmpFile): TrackIssue[] {
+  if (!file.areas.some((area) => area.type === GRAVITY_AREA_TYPE)) return [];
+  const records: GravityAreaRecord[] = file.areas.map((area, index) => ({
+    index,
+    type: area.type,
+    shape: area.shape,
+    priority: area.priority,
+    setting1: area.setting1,
+    setting2: area.setting2,
+    routeIndex: area.routeIndex,
+    enemyIndex: area.enemyPointIndex,
+    flags: area.padding,
+    position: area.position,
+    rotation: area.rotation,
+    scale: area.scale,
+  }));
+  return findGravityIssues(records).map((issue) => ({
+    level: 'warning' as const,
+    code: isGravityPathGate(records[issue.index]) ? 'area.gravity-gate' : 'area.gravity',
+    message: `Area #${issue.index + 1}: ${issue.message}`,
+    entityId: `AREA-${issue.index}`,
+  }));
 }
 
 function validateCameras(file: KmpFile): TrackIssue[] {

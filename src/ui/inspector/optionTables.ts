@@ -45,6 +45,7 @@ export const areaTypeOptions = [
   { value: 8, label: 'Object Group' },
   { value: 9, label: 'Object Unload' },
   { value: 10, label: 'Fall Boundary' },
+  { value: 11, label: 'Gravity Field' },
 ];
 export const areaShapeOptions = [
   { value: 0, label: 'Box' },

@@ -20,6 +20,16 @@ import {
   type ViewportTransformSelection,
 } from '../lib/brresRenderAdapter';
 import { buildU8 } from '../lib/u8';
+import {
+  GRAVITY_AREA_TYPE,
+  buildGravityOverlay,
+  getAreaFramePoints,
+  getGravityMode,
+  gravityModeColors,
+  gravityRecordsFromEntities,
+  type GravityOverlay,
+  type GravityTransformOverride,
+} from '../lib/gravityField';
 import { LoadingOverlay } from './components/LoadingOverlay';
 import { sceneFraction, yieldToHost, type TrackLoadProgress } from '../lib/trackLoadProgress';
 import { PLAYTEST_STEP_MS, planFixedSteps } from '../lib/playtest/playtestLoop';
@@ -434,6 +444,33 @@ interface SceneOverlayData {
   routeDeviationCaps: SceneOverlayRouteDeviationCap[];
   cameraGizmos: SceneOverlayCameraGizmo[];
   cameraChainLinks: SceneOverlayCameraChainLink[];
+  /** Gravity fields (AREA type 11): volumes, gate chains and animated flow, in game units. */
+  gravity: GravityOverlay;
+}
+
+const emptyGravityOverlay: GravityOverlay = { lines: [], triangles: [], flows: [], labels: [] };
+
+/** Gravity overlay for every gravity AREA, following the live drag preview. */
+function buildViewportGravityOverlay(
+  kmp: KmpDocument,
+  previewTransform: EntityTransformPreview | null,
+  selectedIds: ReadonlySet<string>,
+  hoveredId: string | null,
+): GravityOverlay {
+  if (!kmp.entities.some((entity) => entity.section === 'AREA' && entity.area?.type === GRAVITY_AREA_TYPE)) return emptyGravityOverlay;
+  const overrides = new Map<number, GravityTransformOverride>();
+  if (previewTransform) {
+    const moving = kmp.entities.find((entity) => entity.id === previewTransform.id);
+    if (moving?.section === 'AREA') overrides.set(moving.index, { position: previewTransform.position, rotation: previewTransform.rotation, scale: previewTransform.scale });
+  }
+  const selected = new Set<number>();
+  let hovered: number | null = null;
+  for (const entity of kmp.entities) {
+    if (entity.section !== 'AREA') continue;
+    if (selectedIds.has(entity.id)) selected.add(entity.index);
+    if (entity.id === hoveredId) hovered = entity.index;
+  }
+  return buildGravityOverlay(gravityRecordsFromEntities(kmp.entities, overrides), { selected, hovered });
 }
 
 /** Extra KMP-mode overlay content: group colouring, checkpoint quads and the two drag modes. */
@@ -2173,12 +2210,15 @@ export function Noclip3DViewport({
       maxY = Math.max(maxY, position.y);
       maxZ = Math.max(maxZ, position.z);
     };
+    const areaRecords = entities.some((entity) => entity.section === 'AREA') ? gravityRecordsFromEntities(kmp.entities) : [];
     for (const entity of entities) {
       include(entity.position);
       if (entity.checkpoint) {
         include(entity.checkpoint.left);
         include(entity.checkpoint.right);
       }
+      // AREAs frame their whole volume (gravity gates: their whole chain), not just the origin.
+      if (entity.section === 'AREA') for (const point of getAreaFramePoints(areaRecords, entity.index)) include(point);
     }
     if (!Number.isFinite(minX)) return false;
     const center = vec3.fromValues(
@@ -3999,7 +4039,7 @@ function buildSceneOverlayData(
 ): SceneOverlayData {
   const activeMeshSelection = meshTransformSelections.length > 0 ? meshTransformSelections[meshTransformSelections.length - 1] : null;
   if (activeMeshSelection) transformSelection = activeMeshSelection;
-  if (!track?.kmp && !transformSelection) return { tool, points: [], lines: [], centerHandle: null, axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [], objectBounds: [], startSlots: [], fillBetweenPreview: [], routeDeviationSegments: [], routeDeviationCaps: [], cameraGizmos, cameraChainLinks };
+  if (!track?.kmp && !transformSelection) return { tool, points: [], lines: [], centerHandle: null, axes: [], planes: [], checkpointEndpoints: [], collisionTriangles: [], checkpointWalls: [], areaVolumes: [], objectBounds: [], startSlots: [], fillBetweenPreview: [], routeDeviationSegments: [], routeDeviationCaps: [], cameraGizmos, cameraChainLinks, gravity: emptyGravityOverlay };
   const kmp = track?.kmp ?? null;
   const showCollision = viewMode === 'dev' && collisionVisible;
   const showKmpData = !!kmp && showKmpEditorOverlay;
@@ -4048,9 +4088,13 @@ function buildSceneOverlayData(
       id: entity.id,
       section: String(entity.section),
       position: applyPreviewPosition(entity),
-      color: groupColorFor(entity.id, String(entity.section), entity.routePoint?.routeIndex),
+      color: entity.area?.type === GRAVITY_AREA_TYPE
+        ? gravityModeColors[getGravityMode(entity.area)]
+        : groupColorFor(entity.id, String(entity.section), entity.routePoint?.routeIndex),
       markerText:
-        entity.section === 'POTI' &&
+        entity.area?.type === GRAVITY_AREA_TYPE
+          ? 'G'
+          : entity.section === 'POTI' &&
         entity.routePoint &&
         getPotiRouteVisibilityKey(entity.routePoint.routeIndex, routeUsage) === 'POTI_OBJECT'
           ? String(entity.routePoint.routeIndex)
@@ -4292,6 +4336,8 @@ function buildSceneOverlayData(
     .filter((entity): entity is KmpEntity & { section: 'AREA'; area: NonNullable<KmpEntity['area']>; rotation: Vec3; scale: Vec3 } => (
       entity.section === 'AREA' &&
       !!entity.area &&
+      // Gravity fields draw their real volume (sphere, gate chain) in the gravity overlay.
+      entity.area.type !== GRAVITY_AREA_TYPE &&
       !!entity.rotation &&
       !!entity.scale &&
       selectedSet.has(entity.id)
@@ -4400,7 +4446,9 @@ function buildSceneOverlayData(
     }
   }
 
-  return { tool, points, lines, centerHandle, axes, planes, checkpointEndpoints, collisionTriangles, checkpointWalls, areaVolumes, objectBounds, startSlots, fillBetweenPreview, routeDeviationSegments, routeDeviationCaps, cameraGizmos, cameraChainLinks };
+  const gravity = showKmpData && kmp && routeVisibility.AREA !== false ? buildViewportGravityOverlay(kmp, previewTransform, selectedSet, hoveredId) : emptyGravityOverlay;
+
+  return { tool, points, lines, centerHandle, axes, planes, checkpointEndpoints, collisionTriangles, checkpointWalls, areaVolumes, objectBounds, startSlots, fillBetweenPreview, routeDeviationSegments, routeDeviationCaps, cameraGizmos, cameraChainLinks, gravity };
 }
 
 function getRouteInsertCandidate(
