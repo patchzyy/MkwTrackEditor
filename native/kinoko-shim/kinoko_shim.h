@@ -20,7 +20,8 @@
 //     [31]     mini-turbo kind: 0 none, 1 stand-still charging, 2 stand-still charged,
 //              3 drift MT charging, 4 drift MT charged (blue), 5 drift SMT charged (orange)
 //     [32]     mini-turbo charge, 0..1 (progress towards the next level; 1 when charged)
-//     [33..35] reserved
+//     [33]     mushrooms left in the item slot (time trials start with 3; 0 when empty)
+//     [34..35] reserved
 //
 //   kinoko_read_race_state(int32_t outInts[KINOKO_RACE_STATE_INTS],
 //                          float outFloats[KINOKO_RACE_STATE_FLOATS])
@@ -86,6 +87,10 @@ int kinoko_load_course(int character, int vehicle, int driftIsAuto);
 /// `stickXRaw` / `stickYRaw` are 7-centered raw stick values in 0..14.
 /// `trick` is 0 none, 1 up, 2 down, 3 left, 4 right.
 void kinoko_set_inputs(uint16_t buttons, uint8_t stickXRaw, uint8_t stickYRaw, int trick);
+
+/// When non-zero, the player's item slot is topped back up to three mushrooms after every frame.
+/// Survives kinoko_restart(); reset by nothing but another call.
+void kinoko_set_infinite_items(int enabled);
 
 /// Simulates one 60 Hz frame.
 void kinoko_step(void);

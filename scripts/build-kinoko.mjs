@@ -123,6 +123,7 @@ const exportedFunctions = [
   '_kinoko_clear_files',
   '_kinoko_load_course',
   '_kinoko_set_inputs',
+  '_kinoko_set_infinite_items',
   '_kinoko_step',
   '_kinoko_frame',
   '_kinoko_read_kart_state',

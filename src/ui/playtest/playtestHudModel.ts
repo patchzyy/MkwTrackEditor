@@ -33,6 +33,8 @@ export interface PlaytestHudView {
   finalTime: string | null;
   /** Mini-turbo charge bar under the speed, or `null` when nothing is charging. */
   charge: PlaytestHudCharge | null;
+  /** Mushrooms left in the item slot, or `"∞"` when the slot is kept topped up. */
+  mushrooms: number | '∞';
 }
 
 export interface PlaytestHudCharge {
@@ -72,12 +74,13 @@ export function formatPlaytestTime(timeMs: number): string {
 }
 
 /**
- * Speed in km/h. Mario Kart Wii's internal speed is units per frame at 60 fps and one unit is
- * one centimetre, so `units/frame * 60 * 3600 / 100000` = `units/frame * 2.16`.
+ * Speed as the game's speedometers show it. Mario Kart Wii has no speedometer of its own; the
+ * community ones (MKW-SP, Pulsar, CTGP) print `KartMove::speed()` directly with a "km/h" label,
+ * so a Flame Runner tops out around 84, a mushroom pushes it past 100 and the hard cap is 120.
  */
 export function formatPlaytestSpeed(speedUnitsPerFrame: number): string {
   const value = Number.isFinite(speedUnitsPerFrame) ? Math.abs(speedUnitsPerFrame) : 0;
-  return `${Math.round(value * 2.16)} km/h`;
+  return `${Math.round(value)} km/h`;
 }
 
 /**
@@ -97,8 +100,9 @@ export function playtestCenterText(
 
 export function buildPlaytestHudView(
   race: PlaytestRaceState,
-  kart: Pick<PlaytestKartState, 'speed'> & Partial<Pick<PlaytestKartState, 'miniTurbo'>>,
+  kart: Pick<PlaytestKartState, 'speed'> & Partial<Pick<PlaytestKartState, 'miniTurbo' | 'mushrooms'>>,
   raceStartFrame: number = PLAYTEST_RACE_START_FRAME,
+  infiniteMushrooms = false,
 ): PlaytestHudView {
   return {
     stage: race.stage,
@@ -108,6 +112,7 @@ export function buildPlaytestHudView(
     centerText: playtestCenterText(race, raceStartFrame),
     finalTime: race.stage === 'finished' ? formatPlaytestTime(race.timeMs) : null,
     charge: kart.miniTurbo ? playtestHudCharge(kart.miniTurbo) : null,
+    mushrooms: infiniteMushrooms ? '∞' : Math.max(0, kart.mushrooms ?? 0),
   };
 }
 
@@ -127,6 +132,7 @@ export function playtestHudViewsEqual(a: PlaytestHudView | null, b: PlaytestHudV
     a.speed === b.speed &&
     a.centerText === b.centerText &&
     a.finalTime === b.finalTime &&
+    a.mushrooms === b.mushrooms &&
     chargesEqual(a.charge, b.charge)
   );
 }

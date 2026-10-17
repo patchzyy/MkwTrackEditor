@@ -76,6 +76,7 @@ export function readStoredPlaytestOptions(): PlaytestCourseOptions {
       character: CHARACTER_VALUES.has(Number(parsed.character)) ? (Number(parsed.character) as PlaytestCharacter) : fallback.character,
       vehicle: VEHICLE_VALUES.has(Number(parsed.vehicle)) ? (Number(parsed.vehicle) as PlaytestVehicle) : fallback.vehicle,
       driftIsAuto: typeof parsed.driftIsAuto === 'boolean' ? parsed.driftIsAuto : fallback.driftIsAuto,
+      infiniteMushrooms: typeof parsed.infiniteMushrooms === 'boolean' ? parsed.infiniteMushrooms : fallback.infiniteMushrooms,
     };
   } catch {
     return fallback;

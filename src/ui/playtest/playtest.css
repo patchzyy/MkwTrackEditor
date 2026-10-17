@@ -136,6 +136,46 @@
   text-shadow: 0 2px 6px rgb(0 0 0 / 80%);
 }
 
+/* Item box: the time-trial mushrooms, like the game's item roulette slot. */
+.playtestHudItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  margin-top: 4px;
+  padding: 4px 8px 4px 4px;
+  border: 1px solid rgb(255 255 255 / 30%);
+  border-radius: 10px;
+  background: rgb(0 0 0 / 40%);
+  box-shadow: 0 2px 6px rgb(0 0 0 / 50%);
+}
+
+.playtestHudItemIcon {
+  width: 32px;
+  height: 32px;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 60%));
+}
+
+.playtestHudItemCount {
+  min-width: 2ch;
+  font-size: 18px;
+  font-weight: 650;
+  text-shadow: 0 2px 4px rgb(0 0 0 / 80%);
+}
+
+.playtestHudItem kbd {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.playtestHudItem[data-empty='true'] {
+  opacity: 0.45;
+}
+
+.playtestHudItem[data-empty='true'] .playtestHudItemIcon {
+  filter: grayscale(1);
+}
+
 /* Mini-turbo charge: the HUD stand-in for the game's blue / orange sparks. */
 .playtestHudCharge {
   display: flex;

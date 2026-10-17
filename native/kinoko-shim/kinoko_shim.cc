@@ -12,6 +12,7 @@
 #include <egg/core/ExpHeap.hh>
 #include <egg/core/SceneManager.hh>
 
+#include <game/item/ItemDirector.hh>
 #include <game/kart/KartMove.hh>
 #include <game/kart/KartObjectManager.hh>
 #include <game/kart/KartParam.hh>
@@ -64,6 +65,8 @@ int32_t s_frame = 0;
 Character s_character = Character::Mario;
 Vehicle s_vehicle = Vehicle::Standard_Kart_M;
 bool s_driftIsAuto = false;
+/// Refill the time-trial mushrooms after every frame, so the item button never runs dry.
+bool s_infiniteItems = false;
 
 u16 s_buttons = 0;
 u8 s_stickXRaw = 7;
@@ -79,6 +82,24 @@ void OnRaceConfigInit(System::RaceConfig *config, void * /* arg */) {
     player.vehicle = s_vehicle;
     player.driftIsAuto = s_driftIsAuto;
     player.type = System::RaceConfig::Player::Type::Local;
+}
+
+Item::KartItem *PlayerKartItem() {
+    auto *director = Item::ItemDirector::Instance();
+    return director ? &director->kartItem(0) : nullptr;
+}
+
+void RefillItems() {
+    if (!s_infiniteItems) {
+        return;
+    }
+
+    if (auto *item = PlayerKartItem()) {
+        auto &inventory = item->inventory();
+        if (inventory.id() == Item::ItemId::NONE || inventory.currentCount() < 3) {
+            inventory.setItem(Item::ItemId::TRIPLE_MUSHROOM);
+        }
+    }
 }
 
 void PushInputs() {
@@ -238,7 +259,15 @@ extern "C" void kinoko_step(void) {
 
     PushInputs();
     s_sceneMgr->calc();
+    RefillItems();
     ++s_frame;
+}
+
+extern "C" void kinoko_set_infinite_items(int enabled) {
+    s_infiniteItems = enabled != 0;
+    if (s_loaded) {
+        RefillItems();
+    }
 }
 
 extern "C" int32_t kinoko_frame(void) {
@@ -284,6 +313,11 @@ extern "C" void kinoko_read_kart_state(float *out) {
                       Kart::eStatus::RampBoost, Kart::eStatus::ZipperBoost) ?
             1.0f :
             0.0f;
+
+    if (const auto *item = PlayerKartItem()) {
+        const auto &inventory = item->inventory();
+        out[33] = inventory.id() == Item::ItemId::NONE ? 0.0f : static_cast<float>(inventory.currentCount());
+    }
 
     // Mini-turbo charge for the HUD. Stand-still MT: hold accelerate + brake for 75 frames, then
     // release brake. Drift MT: 270 charge frames to blue, then (karts only) 300 more to orange.

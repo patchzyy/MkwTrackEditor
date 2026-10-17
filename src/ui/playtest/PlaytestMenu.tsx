@@ -105,6 +105,19 @@ export function PlaytestMenu({
           />
         </Field>
 
+        <Field label="Mushrooms" asGroup>
+          <SegmentedControl
+            label="Mushrooms"
+            size="sm"
+            value={options.infiniteMushrooms ? 'infinite' : 'three'}
+            options={[
+              { value: 'three', label: '3 (time trial)', tooltip: 'Three mushrooms, like a time trial' },
+              { value: 'infinite', label: 'Infinite', tooltip: 'The item slot refills, so C always boosts' },
+            ]}
+            onChange={(value) => onChangeOptions({ ...options, infiniteMushrooms: value === 'infinite' })}
+          />
+        </Field>
+
         <dl className="playtestControls">
           {PLAYTEST_CONTROL_HINTS.map((hint) => (
             <div key={hint.action} className="playtestControlsRow">

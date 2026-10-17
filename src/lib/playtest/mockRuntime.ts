@@ -127,6 +127,7 @@ function emptyKartState(): PlaytestKartState {
     drifting: false,
     boosting: false,
     miniTurbo: { kind: 'none', level: 0, charge: 0 },
+    mushrooms: 3,
   };
 }
 

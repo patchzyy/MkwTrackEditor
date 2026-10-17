@@ -303,6 +303,7 @@ class KinokoRuntime implements PlaytestRuntime {
     const status = this.#guard('load the course', (module) => {
       this.#provideFile(module, COMMON_ARCHIVE_PATH, commonArchive);
       this.#provideFile(module, COURSE_ARCHIVE_PATH, courseSzs);
+      module._kinoko_set_infinite_items(options.infiniteMushrooms ? 1 : 0);
       return module._kinoko_load_course(
         options.character,
         options.vehicle,
@@ -351,6 +352,7 @@ class KinokoRuntime implements PlaytestRuntime {
       drifting: false,
       boosting: false,
       miniTurbo: { kind: 'none', level: 0, charge: 0 },
+      mushrooms: 0,
     };
 
     this.#guard('read the kart state', (module) => {
@@ -377,6 +379,7 @@ class KinokoRuntime implements PlaytestRuntime {
       state.drifting = floats[29] !== 0;
       state.boosting = floats[30] !== 0;
       readMiniTurbo(floats[31] | 0, floats[32], state.miniTurbo);
+      state.mushrooms = Math.max(0, floats[33] | 0);
     });
 
     return state;
