@@ -16,7 +16,7 @@ import {
   TriangleAlert,
   Wand2,
 } from 'lucide-react';
-import type { KmpEntity, Vec3 } from '../../lib/kmp';
+import type { KmpEntity } from '../../lib/kmp';
 import type { NoclipBrresSummary } from '../../lib/noclipBrres';
 import type { CommonResourceArchive } from '../../lib/objflow';
 import type { TrackIssue } from '../../lib/kmpValidation';
@@ -24,7 +24,6 @@ import type { MenuItem, MenuSection } from '../components/Menu';
 import { ObjectThumbnail } from '../contentBrowser/ObjectThumbnail';
 import type { ObjectOption } from '../objects/objectCatalog';
 import { ObjectIdSelect } from '../inspector/fields/ObjectIdSelect';
-import { VectorInputs } from '../inspector/fields/VectorInputs';
 import { InspectorActionsHost } from '../inspector/InspectorActionsContext';
 import { InspectorActionsMenu, InspectorHeader } from '../inspector/InspectorHeader';
 import { describeKmpRecord } from '../inspector/recordSummary';
@@ -57,7 +56,7 @@ export interface KmpInspectorProps {
   commonBrresSummaries?: Record<string, NoclipBrresSummary>;
 
   onSelectEntity: (entityId: string) => void;
-  onOffsetSelection: (offset: Vec3) => void;
+  onSelectMatchingObjects: () => void;
   onReplaceObjectTypes: (objectId: number) => void;
   onDeleteSelection: () => void;
   onDuplicateSelection: () => void;
@@ -213,6 +212,7 @@ function SelectionHeader({
   onSnapToCollision,
   onDuplicateSelection,
   onDeleteSelection,
+  onSelectMatchingObjects,
   recordSections,
 }: KmpInspectorProps & { recordSections: MenuSection[] }) {
   const multiple = entities.length > 1;
@@ -245,34 +245,30 @@ function SelectionHeader({
         media={<SelectionMedia entity={entity} commonArchive={commonArchive} commonBrresSummaries={commonBrresSummaries} />}
         title={title}
         typeName={summary && !title.toLowerCase().includes(summary.typeName.toLowerCase()) ? summary.typeName : undefined}
-        description={multiple ? `${entities.length} records selected. The details below apply to the first one.` : summary?.description}
+        description={multiple ? `${entities.length} records selected. Position, rotation and size changes apply the same difference to each. Other property edits apply to selected records in the primary record's section.` : summary?.description}
         primary={entity && !unique ? { label: 'Duplicate', icon: <Copy size={14} />, onClick: onDuplicateSelection } : undefined}
         sections={sections}
       />
+      {entity?.section === 'GOBJ' && (
+        <div className="kmpButtonRow">
+          <button type="button" className="button" onClick={onSelectMatchingObjects}>
+            Select all with same object ID
+          </button>
+        </div>
+      )}
     </section>
   );
 }
 
-function BatchTools({ entities, objectOptions, canBatchReplaceObjects, onOffsetSelection, onReplaceObjectTypes }: KmpInspectorProps) {
-  const [offset, setOffset] = useState<Vec3>({ x: 0, y: 0, z: 0 });
+function BatchTools({ entities, objectOptions, canBatchReplaceObjects, onReplaceObjectTypes, onDeleteSelection, onDuplicateSelection, onSnapToCollision, hasCollision }: KmpInspectorProps) {
   const [objectId, setObjectId] = useState<number | null>(null);
   const effectiveObjectId = objectId ?? entities.find((candidate) => candidate.objectId !== undefined)?.objectId ?? null;
   return (
     <section className="kmpToolGroup">
-      <h3>Move them together</h3>
-      <VectorInputs value={offset} onChange={setOffset} />
       <div className="kmpButtonRow">
-        <button
-          type="button"
-          className="button"
-          disabled={offset.x === 0 && offset.y === 0 && offset.z === 0}
-          onClick={() => onOffsetSelection(offset)}
-        >
-          Move all {entities.length}
-        </button>
-        <button type="button" className="button" onClick={() => setOffset({ x: 0, y: 0, z: 0 })}>
-          Reset
-        </button>
+        <button type="button" className="button" onClick={onDuplicateSelection}>Duplicate selected</button>
+        <button type="button" className="button" onClick={onDeleteSelection}>Delete selected</button>
+        <button type="button" className="button" disabled={!hasCollision} onClick={onSnapToCollision}>Drop selected onto track</button>
       </div>
       {canBatchReplaceObjects && effectiveObjectId !== null && (
         <>

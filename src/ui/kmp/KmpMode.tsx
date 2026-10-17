@@ -11,7 +11,7 @@ import { KmpInspector, type KmpQuickFix } from './KmpInspector';
 import { KmpOutliner } from './KmpOutliner';
 import { KmpToolsOverlay } from './KmpToolsOverlay';
 import { buildKmpOutliner, kmpOutlinerLabels } from './kmpOutlinerModel';
-import { createVisibilityState, type KmpVisibilityKey, type KmpVisibilityState } from './kmpSections';
+import { createVisibilityState, outlinerSection, sectionForEntityId, type KmpOutlinerSectionKey, type KmpVisibilityKey, type KmpVisibilityState } from './kmpSections';
 import { getKmpSelectionContext } from './kmpSelectionContext';
 import { useKmpGraphActions } from './useKmpGraphActions';
 import './kmp.css';
@@ -32,11 +32,33 @@ export function useKmpMode(ctx: EditorModeContext): ModeUi {
   const graph = useKmpGraphActions({ track, trackRef, history, selection, setStatus });
 
   const [visibility, setVisibility] = useState<KmpVisibilityState>(() => createVisibilityState(true));
+  const [activeSection, setActiveSection] = useState<KmpOutlinerSectionKey>(() => sectionForEntityId(selection.selectedId)?.key ?? 'start');
   const [linkSection, setLinkSection] = useState<PathLinkSection | null>(null);
   const [drawingCheckpoints, setDrawingCheckpoints] = useState(false);
   const [pathGroupColors, setPathGroupColors] = useState(true);
   const [checkpointQuads, setCheckpointQuads] = useState(false);
   const [frameRequest, setFrameRequest] = useState<{ entityId: string; token: number } | null>(null);
+
+  const sectionVisibility = useMemo(() => {
+    const state = createVisibilityState(false);
+    for (const key of outlinerSection(activeSection).visibility) state[key] = visibility[key];
+    return state;
+  }, [activeSection, visibility]);
+
+  useEffect(() => {
+    const section = sectionForEntityId(selection.selectedId);
+    if (!active || !section || section.key === activeSection) return;
+    setActiveSection(section.key);
+    setLinkSection(null);
+    setDrawingCheckpoints(false);
+  }, [active, activeSection, selection.selectedId]);
+
+  function changeSection(section: KmpOutlinerSectionKey) {
+    setActiveSection(section);
+    selection.selectOnly(null);
+    setLinkSection(null);
+    setDrawingCheckpoints(false);
+  }
 
   const objectName = useCallback(
     (objectId: number) => browserObjectTitle({ objectId, name: objFlow?.byId.get(objectId)?.name ?? '', resources: objFlow?.byId.get(objectId)?.resources ?? '' }),
@@ -158,7 +180,7 @@ export function useKmpMode(ctx: EditorModeContext): ModeUi {
   return {
     viewportProps: {
       mode: 'kmp',
-      sectionVisibility: visibility,
+      sectionVisibility,
       onChangeSectionVisibility: (key: KmpVisibilityKey, visible: boolean) =>
         setVisibility((current) => ({ ...current, [key]: visible })),
       pathGroupColors,
@@ -174,7 +196,10 @@ export function useKmpMode(ctx: EditorModeContext): ModeUi {
     },
     leftPanel: (
       <KmpOutliner
+        key={activeSection}
         sections={sections}
+        activeSection={activeSection}
+        onChangeSection={changeSection}
         selectedId={selection.selectedId}
         selectedIds={selectedIds}
         visibility={visibility}
@@ -198,7 +223,7 @@ export function useKmpMode(ctx: EditorModeContext): ModeUi {
         commonArchive={ctx.commonArchive}
         commonBrresSummaries={ctx.commonBrresSummaries}
         onSelectEntity={selectAndFrame}
-        onOffsetSelection={(offset) => editActions.offsetSelectedEntitiesBy(offset)}
+        onSelectMatchingObjects={editActions.selectMatchingObjects}
         onReplaceObjectTypes={editActions.replaceSelectedObjectTypes}
         onDeleteSelection={editActions.deleteSelectedEntity}
         onDuplicateSelection={clipboard.duplicateSelectedEntity}
@@ -239,9 +264,15 @@ export function useKmpMode(ctx: EditorModeContext): ModeUi {
     topRightOverlay: (
       <KmpToolsOverlay
         linkSection={linkSection}
-        onChangeLinkSection={setLinkSection}
+        onChangeLinkSection={(section) => {
+          if (section) changeSection(sectionForEntityId(`${section}-0`)!.key);
+          setLinkSection(section);
+        }}
         drawingCheckpoints={drawingCheckpoints}
-        onChangeDrawingCheckpoints={setDrawingCheckpoints}
+        onChangeDrawingCheckpoints={(drawing) => {
+          if (drawing) changeSection('checkpoint');
+          setDrawingCheckpoints(drawing);
+        }}
         pathGroupColors={pathGroupColors}
         onChangePathGroupColors={setPathGroupColors}
         checkpointQuads={checkpointQuads}

@@ -5,12 +5,8 @@ import {
   patchKmpCameraField,
   patchKmpCameraViewPosition,
   patchKmpCannonField,
-  patchKmpCheckpointEndpoint,
   patchKmpCheckpointField,
-  patchKmpEntityPosition,
-  patchKmpEntityRotation,
   patchKmpEntityRouteIndex,
-  patchKmpEntityScale,
   patchKmpGobjObjectId,
   patchKmpGobjPresenceFlags,
   patchKmpGobjSetting,
@@ -68,11 +64,11 @@ export function SelectedEntityInspector({
   objectProfile={objectProfile}
   objectOptions={objectOptions}
   objectVariantOptions={objectVariantOptions}
-  onChangePosition={(position) => patchSelectedEntity((kmp, entity) => patchKmpEntityPosition(kmp, entity, position))}
+  onChangePosition={(position) => actions.moveEntity(entity, position)}
   onDelete={entity.section === 'STGI' ? undefined : actions.deleteSelectedEntity}
   onMoveEarlier={entity.section === 'STGI' ? undefined : () => actions.moveSelectedEntity(-1)}
   onMoveLater={entity.section === 'STGI' ? undefined : () => actions.moveSelectedEntity(1)}
-  onChangeCheckpointEndpoint={(side, position) => patchSelectedEntity((kmp, entity) => patchKmpCheckpointEndpoint(kmp, entity, side, position))}
+  onChangeCheckpointEndpoint={(side, position) => actions.moveCheckpointEndpoint(entity, side, position)}
   onChangeCheckpointField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpCheckpointField(kmp, entity, field, value))}
   onChangePointDeviation={(value) => patchSelectedEntity((kmp, entity) => patchKmpPointDeviation(kmp, entity, value))}
   onChangePathGroupLinks={actions.changePathGroupLinks}
@@ -99,8 +95,8 @@ export function SelectedEntityInspector({
   onChangeStageField={(field, value) => patchSelectedEntity((kmp, entity) => patchKmpStageField(kmp, entity, field, value))}
   onChangeStageFlareColor={(channelIndex, value) => patchSelectedEntity((kmp, entity) => patchKmpStageFlareColor(kmp, entity, channelIndex, value))}
   onChangeStartPlayerIndex={(playerIndex) => patchSelectedEntity((kmp, entity) => patchKmpKtptPlayerIndex(kmp, entity, playerIndex))}
-  onChangeRotation={(rotation) => patchSelectedEntity((kmp, entity) => patchKmpEntityRotation(kmp, entity, rotation))}
-  onChangeScale={(scale) => patchSelectedEntity((kmp, entity) => patchKmpEntityScale(kmp, entity, scale))}
+  onChangeRotation={(rotation) => actions.rotateEntity(entity, rotation)}
+  onChangeScale={(scale) => actions.scaleEntity(entity, scale)}
   onChangeObjectId={(objectId) => patchSelectedEntity((kmp, entity) => patchKmpGobjObjectId(kmp, entity, objectId))}
   onChangeRouteIndex={(routeIndex) => patchSelectedEntity((kmp, entity) => patchKmpEntityRouteIndex(kmp, entity, routeIndex))}
   onChangeObjectSetting={(settingIndex, value) => patchSelectedEntity((kmp, entity) => patchKmpGobjSetting(kmp, entity, settingIndex, value))}

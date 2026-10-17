@@ -166,7 +166,7 @@ export function InspectorPanel({
                       />
                     )}
                     {selectionCount > 1 && (
-                      <p className="muted">{selectionCount} selected. Details show the primary selection; batch tools are above.</p>
+                      <p className="muted">{selectionCount} selected. Transform edits apply the same difference to each; other property edits apply to selected records in the primary record's section.</p>
                     )}
                   </>
                 ) : (

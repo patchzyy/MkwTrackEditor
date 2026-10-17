@@ -470,7 +470,7 @@ export function filterKmpOutliner(sections: KmpOutlinerNode[], query: string): K
     if (matches(node)) return node;
     const children = node.children.map(walk).filter((child): child is KmpOutlinerNode => child !== null);
     if (children.length === 0) return null;
-    return { ...node, children };
+    return { ...node, children, entityIds: children.flatMap((child) => child.entityIds) };
   };
   return sections.map(walk).filter((node): node is KmpOutlinerNode => node !== null);
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type MutableRefObject, type PointerEvent, type ReactNode } from 'react';
-import { CloudFog, Eye, EyeOff, Move3D, RotateCcw, Scale3D } from 'lucide-react';
+import { CloudFog, CloudSun, Eye, EyeOff, Move3D, RotateCcw, Scale3D } from 'lucide-react';
 import { mat4, vec3, vec4 } from 'gl-matrix';
 import { BlenderCameraController, readNavigationPreset, saveNavigationPreset, type NavigationPreset } from './viewport/blenderNavigation';
 import ArrayBufferSlice from '../../vendor/noclip.website/src/ArrayBufferSlice';
@@ -978,6 +978,7 @@ export function Noclip3DViewport({
   // Preview-only, matching Visual mode. Track view needs it as well: dense course fog can
   // otherwise hide every mesh while the KMP overlays and transform gizmos are being used.
   const [fogEnabled, setFogEnabled] = useState(true);
+  const [skyboxVisible, setSkyboxVisible] = useState(true);
   const [internalRouteVisibility, setInternalRouteVisibility] = useState<Record<RouteVisibilityKey, boolean>>(createVisibilityState(true));
   // A stable signature so the controlled object identity does not re-run the overlay effect.
   const controlledVisibilitySignature = sectionVisibility
@@ -1513,6 +1514,14 @@ export function Noclip3DViewport({
     } | null;
     scene?.setEditorFogEnabled?.(fogEnabled);
   }, [fogEnabled, viewerReady, sceneKey, sceneEpoch]);
+
+  useEffect(() => {
+    if (mode === 'visual') return;
+    const scene = sceneRef.current as (SceneGfx & VisualRendererScene) | null;
+    for (const model of scene?.listEditorSceneModels?.() ?? []) {
+      if (model.kind === 'skybox') scene?.setEditorSceneModelVisible?.(model.archivePath, skyboxVisible);
+    }
+  }, [skyboxVisible, mode, viewerReady, sceneKey, sceneEpoch]);
 
   // Push the editor mode into the renderer and reset mode-specific state.
   useEffect(() => {
@@ -2222,7 +2231,7 @@ export function Noclip3DViewport({
   }
 
   function startEntityDrag(entity: KmpEntity, clientX: number, clientY: number) {
-    onSelect(entity.id);
+    if (!selectedIdsRef.current.includes(entity.id)) onSelect(entity.id);
     onInteractionStart?.();
     draggingEntityRef.current = { kind: 'entity', id: entity.id, startX: clientX, startY: clientY, rotation: entity.rotation, scale: entity.scale };
   }
@@ -2530,7 +2539,7 @@ export function Noclip3DViewport({
 
     const startTransformDrag = (drag: ActiveDragState | null) => {
       if (!transformTarget || !drag) return false;
-      if (transformTarget.kind === 'kmp' && transformTarget.entity) onSelect(transformTarget.entity.id);
+      if (transformTarget.kind === 'kmp' && transformTarget.entity && !selectedIdsRef.current.includes(transformTarget.entity.id)) onSelect(transformTarget.entity.id);
       onInteractionStart?.();
       setActiveGizmoHandle(pickedHandle);
       setHoveredGizmoHandle(pickedHandle);
@@ -2570,7 +2579,7 @@ export function Noclip3DViewport({
     if (scenePick?.kind === 'checkpointEndpoint' && entity?.checkpoint) {
       const checkpointEntity = entity;
       const side = scenePick.side;
-      onSelect(checkpointEntity.id);
+      if (!selectedIdsRef.current.includes(checkpointEntity.id)) onSelect(checkpointEntity.id);
       onInteractionStart?.();
       draggingEntityRef.current = { kind: 'checkpointEndpoint', id: checkpointEntity.id, side };
       dragRevertRef.current = () => revertOverlayDrag();
@@ -2580,7 +2589,7 @@ export function Noclip3DViewport({
     if (scenePick?.kind === 'cameraViewPoint') {
       const cameraEntity = trackRef.current?.kmp?.entities.find((candidate) => candidate.id === scenePick.id);
       if (cameraEntity?.cameraView) {
-        onSelect(cameraEntity.id);
+        if (!selectedIdsRef.current.includes(cameraEntity.id)) onSelect(cameraEntity.id);
         onInteractionStart?.();
         draggingEntityRef.current = { kind: 'cameraViewPoint', id: cameraEntity.id, which: scenePick.which };
         dragRevertRef.current = () => revertOverlayDrag();
@@ -3950,6 +3959,18 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
         >
           <CloudFog size={16} />
         </button>
+        {mode !== 'visual' && (
+          <button
+            type="button"
+            className={skyboxVisible ? 'iconButton active' : 'iconButton'}
+            onClick={() => setSkyboxVisible((visible) => !visible)}
+            title={skyboxVisible ? 'Hide the vrcorn skybox in this preview' : 'Show the vrcorn skybox in this preview'}
+            aria-label={skyboxVisible ? 'Hide skybox' : 'Show skybox'}
+            aria-pressed={skyboxVisible}
+          >
+            <CloudSun size={16} />
+          </button>
+        )}
       </div>
       )}
       {!playtestActive && (
@@ -3967,7 +3988,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
           {routePanelOpen && (
             <div className="routeVisibilityPanel">
               <strong>Visibility</strong>
-              {routeItems.length === 0 ? (
+              {mode !== 'kmp' && (routeItems.length === 0 ? (
                 <span className="routeVisibilityEmpty">No routes in the loaded track.</span>
               ) : (
                 routeItems.map((item) => (
@@ -3980,7 +4001,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
                     <span>{item.label}</span>
                   </label>
                 ))
-              )}
+              ))}
               <div className="routePanelSection">
                 <strong>Viewport</strong>
                 <label className="routeVisibilityRow">
@@ -3991,6 +4012,12 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
                   />
                   <span>Collision</span>
                 </label>
+                {mode !== 'visual' && (
+                  <label className="routeVisibilityRow">
+                    <input type="checkbox" checked={skyboxVisible} onChange={(event) => setSkyboxVisible(event.currentTarget.checked)} />
+                    <span>Skybox (vrcorn)</span>
+                  </label>
+                )}
               </div>
               <div className="routePanelSection">
                 <strong>Fog</strong>
@@ -4988,9 +5015,10 @@ function isPotiRouteVisible(
   routeUsage: PotiRouteUsage,
   forcedVisibleObjectRoutes?: ReadonlySet<number>,
 ): boolean {
-  if (forcedVisibleObjectRoutes?.has(routeIndex)) return true;
   const objectVisible = routeVisibility.POTI_OBJECT !== false;
   const cameraVisible = routeVisibility.POTI_CAMERA !== false;
+  if (!objectVisible && !cameraVisible) return false;
+  if (forcedVisibleObjectRoutes?.has(routeIndex)) return true;
   const usedByObject = routeUsage.objectRoutes.has(routeIndex) || routeUsage.unusedRoutes.has(routeIndex);
   const usedByCamera = routeUsage.cameraRoutes.has(routeIndex);
   if (usedByObject && usedByCamera) return objectVisible || cameraVisible;

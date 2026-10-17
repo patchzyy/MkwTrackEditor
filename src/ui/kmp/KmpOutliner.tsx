@@ -7,10 +7,12 @@ import {
   outlinerRangeSelection,
   type KmpOutlinerNode,
 } from './kmpOutlinerModel';
-import { outlinerSection, type KmpVisibilityKey, type KmpVisibilityState } from './kmpSections';
+import { KMP_OUTLINER_SECTIONS, outlinerSection, type KmpOutlinerSectionKey, type KmpVisibilityKey, type KmpVisibilityState } from './kmpSections';
 
 export interface KmpOutlinerProps {
   sections: KmpOutlinerNode[];
+  activeSection: KmpOutlinerSectionKey;
+  onChangeSection: (section: KmpOutlinerSectionKey) => void;
   selectedId: string | null;
   selectedIds: readonly string[];
   visibility: KmpVisibilityState;
@@ -33,6 +35,8 @@ export interface KmpOutlinerProps {
  */
 export function KmpOutliner({
   sections,
+  activeSection,
+  onChangeSection,
   selectedId,
   selectedIds,
   visibility,
@@ -42,11 +46,11 @@ export function KmpOutliner({
   footer,
 }: KmpOutlinerProps) {
   const [query, setQuery] = useState('');
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set<string>());
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set([`section:${activeSection}`]));
   const anchorRef = useRef<string | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
 
-  const filtered = useMemo(() => filterKmpOutliner(sections, query), [sections, query]);
+  const filtered = useMemo(() => filterKmpOutliner(sections.filter((section) => section.section === activeSection), query), [sections, activeSection, query]);
   // A search shows every match without asking the user to expand anything.
   const searching = query.trim().length > 0;
   const effectiveExpanded = useMemo(() => {
@@ -123,14 +127,38 @@ export function KmpOutliner({
       </div>
 
       <div className="kmpPanelBody">
+        <div className="propertyGrid">
+          <label>
+            Section
+            <select aria-label="KMP section" value={activeSection} onChange={(event) => onChangeSection(event.currentTarget.value as KmpOutlinerSectionKey)}>
+              {KMP_OUTLINER_SECTIONS.map((section) => (
+                <option key={section.key} value={section.key}>
+                  {section.label} ({sections.find((node) => node.section === section.key)?.count ?? 0})
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
         <input
           className="browserSearchInput kmpFilter"
           type="search"
-          placeholder="Search the track"
+          placeholder="Search this section"
           aria-label="Search track data"
           value={query}
           onChange={(event) => setQuery(event.currentTarget.value)}
         />
+
+        <div className="kmpTreeToolbar">
+          <button type="button" className="button" onClick={() => onSelect(filtered.flatMap((section) => section.entityIds).filter((id) => !id.startsWith('STGI-')))}>
+            Select {searching ? 'matches' : 'all'}
+          </button>
+          <button type="button" className="button" title="Invert selection in the filtered track list" onClick={() => onSelect(filtered.flatMap((section) => section.entityIds).filter((id) => !id.startsWith('STGI-') && !selectedSet.has(id)))}>
+            Invert
+          </button>
+          <button type="button" className="button" title="Clear selection" onClick={() => onSelect([])}>
+            Clear
+          </button>
+        </div>
 
         <div className="kmpTreeToolbar">
           <button

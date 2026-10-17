@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { KMP_NULL_INDEX_8, KMP_NULL_INDEX_16, createEmptyKmpFile, type KmpFile } from '../../lib/kmpFile';
 import { createEnemyPoint, setCheckpointGraph, setEnemyPathGraph } from '../../lib/kmpGraph';
 import type { TrackIssue } from '../../lib/kmpValidation';
@@ -14,8 +16,34 @@ import {
   type KmpOutlinerNode,
 } from './kmpOutlinerModel';
 import { KMP_OUTLINER_SECTIONS, pathGroupColor, pathGroupColorRgb, sectionForEntityId } from './kmpSections';
+import { useKmpMode } from './KmpMode';
+import type { EditorModeContext, ModeUi } from '../modes/types';
 
 const objectName = (objectId: number) => (objectId === 0x65 ? 'Item Box' : objectId === 0xcb ? 'Goomba' : `Object ${objectId}`);
+
+describe('KMP section views', () => {
+  it.each(KMP_OUTLINER_SECTIONS)('shows only $label in the list and viewport overlays', (section) => {
+    let ui: ModeUi;
+    const context = {
+      editorMode: 'kmp', track: { kmpFile: sampleFile() },
+      selection: { selectedId: `${section.entityPrefix}-0`, selectedIds: [`${section.entityPrefix}-0`] },
+      validation: [], editActions: {}, clipboard: {},
+    } as unknown as EditorModeContext;
+    function SectionView() {
+      ui = useKmpMode(context);
+      return ui.leftPanel;
+    }
+    const markup = renderToStaticMarkup(createElement(SectionView));
+    const visible = Object.entries(ui!.viewportProps!.sectionVisibility!).filter(([, value]) => value).map(([key]) => key);
+    expect(visible).toEqual(section.visibility);
+    const tree = markup.slice(markup.indexOf('role="tree"'));
+    expect(tree).toContain(`<span class="kmpTreeName">${section.label}</span>`);
+    for (const other of KMP_OUTLINER_SECTIONS.filter((candidate) => candidate.key !== section.key)) {
+      expect(tree).not.toContain(`<span class="kmpTreeName">${other.label}</span>`);
+    }
+    expect(markup).toContain('aria-label="KMP section"');
+  });
+});
 
 function sampleFile(): KmpFile {
   const base = createEmptyKmpFile();
@@ -203,6 +231,13 @@ describe('filterKmpOutliner', () => {
 
   it('is case insensitive', () => {
     expect(filterKmpOutliner(sections, 'GOOMBA')).toHaveLength(1);
+  });
+
+  it('selects only matching descendants from a filtered section or group', () => {
+    const filtered = filterKmpOutliner(sections, 'GOBJ-1');
+    expect(filtered.flatMap((section) => section.entityIds)).toEqual(['GOBJ-1']);
+    expect(filtered[0].children[0].entityIds).toEqual(['GOBJ-1']);
+    expect(sections.find((section) => section.section === 'object')!.entityIds).toHaveLength(3);
   });
 });
 

@@ -19,7 +19,6 @@ import {
   moveKmpEntity,
   parseKmp,
   patchKmpCameraHeaderField,
-  patchKmpCheckpointEndpoint,
   patchKmpEntityPosition,
   patchKmpEntityRotation,
   patchKmpEntityRouteIndex,
@@ -42,6 +41,8 @@ import {
   findMatchingEntity,
   getDeletionOrder,
   getSelectionIdAfterRoutePointDeletion,
+  materializeViewportInteractionTrack,
+  offsetCheckpointPoint,
   previewMovedCheckpointEndpoint,
   previewMovedEntity,
   previewRotatedEntity,
@@ -124,50 +125,69 @@ export function useKmpEditActions(context: KmpEditActionsContext) {
   }
 
   function moveEntity(entity: KmpEntity, position: Vec3) {
-    const currentTrack = trackRef.current;
-    if (!currentTrack?.kmp) return;
-    if (editSessionRef.current) {
-      applyTransientEditorChange(previewMovedEntity(currentTrack, entity.id, position));
-      return;
-    }
-    const nextKmp = patchKmpEntityPosition(currentTrack.kmp, entity, position);
-    applyEditorChange(replaceCourseKmp(currentTrack, nextKmp));
+    patchSelectedEntity({ field: 'position', value: position }, entity.id);
   }
 
   function moveCheckpointEndpoint(entity: KmpEntity, side: 'left' | 'right', position: Vec3) {
     const currentTrack = trackRef.current;
     if (!currentTrack?.kmp) return;
-    if (editSessionRef.current) {
-      applyTransientEditorChange(previewMovedCheckpointEndpoint(currentTrack, entity.id, side, position));
-      return;
+    const primary = currentTrack.kmp.entities.find((candidate) => candidate.id === entity.id)!;
+    let nextTrack = currentTrack;
+    for (const candidate of currentTrack.kmp.entities) {
+      if (!candidate.checkpoint || (candidate.id !== primary.id && !selection.selectedIdsRef.current.includes(candidate.id))) continue;
+      nextTrack = previewMovedCheckpointEndpoint(nextTrack, candidate.id, side, offsetCheckpointPoint(candidate.checkpoint[side], primary.checkpoint![side], position));
     }
-    const nextKmp = patchKmpCheckpointEndpoint(currentTrack.kmp, entity, side, position);
-    applyEditorChange(replaceCourseKmp(currentTrack, nextKmp));
+    if (editSessionRef.current) applyTransientEditorChange(nextTrack);
+    else applyEditorChange(materializeViewportInteractionTrack(currentTrack, nextTrack));
   }
 
   function rotateEntity(entity: KmpEntity, rotation: Vec3) {
-    const currentTrack = trackRef.current;
-    if (!currentTrack?.kmp || !entity.rotation) return;
-    if (editSessionRef.current) {
-      applyTransientEditorChange(previewRotatedEntity(currentTrack, entity.id, rotation));
-      return;
-    }
-    applyEditorChange(replaceCourseKmp(currentTrack, patchKmpEntityRotation(currentTrack.kmp, entity, rotation)));
+    patchSelectedEntity({ field: 'rotation', value: rotation }, entity.id);
   }
 
   function scaleEntity(entity: KmpEntity, scale: Vec3) {
-    const currentTrack = trackRef.current;
-    if (!currentTrack?.kmp || !entity.scale) return;
-    if (editSessionRef.current) {
-      applyTransientEditorChange(previewScaledEntity(currentTrack, entity.id, scale));
-      return;
-    }
-    applyEditorChange(replaceCourseKmp(currentTrack, patchKmpEntityScale(currentTrack.kmp, entity, scale)));
+    patchSelectedEntity({ field: 'scale', value: scale }, entity.id);
   }
 
-  function patchSelectedEntity(patch: (kmp: KmpDocument, entity: KmpEntity) => Uint8Array) {
-    if (!track?.kmp || !selected) return;
-    applyEditorChange(replaceCourseKmp(track, patch(track.kmp, selected)));
+  function patchSelectedEntity(
+    patch: ((kmp: KmpDocument, entity: KmpEntity) => Uint8Array) | { field: 'position' | 'rotation' | 'scale'; value: Vec3 },
+    primaryId = selection.selectedIdRef.current,
+  ) {
+    const currentTrack = trackRef.current;
+    if (!currentTrack?.kmp || !primaryId) return;
+    const primary = currentTrack.kmp.entities.find((entity) => entity.id === primaryId)!;
+    let current = currentTrack.kmp;
+    let nextTrack = currentTrack;
+    for (const entity of currentTrack.kmp.entities) {
+      if (entity.id !== primary.id && !selection.selectedIdsRef.current.includes(entity.id)) continue;
+      if (typeof patch !== 'function') {
+        const before = primary[patch.field]!;
+        const original = entity[patch.field];
+        if (entity.section === 'STGI' || !original) continue;
+        const value = {
+          x: original.x + (patch.value.x - before.x),
+          y: original.y + (patch.value.y - before.y),
+          z: original.z + (patch.value.z - before.z),
+        };
+        nextTrack = patch.field === 'position'
+          ? previewMovedEntity(nextTrack, entity.id, value)
+          : patch.field === 'rotation'
+            ? previewRotatedEntity(nextTrack, entity.id, value)
+            : previewScaledEntity(nextTrack, entity.id, value);
+      } else if (entity.section === primary.section) {
+        current = { ...current, original: patch(current, entity) };
+      }
+    }
+    if (typeof patch !== 'function' && editSessionRef.current) applyTransientEditorChange(nextTrack);
+    else applyEditorChange(typeof patch !== 'function' ? materializeViewportInteractionTrack(currentTrack, nextTrack) : replaceCourseKmp(currentTrack, current.original));
+  }
+
+  function selectMatchingObjects() {
+    if (!track?.kmp) return;
+    const objectIds = new Set(selectedEntities.filter((entity) => entity.section === 'GOBJ').map((entity) => entity.objectId));
+    const ids = track.kmp.entities.filter((entity) => entity.section === 'GOBJ' && objectIds.has(entity.objectId)).map((entity) => entity.id);
+    selection.applySelection(ids, ids.includes(selection.selectedIdRef.current!) ? selection.selectedIdRef.current : ids.at(-1) ?? null);
+    setStatus(`Selected ${ids.length} objects with matching IDs.`);
   }
 
   /** Gravity field edits: several AREA fields, possibly across a whole gate chain, in one step. */
@@ -671,6 +691,7 @@ export function useKmpEditActions(context: KmpEditActionsContext) {
     rotateEntity,
     scaleEntity,
     patchSelectedEntity,
+    selectMatchingObjects,
     applyAreaPatches,
     extendGravityChain,
     selectArea,
