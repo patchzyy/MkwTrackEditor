@@ -100,7 +100,9 @@ out.alphaAsColourCards = qa('.graphNode').filter((node) => node.textContent.incl
 
 // Make the dock tall and zoom the graph in, so the screenshot shows cards a person could read
 // rather than a 25% thumbnail of the whole material.
-const handle = q('.studioDockHandle') ?? q('.contentBrowserResizeHandle');
+// The graph dock's own grip is the splitter between preview and graph. The track editor under the
+// studio has a content browser with the same grip, so look inside the studio's centre column.
+const handle = q('.studioCenter .contentBrowserResizeHandle');
 if (handle) {
   const box = handle.getBoundingClientRect();
   const at = (type, y) => handle.dispatchEvent(new PointerEvent(type, {
@@ -112,11 +114,11 @@ if (handle) {
   await sleep(60);
   window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: box.left + 10, clientY: box.top - 320, pointerId: 1 }));
   await sleep(400);
-  out.dockHeight = Math.round(q('.materialDock')?.getBoundingClientRect().height ?? 0);
+  out.dockHeight = Math.round(q('.studioCenter .materialDock')?.getBoundingClientRect().height ?? 0);
 }
 // Refit after the resize, then zoom in: the fit is what puts the whole material back on screen,
 // and the zoom is what makes the cards readable in the screenshot.
-const fitButton = qa('button').find((node) => (node.getAttribute('aria-label') ?? '').includes('Fit the graph'));
+const fitButton = qa('button').find((node) => (node.getAttribute('aria-label') ?? '').includes('Frame the whole graph'));
 if (fitButton) fitButton.click();
 await sleep(400);
 
@@ -147,7 +149,16 @@ const stagesBefore = JSON.stringify(studio.materialDoc()?.tevStages ?? []);
 const vertexNode = target.graph.nodes.find((node) => node.type === 'vertexColor');
 const storedNode = target.graph.nodes.find((node) => node.type === 'storedValue');
 out.editedNode = vertexNode ? 'vertexColor' : storedNode ? 'storedValue' : null;
-if (vertexNode) out.edited = studio.setGraphNode(vertexNode.id, { channel: 7 });
+// The decompiler draws one Vertex colour node per step that reads it, and one step can only read
+// one channel, so every one of them moves together or the graph stops compiling.
+// Each edit reads the graph the last one left, so they wait for it to land.
+if (vertexNode) {
+  out.edited = true;
+  for (const node of target.graph.nodes.filter((entry) => entry.type === 'vertexColor')) {
+    out.edited = studio.setGraphNode(node.id, { channel: 7 }) && out.edited;
+    await sleep(150);
+  }
+}
 else if (storedNode) out.edited = studio.setGraphNode(storedNode.id, { slot: 1 });
 await sleep(1200);
 

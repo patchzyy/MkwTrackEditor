@@ -11,6 +11,7 @@ import {
   autoLayout,
   countRawStages,
   emptyGraph,
+  type EditorGraphNode,
   type EditorShaderGraph,
 } from './graphModel';
 import { loadStoredGraph, saveStoredGraph, sessionGraphKey } from './graphStore';
@@ -324,6 +325,17 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
       if (ref) stale.push(ref);
     }
     if (stale.length === 0) return;
+    // An edited graph drives its material, so left alone it would compile straight back over the
+    // stages undo just restored. Those materials drop the graph and re-read it for the restored
+    // stages — the stored layout when there is one — as when the material is first opened.
+    const staleGraphs = stale.map(sessionGraphKey).filter((key) => editedGraphsRef.current.has(key));
+    if (staleGraphs.length > 0) {
+      for (const key of staleGraphs) {
+        editedGraphsRef.current.delete(key);
+        graphHistoryRef.current.delete(key);
+      }
+      setGraphs((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !staleGraphs.includes(key))));
+    }
     let failed = 0;
     for (const ref of stale) {
       const bytes = findArchiveBytes(track, ref.archivePath);
@@ -529,6 +541,35 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
     setStatus('Laid the shader graph out left to right.');
   }, [graph, setGraph, setStatus]);
 
+  // ------------------------------------------------------------------ graph selection → Details
+
+  // The inspector is a Details panel: it shows whatever is selected in the graph. The graph owns
+  // the selection and reports it here; a request goes the other way when the inspector wants a
+  // node selected (a texture row clicked in the overview). The key only grows, so each is new.
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [selectionRequest, setSelectionRequest] = useState<{ nodeIds: string[]; key: number } | null>(null);
+  const selectionKeyRef = useRef(0);
+  useEffect(() => {
+    setSelectedNodeIds([]);
+    setSelectionRequest(null);
+  }, [selectedKey]);
+
+  const requestNodeSelection = useCallback((nodeIds: string[]) => {
+    setSelectedNodeIds(nodeIds);
+    selectionKeyRef.current += 1;
+    setSelectionRequest({ nodeIds, key: selectionKeyRef.current });
+    if (nodeIds.length > 0) setDockTab('graph');
+  }, []);
+
+  /** A node edited in the inspector: one graph edit, recorded for undo and compiled like any other. */
+  const changeNode = useCallback(
+    (next: EditorGraphNode) => {
+      if (!graph) return;
+      setGraph({ ...graph, nodes: graph.nodes.map((node) => (node.id === next.id ? next : node)) });
+    },
+    [graph, setGraph],
+  );
+
   // ------------------------------------------------------------------ viewport
 
   const onVisualSceneChange = useCallback((scene: MaterialRendererScene | null) => {
@@ -658,6 +699,10 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
         onChange={updateDoc}
         onImportTexture={importTexture}
         hasTrack={track !== null}
+        graph={graph}
+        selectedNodeIds={selectedNodeIds}
+        onSelectNodes={requestNodeSelection}
+        onChangeNode={changeNode}
       />
     ),
     topRightOverlay: (
@@ -708,6 +753,8 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
         onApplyPreset={applyPreset}
         onAutoLayout={runAutoLayout}
         onChangeDoc={updateDoc}
+        onSelectionChange={setSelectedNodeIds}
+        selectionRequest={selectionRequest}
       />
     ),
   };

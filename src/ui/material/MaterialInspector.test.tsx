@@ -56,6 +56,7 @@ function renderInspector(
   materialRef: GxMaterialRef | null = ref,
   hasTrack = true,
   issues: MaterialIssue[] = [],
+  selection: { graph?: ShaderGraph; selectedNodeIds?: string[] } = {},
 ): string {
   return renderToStaticMarkup(
     <MaterialInspector
@@ -70,8 +71,34 @@ function renderInspector(
       onChange={noop}
       onImportTexture={() => true}
       hasTrack={hasTrack}
+      graph={selection.graph ?? null}
+      selectedNodeIds={selection.selectedNodeIds ?? []}
+      onSelectNodes={noop}
+      onChangeNode={noop}
     />,
   );
+}
+
+/** A small graph with one node of each kind the Details panel treats differently. */
+function detailsGraph(): ShaderGraph {
+  return {
+    version: 1,
+    nodes: [
+      { id: 'out', type: 'output', x: 400, y: 0 },
+      { id: 'tex', type: 'texture', x: 0, y: 0, sampler: 0, texCoord: 0 },
+      { id: 'missing', type: 'texture', x: 0, y: 80, sampler: 3, texCoord: 3 },
+      { id: 'konst', type: 'constant', x: 0, y: 160, slot: 1 },
+      { id: 'vtx', type: 'vertexColor', x: 0, y: 240, channel: 0 },
+      { id: 'mul', type: 'multiply', x: 200, y: 0 },
+    ],
+    edges: [],
+  };
+}
+
+function renderSelected(...selectedNodeIds: string[]): string {
+  const doc = docWithLayer();
+  doc.texSrts[0] = { ...doc.texSrts[0], rotation: 45, scaleS: 2 };
+  return renderInspector(doc, ref, true, [], { graph: detailsGraph(), selectedNodeIds });
 }
 
 describe('MaterialInspector', () => {
@@ -93,8 +120,12 @@ describe('MaterialInspector', () => {
 
   it('leads with the simple choices, in words', () => {
     const markup = renderInspector(docWithLayer());
-    for (const choice of ['Opaque', 'Cutout', 'Transparent', 'Repeat', 'Mirror', 'Clamp', 'Smooth', 'Pixelated', 'Two-sided', 'Environment map']) {
+    for (const choice of ['Opaque', 'Cutout', 'Transparent', 'Two-sided']) {
       expect(markup).toContain(choice);
+    }
+    const texture = renderSelected('tex');
+    for (const choice of ['Repeat', 'Mirror', 'Clamp', 'Smooth', 'Pixelated', 'Environment map']) {
+      expect(texture).toContain(choice);
     }
   });
 
@@ -136,14 +167,65 @@ describe('MaterialInspector', () => {
     expect(markup).toContain('See-through');
   });
 
-  it('shows a layer\'s texture and its placement', () => {
-    const doc = docWithLayer();
-    doc.texSrts[0] = { ...doc.texSrts[0], rotation: 45, scaleS: 2 };
-    const markup = renderInspector(doc);
+  it('lists the textures compactly when nothing in the graph is selected', () => {
+    const markup = renderSelected();
+    expect(markup).toContain('detailsTextureRow');
+    expect(markup).toContain('asphalt');
+    expect(markup).toContain('Click a node in the shader graph');
+    // The per-texture settings are not dumped into the overview.
+    expect(markup).not.toContain('Placement');
+    expect(markup).not.toContain('Save PNG');
+  });
+
+  it('shows one texture in full when its node is selected', () => {
+    const markup = renderSelected('tex');
+    expect(markup).toContain('detailsCrumbs');
+    expect(markup).toContain('Texture 1');
     expect(markup).toContain('Placement');
     expect(markup).toContain('45');
-    // The texgen fields moved into the layer's own Advanced block, which starts closed.
+    expect(markup).toContain('Replace…');
+    expect(markup).toContain('Save PNG');
+    expect(markup).toContain('Drop an image to replace this texture');
+    // The node's own fields follow the layer's.
+    expect(markup).toContain('graphDetails');
+    // The material sections are not shown for a node.
+    expect(markup).not.toContain('Transparency');
+    // The texgen fields live in the layer's own Advanced block, which starts closed.
     expect(markup).not.toContain('Generated as');
+  });
+
+  it('offers to add the layer a texture node samples when the material has none there', () => {
+    const markup = renderSelected('missing');
+    expect(markup).toContain('samples texture 4');
+    expect(markup).toContain('Add texture 2');
+  });
+
+  it('shows the colour a Colour node stands for', () => {
+    const markup = renderSelected('konst');
+    expect(markup).toContain('Colour 2');
+    expect(markup).toContain('type="color"');
+    expect(markup).not.toContain('Placement');
+  });
+
+  it('shows the lighting a vertex colour node reads', () => {
+    expect(renderSelected('vtx')).toContain('Shading');
+  });
+
+  it('shows the material itself for the output node, as Unreal does', () => {
+    const markup = renderSelected('out');
+    expect(markup).toContain('Transparency');
+    expect(markup).not.toContain('detailsCrumbs');
+  });
+
+  it('counts a multi-selection and offers each node on its own', () => {
+    const markup = renderSelected('tex', 'mul');
+    expect(markup).toContain('2 nodes selected');
+    expect(markup).toContain('detailsMultiItem');
+    expect(markup).toContain('Multiply');
+  });
+
+  it('ignores selected ids the graph no longer has', () => {
+    expect(renderSelected('gone')).toContain('Transparency');
   });
 
   it('says so when a material has no layers and no colours', () => {
@@ -272,15 +354,64 @@ describe('ShaderGraphDock', () => {
     expect(markup).toContain('height:260px');
   });
 
-  it('puts the presets in the open, one click each', () => {
+  it('offers the presets from one "Start from…" menu, on the graph tab only', () => {
     const presets: ShaderGraphPreset[] = [
       { id: 'unlit-texture', title: 'Texture x vertex colour', description: 'What most road materials do.', samplerCount: 1, graph: { version: 1, nodes: [], edges: [] } },
     ];
     const markup = renderDock('graph', true, docWithLayer(), { presets });
-    expect(markup).toContain('materialPresetBar');
-    expect(markup).toContain('Texture x vertex colour');
-    // ...and only on the graph tab, where they mean something.
-    expect(renderDock('stages', true, docWithLayer(), { presets })).not.toContain('materialPresetBar');
+    expect(markup).toContain('Start from…');
+    expect(markup).toContain('aria-haspopup="menu"');
+    // No strip of chips eating the graph's height any more.
+    expect(markup).not.toContain('materialPresetBar');
+    expect(renderDock('stages', true, docWithLayer(), { presets })).not.toContain('Start from…');
+  });
+
+  it('keeps the graph tools in one toolbar: undo, redo, layout, frame, reset, help, fullscreen', () => {
+    const markup = renderDock('graph');
+    expect(markup).toContain('role="toolbar"');
+    for (const name of ['Undo', 'Redo', 'Auto layout', 'Frame the whole graph', 'Reset: rebuild the graph', 'Controls and tips', 'Fullscreen graph']) {
+      expect(markup).toContain(name);
+    }
+  });
+
+  it('greets an empty graph with how to start, and the preset menu', () => {
+    const presets: ShaderGraphPreset[] = [
+      { id: 'unlit-texture', title: 'Texture x vertex colour', description: 'What most road materials do.', samplerCount: 1, graph: { version: 1, nodes: [], edges: [] } },
+    ];
+    const markup = renderDock('graph', true, docWithLayer(), { presets });
+    expect(markup).toContain('graphEmpty');
+    expect(markup).toContain('Right-click the grid to add a node');
+    expect(markup).toContain('Add a node');
+    // A graph with something in it does not.
+    const graph: ShaderGraph = { version: 1, nodes: [{ id: 'tex', type: 'texture', sampler: 0, texCoord: 0, x: 0, y: 0 }, { id: 'o', type: 'output', x: 300, y: 0 }], edges: [] };
+    expect(renderDock('graph', true, docWithLayer(), { graph })).not.toContain('graphEmpty');
+  });
+
+  it('shows how to move around in a hint strip', () => {
+    const markup = renderDock('graph');
+    expect(markup).toContain('graphHints');
+    expect(markup).toContain('Right-drag');
+  });
+
+  it('types an unwired input value into the node itself, and hides it once wired', () => {
+    const graph: ShaderGraph = {
+      version: 1,
+      nodes: [
+        { id: 'tex', type: 'texture', sampler: 0, texCoord: 0, x: 0, y: 0 },
+        { id: 'm', type: 'multiply', x: 200, y: 0, inputValues: { b: 0.5 } },
+        { id: 'o', type: 'output', x: 400, y: 0 },
+      ],
+      edges: [{ id: 'e', from: { node: 'tex', socket: 'rgb' }, to: { node: 'm', socket: 'a' } }],
+    };
+    const markup = renderDock('graph', true, docWithLayer(), { graph });
+    // B is unwired and holds ½; A is wired so has no switch. The Material node's inputs have none:
+    // an unwired one means "this half computes nothing", not a constant.
+    expect(markup).toContain('aria-label="B value"');
+    expect(markup).not.toContain('aria-label="A value"');
+    expect(markup).not.toContain('aria-label="Colour value"');
+    expect(markup).not.toContain('aria-label="Alpha value"');
+    expect(markup).toMatch(/title="B = 0.5"[^>]*>½/);
+    expect(markup).toMatch(/aria-checked="true"[^>]*title="B = 0.5"/);
   });
 
   it('names the nodes after what they are, not after the hardware', () => {
@@ -340,7 +471,7 @@ describe('ShaderGraphDock', () => {
     expect(plain).not.toContain('Convert to nodes');
   });
 
-  it('names the new nodes in words, and offers where a step stores its result', () => {
+  it('names the new nodes in words, and keeps their settings off the card', () => {
     const graph: ShaderGraph = {
       version: 1,
       nodes: [
@@ -356,7 +487,9 @@ describe('ShaderGraphDock', () => {
     expect(markup).toContain('Alpha as colour');
     expect(markup).toContain('Working slot');
     expect(markup).toContain('Nothing (black)');
-    expect(markup).toContain('Store result in');
+    // "Store result in" and the other rarely used options live in the Details panel now.
+    expect(markup).not.toContain('Store result in');
+    expect(markup).not.toContain('Advanced');
     for (const jargon of ['APREV', 'CPREV', 'RASA', 'TEXA', 'COLOR_ZERO']) expect(markup).not.toContain(jargon);
   });
 

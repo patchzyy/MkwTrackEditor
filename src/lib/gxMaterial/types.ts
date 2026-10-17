@@ -375,7 +375,7 @@ export type GraphNodeType =
   | 'constant' // a konst color: `rgb`, `alpha`
   | 'register' // initial value of C0..C2: `rgb`, `alpha`
   | 'storedValue' // whatever a step left in the working slot or one of C0..C2: `rgb`, `alpha`
-  | 'value' // ZERO / HALF / ONE literal: `rgb`, `alpha`
+  | 'value' // ZERO / HALF / ONE literal: `rgb`, `alpha`; usually typed into the input instead (`inputValues`)
   | 'alphaAsColor' // reads an alpha source into a color input (CC.TEXA, CC.RASA, CC.APREV, ...)
   | 'multiply' // a * b
   | 'add' // a + b
@@ -410,7 +410,18 @@ export interface GraphNodeBase {
    * nothing on screen — which is what the card says.
    */
   unusedResult?: boolean;
+  /**
+   * Optional. Unreal-style inline values: what an input socket reads when no wire is plugged into
+   * it, typed into the node itself instead of wired from a separate "Value" node. Keyed by input
+   * socket name. A wired socket ignores its entry; a socket with no entry falls back to the
+   * socket spec's `default`. The decompiler writes these for ZERO / HALF / ONE operands, so a
+   * decompiled graph has no shared literal node fanned out across the canvas.
+   */
+  inputValues?: Partial<Record<string, GraphInlineValue>>;
 }
+
+/** A literal an input socket can hold inline. These are exactly the TEV's free constants. */
+export type GraphInlineValue = 0 | 0.5 | 1;
 
 export interface GraphOutputNode extends GraphNodeBase {
   type: 'output';
@@ -580,7 +591,7 @@ export interface ShaderGraph {
 export interface GraphSocketSpec {
   name: string;
   type: GraphSocketType;
-  /** For inputs: what the compiler assumes when nothing is wired. */
+  /** For inputs: what the compiler assumes when nothing is wired and no value is typed in. */
   default?: 0 | 0.5 | 1;
 }
 
@@ -656,7 +667,8 @@ export type CompileShaderGraph = (graph: ShaderGraph, material: GxMaterialDoc) =
  * Builds a graph that reproduces `material.tevStages` exactly: one lerp / add / scale cluster
  * per stage, textures and channels as source nodes, registers wired through. Compiling the
  * result gives back the same stages (`compile(decompile(m), m).tevStages` deep-equals
- * `m.tevStages` for every retail material). Node positions are laid out left to right by stage.
+ * `m.tevStages` for every retail material). The hardware constants are typed into the inputs
+ * (`inputValues`), not wired from Value nodes, and positions come from `layoutShaderGraph`.
  */
 export type DecompileShader = (material: GxMaterialDoc) => ShaderGraph;
 

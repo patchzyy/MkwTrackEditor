@@ -86,9 +86,9 @@ graphTab?.click();
 await sleep(1200);
 out.nodeTitles = qa('.graphNodeTitle').map((n) => n.textContent.trim());
 out.nodeCaptions = qa('.graphNodeCaption, .graphNodeLabel').map((n) => n.textContent.trim());
-out.socketLabels = [...new Set(qa('.graphSocket label').map((n) => n.textContent.trim()))];
+out.socketLabels = [...new Set(qa('.graphSocketLabel').map((n) => n.textContent.trim()))];
 out.dockButtons = qa('.materialDockTools button').map((n) => n.textContent.trim()).filter(Boolean);
-out.presetChips = qa('.materialPresetChip').map((n) => n.textContent.trim());
+out.presetMenu = qa('.materialDockTools button').some((n) => n.textContent.trim() === 'Start from…');
 
 // Fit puts a whole graph on screen too small to read, so zoom back to roughly 1:1 around the
 // first node before the screenshot.

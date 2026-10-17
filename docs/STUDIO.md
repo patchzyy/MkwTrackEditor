@@ -17,22 +17,26 @@ needs the opposite of a track camera — an orbit around a small object, a groun
 animation transport, and no KMP overlays at all.
 
 That is the same reason Unreal opens a Skeletal Mesh or a Material in its own asset editor
-rather than in the level viewport, and the Model Studio is shaped like one: preview viewport in
-the middle, asset outliner on the left, details panel on the right, transport under the preview,
-and the node graph in the bottom dock.
+rather than in the level viewport, and the Model Studio is shaped like Unreal's material editor —
+with the model itself where Unreal has a material ball: the asset outliner on the left, the
+preview and its animation transport at the top of the centre column, the node graph — the main
+canvas — under it, and a **Details** panel on the right that shows whatever is selected in the
+graph.
 
 | Region | What it is |
 | --- | --- |
-| Header | The open file, undo/redo, **Open model**, **Recent**, **Demo character**, **Save to My Assets**, **Export**, and the way back. |
+| Header | The open file (with an **Edited** badge once it is), undo/redo, **Open model**, **Recent**, **Demo character**, **Tips**, **Save to My Assets**, **Export**, and the way back. |
 | Left | `StudioOutliner` — archives → models → materials, plus the archive's textures and animations. |
-| Centre | `StudioViewport` (its own canvas, its own noclip `Viewer`), the render toggles, and `StudioTransportBar`. |
-| Right | `MaterialInspector` — the same simple-by-default panel Material mode uses, unchanged. |
-| Bottom | `ShaderGraphDock` — the same **Graph** / **Stages** dock Material mode uses, unchanged. |
+| Centre, top | `StudioViewport` (its own canvas, its own noclip `Viewer`) with its toolbar, then `StudioTransportBar`. |
+| Centre, bottom | `ShaderGraphDock` — the same **Graph** / **Stages** dock Material mode uses. The grip on its top edge is the splitter between preview and graph; it starts at half the column, is remembered (`mkw.studio.graphHeight`), and never leaves the preview less than 180 px. Double-click resets it. |
+| Right | `MaterialInspector` as a **Details** panel: the material when nothing is selected in the graph, one texture when a texture node is, a node's settings otherwise. Its left edge resizes it (280–560 px, remembered as `mkw.studio.detailsWidth`). |
 
-Reusing the inspector and the dock verbatim was possible because both already take a
-`GxMaterialDoc` plus a change callback and know nothing about `TrackDocument`; see
-[`docs/MATERIALS.md`](MATERIALS.md). What the studio supplies instead of the track is
-`useStudioSession`, its own document + undo stack over a `StudioDocument`.
+Reusing the inspector and the dock was possible because both already take a `GxMaterialDoc` plus a
+change callback and know nothing about `TrackDocument`; see [`docs/MATERIALS.md`](MATERIALS.md).
+What the studio supplies instead of the track is `useStudioSession`, its own document + undo stack
+over a `StudioDocument`.
+
+![The studio: outliner, preview over graph, Details](screenshots/studio-details-01-overview.png)
 
 ## What it can open
 
@@ -70,16 +74,18 @@ scene — the same renderer, the same `Viewer`.
 The camera is driven directly (`viewer.cameraController` stays `null`), so **the studio never takes
 pointer lock** — an asset viewer that swallows the cursor is not one anybody would use.
 
-The overlay in the corner carries the turntable and grid switches and the four render toggles
-(textures, lighting, vertex colours, wireframe), which go to the same scene methods Visual mode
-uses.
+A toolbar along the top of the preview, like an Unreal viewport's, carries **Frame**, the turntable
+and grid switches, and the four render toggles (**Textures**, **Lighting**, **Vertex colours**,
+**Wireframe**), which go to the same scene methods Visual mode uses. It is one row, so it never
+covers the model. The selected material and its mesh count sit in the bottom-left corner, and the
+camera gestures are written in the bottom-right one.
 
 ## The animation transport
 
 Every enabled animation runs on one clock, because that is what the game does: a driver's CHR0 and
 its kart's SRT0 play together. The timeline spans the *longest* enabled animation; the transport
-has play/pause, step, scrub, a speed (0.1x–4x) and a loop switch, and the readout shows both
-frames and seconds.
+has play/pause, step, scrub, a speed (0.1x–4x) and a loop button, and the readout shows both
+frames and seconds; on the right it names what is playing.
 
 Which animations are enabled is a per-archive set in the scene, toggled from the play button on
 each animation row in the outliner. On load the studio enables what NW4R's naming convention says
@@ -180,10 +186,41 @@ character reads `rgb(129, 128, 112)` with a 64/255 spread between channels, agai
 
 ## Editing
 
-Selecting a material — by clicking the model, or from the outliner — fills the inspector and the
-shader graph. Every control is the one Material mode uses, so everything in
+Selecting a material — by clicking the model, or from the outliner — fills Details and the shader
+graph. Every control is the one Material mode uses, so everything in
 [`docs/MATERIALS.md`](MATERIALS.md) applies: the simple/advanced split, the node palette, the
 presets, the stage table, the graph's own undo stack, the stored graph layouts.
+
+### Details follows the graph
+
+The right-hand panel shows what is selected in the graph, the way Unreal's Details panel does
+(the full table is in [`docs/MATERIALS.md`](MATERIALS.md#the-inspector-a-details-panel)):
+
+- **nothing** (or the Material node) — the material: name, summary, a compact texture list, and
+  the Transparency / Lighting / Colours / Surface sections, with a hint to click a node;
+- **a texture node** — that texture in full: big preview, Replace… / Save PNG, drop an image
+  anywhere on it to replace it, tiling, sampling, placement, Advanced, then the node's fields;
+- **a Colour, Start colour or Vertex colour node** — the material value it stands for, then the
+  node's fields;
+- **several nodes** — a count and a list to pick one from.
+
+`ModelStudio` keeps `selectedNodeIds` (from `ShaderGraphDock`'s `onSelectionChange`) and resets it
+when the material changes. A texture row clicked in the overview goes the other way, as a
+`selectionRequest` that selects and frames the node. A node edited in Details is swapped into the
+graph through `session.setGraph`, the path a canvas edit takes, so it is one graph-history entry
+and previews live.
+
+![A texture node selected](screenshots/studio-details-02-texture-node.png)
+
+![A colour node selected](screenshots/studio-details-03-colour-node.png)
+
+### Keys
+
+The studio listens on `window` in the capture phase, ahead of the track editor underneath. It
+stands aside for the graph: `Esc` inside the graph clears the graph's selection (and leaves its
+fullscreen, palette or help), and `Ctrl+Z` / `Ctrl+Y` there step the graph's own history. Anywhere
+else `Esc` goes back to the track editor — after closing the tips, if they are open — and
+`Ctrl+Z` / `Ctrl+Y` step the studio's undo stack.
 
 Character models are what the shader graph was hardened against: a driver or a kart mixes its
 textures by reading one of them's alpha into a colour input, which used to come out as a wall of
@@ -208,7 +245,20 @@ A committed edit does four things:
 
 Undo is the studio's own stack (`Ctrl+Z` / `Ctrl+Y`), a list of whole `{ document, decoded
 materials }` snapshots; restoring one reloads the changed archives into the scene and, for a track
-session, commits the restored bytes back to the track too.
+session, commits the restored bytes back to the track too. A material the step changed also drops
+an *edited* graph — otherwise that graph, which drives the material, would compile straight back
+over the restored stages — and re-reads it for the restored stages, from the stored layout when
+there is one.
+
+## Tips
+
+**Tips** in the header opens `StudioTips`, a one-minute card: what the three columns are, how to
+pick a material, edit a texture, replace one by dropping an image, get out of a confusing graph,
+move the camera, play animations, and keep the work (Export, Save to My Assets, editing a track's
+own archive). The button carries a dot until it has been opened once (`mkw.studio.tipsSeen`). The
+graph's own controls are explained by the graph's **?** card, so the tips only point at it.
+
+![The tips card](screenshots/studio-details-04-tips.png)
 
 ## Output
 
@@ -252,7 +302,8 @@ from before.
 
 | File | Responsibility |
 | --- | --- |
-| `src/ui/studio/ModelStudio.tsx` | The workspace: header, layout, the dock's size, the keyboard, and `window.__mkwStudio`. |
+| `src/ui/studio/ModelStudio.tsx` | The workspace: header, layout, the splitters, the graph selection that drives Details, the keyboard, and `window.__mkwStudio`. |
+| `src/ui/studio/StudioTips.tsx` | The getting-started card behind **Tips**. |
 | `src/ui/studio/useStudioSession.ts` | Everything stateful: opening, the material documents, the graph, the transport, the render toggles, undo, and the bridge back to a track. |
 | `src/ui/studio/StudioViewport.tsx` | The canvas, the `Viewer`, the orbit camera, picking, and the pixel readback the probes use. |
 | `src/ui/studio/StudioOutliner.tsx` | The tree, with an eye on what is drawn and a play button on what moves. |
@@ -297,6 +348,9 @@ PROBE_PREFIX=studiochar PROBE_PORT=9441 PROBE_SIZE=1720x1000 \
 PROBE_STUDIO_OPEN=track PROBE_PREFIX=studiotrack PROBE_PORT=9442 PROBE_SIZE=1720x1000 \
   node scripts/studio-probe.mjs "http://127.0.0.1:5233/?track=/dev-tracks/Z0.szs" \
   scripts/probe-studio-track.js
+
+PROBE_SHOT=studio-details PROBE_PORT=9443 PROBE_SIZE=1720x1000 \
+  node scripts/studio-probe.mjs "http://127.0.0.1:5233/" scripts/probe-studio-details.js
 ```
 
 | Probe | What it proves | A run |
@@ -305,6 +359,7 @@ PROBE_STUDIO_OPEN=track PROBE_PREFIX=studiotrack PROBE_PORT=9442 PROBE_SIZE=1720
 | `probe-studio-material.js` | Clicking the model selects the material under the cursor; the inspector, the stage table and the graph fill in; two edits reach the picture; undo returns the exact bytes. | `funky_all_tx` on `polygon0`; 5 inspector sections, 3 stage rows, 11 graph nodes; texture swap moves the frame by 8.33/255, "draw nothing" by 36.6/255; after undo the frame is back within 0.02 and the export hash is the untouched one. |
 | `probe-studio-character.js` | A real `Character/*.szs` opens, renders and exports byte-identically. | `la_bike-fk-1.szs`: `driver_model.brres` (27 CHR0s) + `kart_model.brres`; brightest patch `rgb(136, 114, 87)`, 49/255 spread; export 229 977 bytes, the same length and hash as the input. |
 | `probe-studio-track.js` | Model mode → **Open in Model Studio** → edit → back → the track viewport shows it, and `Ctrl+Z` undoes it. | `course_model.brres` (40 materials) from `Z0.szs`; culling `Material.029` moves 6.8% of the track frame (3.67/255 mean); after undo + Refresh the frame is back within 0.02/255, the noise floor. |
+| `probe-studio-details.js` | Details follows the graph: a texture node clicked on the canvas shows that texture, an empty-canvas click brings the material back, a texture row in the overview selects its node, the breadcrumb goes back, a colour node shows its colour, Shift+click shows a count; a node edited in Details changes the stages, records history and undoes exactly; the tips open and `Esc` closes them without leaving the studio. | Demo `mat_body`: overview with 2 texture rows and 5 sections, preview 429 px over a 466 px graph (half the column), Details 340 px, "Outliner" unclipped; texture node → `mat_body › Texture 1 · body` with the texture view; colour node → `Colour 3` with one picker; two nodes → "2 nodes selected"; Coordinates UV set 1 → 2 changes the stages, history 0 → 1, and undo restores them. |
 
 ![After undo, the material is back](screenshots/studio-08-after-undo.png)
 

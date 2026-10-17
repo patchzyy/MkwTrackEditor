@@ -1,11 +1,19 @@
 // Turning TEV stages back into a shader graph.
 //
-// One node cluster per stage, laid out left to right. A stage computes `d ± lerp(a, b, c)`, so
-// its cluster is an `add` (or `subtract`) fed by a `lerp`, with a `scale` node on top when the
-// stage biases, scales or leaves its result unclamped. The four inputs become shared source
-// nodes: one `texture` per (sampler, coordinate) pair, one `vertexColor` per channel, one
-// `constant` per konst selection, one `register` per register the material starts with, and
-// `value` nodes for the hardware constants.
+// One node cluster per stage half. A stage computes `d ± lerp(a, b, c)`, and the cluster is the
+// smallest set of nodes that says the same thing: a lone `multiply` when that is all the stage
+// does (`a` and `d` zero), a lone `lerp` when `d` is zero, a lone `add` / `subtract` when the lerp
+// part is just `a`, and otherwise an `add` fed by a `lerp` (or a `multiply`) that the compiler
+// fuses back into one stage. A `scale` node goes on top when the stage biases, scales or leaves
+// its result unclamped.
+//
+// The hardware constants ZERO / HALF / ONE are typed into the consuming node (`inputValues`), the
+// way Unreal shows an unwired pin's value, rather than wired from a shared "Value" node. The other
+// inputs become source nodes — a `texture` per (sampler, coordinate), a `vertexColor` per channel,
+// a `constant` per konst selection, a `register` per start colour — shared between the colour and
+// alpha halves of one stage but never across stages: a texture read by stages 0 and 4 is two
+// cards, each beside the step that samples it, not one card with wires across the whole graph.
+// Positions come from `layoutShaderGraph`.
 //
 // Two things make the round trip exact rather than approximate:
 //
@@ -24,11 +32,9 @@
 
 import * as GX from '../../../vendor/noclip.website/src/gx/gx_enum';
 import { compileShaderGraph } from './shaderGraph';
-import type { GraphEdge, GraphNode, GxMaterialDoc, GxTevStageDoc, ShaderGraph } from './types';
-
-const STAGE_SPACING = 260;
-const ROW_COLOR = 0;
-const ROW_ALPHA = 360;
+import { GRAPH_LAYOUT_COLUMN_GAP, GRAPH_LAYOUT_NODE_WIDTH, layoutShaderGraph } from './graphLayout';
+import { withInlineValue } from './graphLiterals';
+import type { GraphEdge, GraphInlineValue, GraphNode, GxMaterialDoc, GxTevStageDoc, ShaderGraph } from './types';
 
 /** A socket a later node can read from. */
 interface InputRef {
@@ -36,9 +42,17 @@ interface InputRef {
   socket: string;
 }
 
+/** What one stage operand reads: a socket to wire from, or a literal to type into the input. */
+type OperandRef = InputRef | { value: GraphInlineValue };
+
+function isLiteral(ref: OperandRef, value?: GraphInlineValue): ref is { value: GraphInlineValue } {
+  return 'value' in ref && (value === undefined || ref.value === value);
+}
+
 interface Builder {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  /** Source nodes of the stage being built, by what they read. Reset per stage. */
   sources: Map<string, string>;
   sourceCount: number;
 }
@@ -74,13 +88,27 @@ function connect(builder: Builder, from: InputRef, to: string, toSocket: string)
   });
 }
 
-/** Source nodes are shared: one per distinct thing the stages read. */
+/** Wires an operand into `socket`, or types it into the node when it is a literal. */
+function feed(builder: Builder, ref: OperandRef, node: GraphNode, socket: string): void {
+  if (!isLiteral(ref)) {
+    connect(builder, ref, node.id, socket);
+    return;
+  }
+  const typed = withInlineValue(node, socket, ref.value);
+  if (typed.inputValues) node.inputValues = typed.inputValues;
+  else delete node.inputValues;
+}
+
+/**
+ * Source nodes are shared within a stage — the texture a stage samples feeds its colour and its
+ * alpha from one card — and made afresh for the next stage. Ids are `src<n>`, which is also how
+ * `pruneUnusedSources` recognises them.
+ */
 function source(builder: Builder, key: string, make: (id: string, x: number, y: number) => GraphNode): string {
   const existing = builder.sources.get(key);
   if (existing) return existing;
-  const index = builder.sourceCount++;
-  const id = `src${index}`;
-  addNode(builder, make(id, -260, index * 90));
+  const id = `src${builder.sourceCount++}`;
+  addNode(builder, make(id, 0, 0));
   builder.sources.set(key, id);
   return id;
 }
@@ -134,16 +162,15 @@ function storedValueSource(builder: Builder, slot: 'prev' | 0 | 1 | 2): string {
 }
 
 /**
- * An alpha source read into a colour input. One node per distinct source, shared like any other:
- * the operand names a place, and every stage that names the same place reads the same thing.
+ * An alpha source read into a colour input. One node per distinct source in a stage, shared like
+ * any other: the operand names a place, and both reads of the same place read the same thing.
  */
 function alphaAsColorSource(builder: Builder, key: string, inner: (builder: Builder) => InputRef): InputRef {
   const existing = builder.sources.get(`aac:${key}`);
   if (existing) return { node: existing, socket: 'rgb' };
   const from = inner(builder);
-  const index = builder.sourceCount++;
-  const id = `src${index}`;
-  addNode(builder, { id, type: 'alphaAsColor', x: -120, y: index * 90 });
+  const id = `src${builder.sourceCount++}`;
+  addNode(builder, { id, type: 'alphaAsColor', x: 0, y: 0 });
   builder.sources.set(`aac:${key}`, id);
   connect(builder, from, id, 'alpha');
   return { node: id, socket: 'rgb' };
@@ -155,15 +182,15 @@ function channelSource(builder: Builder, stage: GxTevStageDoc): string {
   }));
 }
 
-function colorInputRef(context: StageContext, cc: GX.CC, stage: GxTevStageDoc): InputRef | null {
+function colorInputRef(context: StageContext, cc: GX.CC, stage: GxTevStageDoc): OperandRef | null {
   const { builder } = context;
   switch (cc) {
     case GX.CC.ZERO:
-      return { node: source(builder, 'v0', (id, x, y) => ({ id, type: 'value', value: 0, x, y })), socket: 'rgb' };
+      return { value: 0 };
     case GX.CC.HALF:
-      return { node: source(builder, 'v0.5', (id, x, y) => ({ id, type: 'value', value: 0.5, x, y })), socket: 'rgb' };
+      return { value: 0.5 };
     case GX.CC.ONE:
-      return { node: source(builder, 'v1', (id, x, y) => ({ id, type: 'value', value: 1, x, y })), socket: 'rgb' };
+      return { value: 1 };
     case GX.CC.TEXC:
       if (stage.texMap === GX.TexMapID.TEXMAP_NULL) return null;
       return { node: textureSource(builder, stage), socket: 'rgb' };
@@ -216,11 +243,13 @@ function colorInputRef(context: StageContext, cc: GX.CC, stage: GxTevStageDoc): 
   }
 }
 
-function alphaInputRef(context: StageContext, ca: GX.CA, stage: GxTevStageDoc): InputRef | null {
+function alphaInputRef(context: StageContext, ca: GX.CA, stage: GxTevStageDoc): OperandRef | null {
   const { builder } = context;
   switch (ca) {
+    // The only literal the alpha operand set has. A half or a one in alpha is a konst selection,
+    // which decompiles to a `constant` node like any other konst read.
     case GX.CA.ZERO:
-      return { node: source(builder, 'v0', (id, x, y) => ({ id, type: 'value', value: 0, x, y })), socket: 'alpha' };
+      return { value: 0 };
     case GX.CA.TEXA:
       if (stage.texMap === GX.TexMapID.TEXMAP_NULL) return null;
       return { node: textureSource(builder, stage), socket: 'alpha' };
@@ -260,8 +289,6 @@ function biasValue(bias: GX.TevBias): -0.5 | 0 | 0.5 {
 function buildHalf(context: StageContext, stage: GxTevStageDoc, index: number, domain: 'color' | 'alpha'): InputRef | null {
   const { builder } = context;
   const letter = domain === 'color' ? 'c' : 'a';
-  const x = index * STAGE_SPACING;
-  const y = domain === 'color' ? ROW_COLOR : ROW_ALPHA;
 
   const operands = domain === 'color'
     ? ([stage.colorInA, stage.colorInB, stage.colorInC, stage.colorInD] as number[])
@@ -279,55 +306,62 @@ function buildHalf(context: StageContext, stage: GxTevStageDoc, index: number, d
     context.refusals.set(index, refused);
     return null;
   }
-  const [a, b, c, d] = inputs as InputRef[];
+  const [a, b, c, d] = inputs as OperandRef[];
 
   const op = domain === 'color' ? stage.colorOp : stage.alphaOp;
   const bias = domain === 'color' ? stage.colorBias : stage.alphaBias;
   const scale = domain === 'color' ? stage.colorScale : stage.alphaScale;
   const clamp = domain === 'color' ? stage.colorClamp : stage.alphaClamp;
 
+  /** Adds a cluster node with its operands wired in or typed in, socket by socket. */
+  const step = (node: GraphNode, wiring: Array<[OperandRef, string]>): GraphNode => {
+    addNode(builder, node);
+    for (const [ref, socket] of wiring) feed(builder, ref, node, socket);
+    return node;
+  };
+  const rootId = `s${index}${letter}`;
+
   if (op >= GX.TevOp.COMP_R8_GT) {
     // A compare stage reuses the bias and scale fields to name the comparison, so there is no
     // scale node to add: the op says it all.
-    const root = addNode(builder, { id: `s${index}${letter}`, type: 'compare', op, x, y, stageTemplate: stage });
-    connect(builder, a, root, 'a');
-    connect(builder, b, root, 'b');
-    connect(builder, c, root, 'c');
-    connect(builder, d, root, 'd');
-    return { node: root, socket: 'out' };
+    step({ id: rootId, type: 'compare', op, x: 0, y: 0, stageTemplate: stage }, [[a, 'a'], [b, 'b'], [c, 'c'], [d, 'd']]);
+    return { node: rootId, socket: 'out' };
   }
 
-  // `d ± lerp(a, b, c)` is one stage; the lerp feeds the add's second input and the compiler
-  // fuses the pair back together.
-  const lerp = addNode(builder, { id: `s${index}${letter}l`, type: 'lerp', x: x - 100, y: y + 150, stageTemplate: stage });
-  connect(builder, a, lerp, 'a');
-  connect(builder, b, lerp, 'b');
-  connect(builder, c, lerp, 't');
-  let root = addNode(builder, {
-    id: `s${index}${letter}`,
-    type: op === GX.TevOp.SUB ? 'subtract' : 'add',
-    x,
-    y,
-    stageTemplate: stage,
-  });
-  connect(builder, d, root, 'a');
-  connect(builder, { node: lerp, socket: 'out' }, root, 'b');
+  // The fewest nodes that lower back to exactly this stage (the compiler's table, read backwards):
+  //   multiply(x, y)            A=0 B=x C=y D=0
+  //   lerp(x, y, t)             A=x B=y C=t D=0
+  //   add / subtract(x, y)      A=y B=0 C=0 D=x
+  //   add / subtract(x, step)   D=x, with a multiply or lerp feeding `b` fused into the same stage
+  const subtract = op === GX.TevOp.SUB;
+  const sum = subtract ? 'subtract' : 'add';
+  const product = (id: string) => isLiteral(a, 0)
+    ? step({ id, type: 'multiply', x: 0, y: 0, stageTemplate: stage }, [[b, 'a'], [c, 'b']])
+    : step({ id, type: 'lerp', x: 0, y: 0, stageTemplate: stage }, [[a, 'a'], [b, 'b'], [c, 't']]);
+  let root: GraphNode;
+  // "Add K" reads better than "lerp from K to 0 by 0", so the add form wins when both fit.
+  if (isLiteral(b, 0) && isLiteral(c, 0)) {
+    root = step({ id: rootId, type: sum, x: 0, y: 0, stageTemplate: stage }, [[d, 'a'], [a, 'b']]);
+  } else if (!subtract && isLiteral(d, 0)) {
+    root = product(rootId);
+  } else {
+    const inner = product(`s${index}${letter}l`);
+    root = step({ id: rootId, type: sum, x: 0, y: 0, stageTemplate: stage }, [[d, 'a'], [{ node: inner.id, socket: 'out' }, 'b']]);
+  }
 
   if (bias !== GX.TevBias.ZERO || scale !== GX.TevScale.SCALE_1 || !clamp) {
-    const scaleNode = addNode(builder, {
+    root = step({
       id: `s${index}${letter}s`,
       type: 'scale',
       scale: scaleValue(scale),
       bias: biasValue(bias),
       clamp,
-      x: x + 120,
-      y,
+      x: 0,
+      y: 0,
       stageTemplate: stage,
-    });
-    connect(builder, { node: root, socket: 'out' }, scaleNode, 'x');
-    root = scaleNode;
+    }, [[{ node: root.id, socket: 'out' }, 'x']]);
   }
-  return { node: root, socket: 'out' };
+  return { node: root.id, socket: 'out' };
 }
 
 function buildGraph(material: GxMaterialDoc, forceRaw: ReadonlySet<number>, refusals = new Map<number, string[]>()): ShaderGraph {
@@ -340,6 +374,7 @@ function buildGraph(material: GxMaterialDoc, forceRaw: ReadonlySet<number>, refu
 
   for (let index = 0; index < material.tevStages.length; index++) {
     const stage = material.tevStages[index];
+    builder.sources = new Map();
     const mark = checkpoint(builder);
     const color = forceRaw.has(index) ? null : buildHalf(context, stage, index, 'color');
     const alpha = color === null || forceRaw.has(index) ? null : buildHalf(context, stage, index, 'alpha');
@@ -355,7 +390,7 @@ function buildGraph(material: GxMaterialDoc, forceRaw: ReadonlySet<number>, refu
 
     restore(builder, mark);
     const id = `s${index}r`;
-    addNode(builder, { id, type: 'rawStage', stage: { ...stage }, x: index * STAGE_SPACING, y: ROW_COLOR });
+    addNode(builder, { id, type: 'rawStage', stage: { ...stage }, x: 0, y: 0 });
     if (lastStage) connect(builder, lastStage, id, 'prev');
     if (lastAlpha) connect(builder, lastAlpha, id, 'prevAlpha');
     const colorRef: InputRef = { node: id, socket: 'out' };
@@ -367,12 +402,7 @@ function buildGraph(material: GxMaterialDoc, forceRaw: ReadonlySet<number>, refu
     lastStage = colorRef;
   }
 
-  const output = addNode(builder, {
-    id: 'out',
-    type: 'output',
-    x: material.tevStages.length * STAGE_SPACING,
-    y: ROW_COLOR + 180,
-  });
+  const output = addNode(builder, { id: 'out', type: 'output', x: 0, y: 0 });
   if (lastColor) connect(builder, lastColor, output, 'color');
   if (lastAlpha) connect(builder, lastAlpha, output, 'alpha');
 
@@ -410,20 +440,102 @@ function markUnusedClusters(builder: Builder, outputId: string): void {
 
 /**
  * A half that failed to build may have left a source node behind; drop anything unwired. Only
- * the shared source nodes qualify: a stage cluster nobody reads still has wires running into it,
- * and removing its root would leave those wires pointing at nothing.
+ * the source nodes (`src<n>`) qualify: a stage cluster nobody reads still has wires running into
+ * it, and removing its root would leave those wires pointing at nothing.
  */
 function pruneUnusedSources(builder: Builder): void {
-  const sources = new Set(builder.sources.values());
   // Repeated, because an "Alpha as colour" node is itself fed by a source: dropping it can leave
   // the texture behind it unread, and that one has to go too.
   for (;;) {
     const used = new Set(builder.edges.map((edge) => edge.from.node));
-    const drop = new Set(builder.nodes.filter((node) => sources.has(node.id) && !used.has(node.id)).map((node) => node.id));
+    const drop = new Set(builder.nodes.filter((node) => node.id.startsWith('src') && !used.has(node.id)).map((node) => node.id));
     if (drop.size === 0) break;
     builder.nodes = builder.nodes.filter((node) => !drop.has(node.id));
     builder.edges = builder.edges.filter((edge) => !drop.has(edge.to.node) && !drop.has(edge.from.node));
   }
+}
+
+/**
+ * Source cards placed where an Unreal user would put them, given a first layout:
+ *
+ *  - A source whose readers sit two or more columns apart gets a copy beside the far ones, rather
+ *    than one wire running past the cards in between. Sources are reads of a place, so a copy is
+ *    free: Unreal users duplicate constants and texture samples the same way.
+ *  - Sources are made per stage, so two stages the layout puts side by side can end up with two
+ *    identical cards in one column — two "Start colour 1" cards one above the other. Those twins
+ *    become one card.
+ *
+ * Neither can change what compiles, but the round trip is the promise, so it is checked, and the
+ * untouched graph kept if it ever came back different.
+ */
+function tidySources(graph: ShaderGraph, material: GxMaterialDoc): ShaderGraph {
+  const split = splitSpreadSources(graph);
+  const merged = layoutShaderGraph(mergeTwinSources(split === graph ? graph : layoutShaderGraph(split)));
+  if (split === graph && merged.nodes.length === graph.nodes.length) return graph;
+  const compiled = compileShaderGraph(merged, material);
+  return compiled.ok && firstMismatch(compiled.tevStages, material.tevStages) < 0 ? merged : graph;
+}
+
+/** Column to column distance in a default-sized layout, which is what the decompiler makes. */
+const COLUMN_PITCH = GRAPH_LAYOUT_NODE_WIDTH + GRAPH_LAYOUT_COLUMN_GAP;
+
+function isPlainSource(node: GraphNode, fed: ReadonlySet<string>): boolean {
+  return node.id.startsWith('src') && !fed.has(node.id);
+}
+
+function splitSpreadSources(graph: ShaderGraph): ShaderGraph {
+  const fed = new Set(graph.edges.map((edge) => edge.to.node));
+  const xOf = new Map(graph.nodes.map((node) => [node.id, node.x]));
+  let next = Math.max(-1, ...graph.nodes.map((node) => Number(/^src(\d+)$/.exec(node.id)?.[1] ?? -1))) + 1;
+  const nodes = [...graph.nodes];
+  const rewired = new Map<string, string>();
+  for (const node of graph.nodes) {
+    if (!isPlainSource(node, fed)) continue;
+    const readers = graph.edges.filter((edge) => edge.from.node === node.id);
+    const columns = [...new Set(readers.map((edge) => xOf.get(edge.to.node)!))].sort((a, b) => a - b);
+    // Readers in neighbouring columns share the card; skipping a whole column starts a new one.
+    let card = node.id;
+    for (let index = 1; index < columns.length; index++) {
+      if (columns[index] - columns[index - 1] > COLUMN_PITCH) {
+        card = `src${next++}`;
+        nodes.push({ ...node, id: card });
+      }
+      if (card === node.id) continue;
+      for (const edge of readers) if (xOf.get(edge.to.node) === columns[index]) rewired.set(edge.id, card);
+    }
+  }
+  if (rewired.size === 0) return graph;
+  return {
+    ...graph,
+    nodes,
+    edges: graph.edges.map((edge) => {
+      const from = rewired.get(edge.id);
+      return from ? { ...edge, from: { ...edge.from, node: from } } : edge;
+    }),
+  };
+}
+
+function mergeTwinSources(graph: ShaderGraph): ShaderGraph {
+  const fed = new Set(graph.edges.map((edge) => edge.to.node));
+  const keep = new Map<string, string>();
+  const merged = new Map<string, string>();
+  for (const node of graph.nodes) {
+    if (!isPlainSource(node, fed)) continue;
+    const { id: _id, x, y: _y, ...rest } = node;
+    const key = `${x}|${JSON.stringify(rest)}`;
+    const twin = keep.get(key);
+    if (twin) merged.set(node.id, twin);
+    else keep.set(key, node.id);
+  }
+  if (merged.size === 0) return graph;
+  return {
+    ...graph,
+    nodes: graph.nodes.filter((node) => !merged.has(node.id)),
+    edges: graph.edges.map((edge) => {
+      const into = merged.get(edge.from.node);
+      return into ? { ...edge, from: { ...edge.from, node: into } } : edge;
+    }),
+  };
 }
 
 function stagesEqual(a: GxTevStageDoc, b: GxTevStageDoc): boolean {
@@ -545,7 +657,7 @@ export function decompileShaderReport(material: GxMaterialDoc): DecompileReport 
   // the raw nodes that survived into the final graph are really raw.
   for (const index of [...causes.keys()]) if (!rawIndices.includes(index)) causes.delete(index);
 
-  const result = graph ?? buildGraph(material, forceRaw);
+  const result = tidySources(layoutShaderGraph(graph ?? buildGraph(material, forceRaw)), material);
   const ordered = [...causes.values()].sort((a, b) => a.index - b.index);
   // The card explains itself, so the sentence travels with the node — including into IndexedDB.
   for (const cause of ordered) {

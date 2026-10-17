@@ -9,6 +9,8 @@
 // IndexedDB failures are never fatal: a private-mode browser just loses the layout and gets a
 // fresh `decompileShader` result instead.
 import type { GxMaterialRef, GxTevStageDoc } from '../../lib/gxMaterial';
+// The light module, not the barrel: this file is in the main bundle.
+import { foldLiteralNodes } from '../../lib/gxMaterial/graphLiterals';
 import type { EditorShaderGraph } from './graphModel';
 
 // Its own database rather than a second store inside `mkw-track-editor`: adding a store means
@@ -95,12 +97,22 @@ interface StoredGraph {
   graph: EditorShaderGraph;
 }
 
+/**
+ * What a stored graph becomes on the way in. A graph saved by an older build wired the hardware
+ * constants from a shared "Value" node into every input that wanted one; those become values typed
+ * into the inputs (`foldLiteralNodes`), which compiles to the very same stages. The layout is the
+ * author's and is kept — only the Value cards and their wires go.
+ */
+export function migrateStoredGraph(graph: EditorShaderGraph): EditorShaderGraph {
+  return foldLiteralNodes(graph);
+}
+
 export async function loadStoredGraph(ref: GxMaterialRef, stages: readonly GxTevStageDoc[]): Promise<EditorShaderGraph | null> {
   if (typeof indexedDB === 'undefined') return null;
   try {
     const stored = await withStore<StoredGraph | undefined>('readonly', (store) => store.get(graphStorageKey(ref, stages)));
     if (!stored || stored.version !== 1 || stored.graph?.version !== 1) return null;
-    return stored.graph;
+    return migrateStoredGraph(stored.graph);
   } catch {
     return null;
   }

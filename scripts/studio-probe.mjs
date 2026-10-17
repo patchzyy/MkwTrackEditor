@@ -33,7 +33,9 @@ const child = spawn(edge, [
   `--remote-debugging-port=${port}`,
   `--window-size=${width},${height}`,
   '--window-position=-2400,-2400',
-  `--user-data-dir=${resolve(root, '.probe-profile/studio')}`,
+  // `PROBE_PROFILE` gives a run its own browser profile, so two probes running at once do not
+  // hand their window to each other (Edge reuses a running instance for the same profile).
+  `--user-data-dir=${resolve(root, `.probe-profile/${process.env.PROBE_PROFILE ?? 'studio'}`)}`,
   '--no-first-run',
   '--no-default-browser-check',
   '--disable-background-timer-throttling',

@@ -1,41 +1,20 @@
 import { AlertTriangle } from 'lucide-react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import type { GraphDiagnostic, GxMaterialDoc } from '../../lib/gxMaterial';
-import { ColorField, Select, Toggle, Tooltip } from '../components';
+import type { GraphDiagnostic, GraphInlineValue, GxMaterialDoc } from '../../lib/gxMaterial';
+import { ColorField, Tooltip } from '../components';
 import { TexturePreview } from '../visual/TexturePreview';
 import type { VisualTextureInfo } from '../visual/visualArchive';
+import { colorRegisterName, konstColorName, socketLabel } from './gxOptions';
 import {
-  IND_TEX_BIAS_OPTIONS,
-  IND_TEX_FORMAT_OPTIONS,
-  IND_TEX_MATRIX_OPTIONS,
-  IND_TEX_WRAP_OPTIONS,
-  KONST_ALPHA_SEL_OPTIONS,
-  KONST_COLOR_SEL_OPTIONS,
-  OUTPUT_REGISTER_OPTIONS,
-  RAS_CHANNEL_OPTIONS,
-  STORED_SLOT_OPTIONS,
-  TEV_OP_OPTIONS,
-  caLabel,
-  ccLabel,
-  channelLabel,
-  colorRegisterName,
-  defaultKonstAlphaSel,
-  defaultKonstColorSel,
-  konstColorName,
-  slotLabel,
-  socketLabel,
-  storedSlotName,
-  tevOpLabel,
-} from './gxOptions';
-import {
+  INLINE_VALUES,
   NODE_CATEGORY,
   NODE_SUMMARY,
+  inlineValue,
+  inlineValueLabel,
   nodeCaption,
   nodeSize,
   nodeSpec,
   nodeTitle,
-  SOCKET_SPACING,
-  SOCKET_TOP,
   socketType,
   type EditorGraphNode,
   type EditorShaderGraph,
@@ -53,7 +32,10 @@ export interface GraphNodeCardProps {
   selected: boolean;
   shake: boolean;
   diagnostics: GraphDiagnostic[];
+  /** `node|socket|side` of every socket with a wire on it. */
+  connected: ReadonlySet<string>;
   onPatch: (patch: Partial<EditorGraphNode>) => void;
+  onSetInputValue: (socket: string, value: GraphInlineValue) => void;
   onChangeDoc: MaterialDocChange;
   /**
    * Re-reads the material's stages and rebuilds the graph. Offered on a "Special step" card,
@@ -66,14 +48,22 @@ export interface GraphNodeCardProps {
   onPointerDownSocket: (event: ReactPointerEvent<HTMLElement>, nodeId: string, socket: string, side: 'input' | 'output') => void;
 }
 
-/** Node types that become a step of their own, and so can name where the result is stored. */
-const STEP_TYPES = new Set(['multiply', 'add', 'subtract', 'lerp', 'scale', 'compare']);
+/**
+ * Keeps a left press on a control from starting a node drag. Right and middle presses still reach
+ * the canvas, so a right-drag pans from anywhere, controls included.
+ */
+const stop = (event: ReactPointerEvent) => {
+  if (event.button === 0) event.stopPropagation();
+};
 
 /**
- * One node in the shader graph: a coloured title bar, input sockets down the left, output sockets
- * down the right, and the node's own controls in between. Everything a node edits is either its
- * own field or — for the colour nodes — the material's konst/register colour, so a swatch here
- * changes what the viewport draws immediately.
+ * One node in the shader graph, drawn the way Unreal draws a material node: a header strip
+ * coloured by what kind of node it is, then one tight row per pin — inputs on the left, outputs on
+ * the right — and an unwired input shows its value inline, so a literal never needs a node and a
+ * wire of its own. Settings live in the Details panel (`GraphNodeDetails`); the card keeps only
+ * what is worth reading at a glance: a texture's thumbnail, a colour's swatch, a value.
+ *
+ * The card is drawn at exactly `nodeSize`, which is what the wires and the layout assume.
  */
 export function GraphNodeCard({
   graph,
@@ -85,21 +75,15 @@ export function GraphNodeCard({
   selected,
   shake,
   diagnostics,
+  connected,
   onPatch,
+  onSetInputValue,
   onChangeDoc,
   onConvertRawStages,
   rawStagesConvertible,
   onPointerDownNode,
   onPointerDownSocket,
 }: GraphNodeCardProps) {
-  const spec = nodeSpec(node.type);
-  const size = nodeSize(node);
-  const category = NODE_CATEGORY[node.type];
-  const title = nodeTitle(node);
-  const caption = nodeCaption(node, doc);
-  const error = diagnostics.find((entry) => entry.severity === 'error');
-  const warning = diagnostics.find((entry) => entry.severity === 'warning');
-
   if (node.type === 'comment') {
     return (
       <div
@@ -112,7 +96,7 @@ export function GraphNodeCard({
           className="graphCommentText"
           value={node.text}
           aria-label="Comment"
-          onPointerDown={(event) => event.stopPropagation()}
+          onPointerDown={stop}
           onChange={(event) => onPatch({ text: event.currentTarget.value } as Partial<EditorGraphNode>)}
         />
         <span
@@ -143,17 +127,41 @@ export function GraphNodeCard({
     );
   }
 
+  const spec = nodeSpec(node.type);
+  const size = nodeSize(node);
+  const category = NODE_CATEGORY[node.type] ?? 'math';
+  const title = nodeTitle(node);
+  const caption = nodeCaption(node, doc);
+  const error = diagnostics.find((entry) => entry.severity === 'error');
+  const warning = diagnostics.find((entry) => entry.severity === 'warning');
+  const rows = Math.max(spec.inputs.length, spec.outputs.length);
+  const unused = node.unusedResult === true;
+
+  const tooltip = (
+    <span className="graphNodeTip">
+      <strong>{title}{caption ? ` · ${caption}` : ''}</strong>
+      <span>{NODE_SUMMARY[node.type] ?? ''}</span>
+      {unused && <span>Nothing later reads this result, so deleting it changes nothing on screen.</span>}
+    </span>
+  );
+
   return (
     <div
-      className={['graphNode', `graphNode--${category}`, selected && 'selected', shake && 'shake'].filter(Boolean).join(' ')}
-      style={{ left: node.x, top: node.y, width: size.width, minHeight: size.height }}
+      className={[
+        'graphNode',
+        `graphNode--${category}`,
+        node.type === 'output' && 'graphNode--result',
+        unused && 'unused',
+        selected && 'selected',
+        shake && 'shake',
+      ].filter(Boolean).join(' ')}
+      style={{ left: node.x, top: node.y, width: size.width, height: size.height }}
       data-node={node.id}
+      data-node-type={node.type}
       onPointerDown={(event) => onPointerDownNode(event, node.id)}
     >
       <header className="graphNodeHeader">
-        {/* "Texture 1 · road_tex", not "TEXMAP0 / TEXCOORD0". The caption is the dimmed half and
-            the whole thing is one tooltip, because 176px of card cannot hold both in full. */}
-        <Tooltip label={`${title}${caption ? ` · ${caption}` : ''} — ${NODE_SUMMARY[node.type]}`} side="top">
+        <Tooltip label={tooltip} side="top" className="graphNodeTitleAnchor">
           <span className="graphNodeTitle">
             {title}
             {caption && <span className="graphNodeCaption"> · {caption}</span>}
@@ -168,318 +176,174 @@ export function GraphNodeCard({
         )}
       </header>
 
-      {spec.inputs.map((input, index) => (
-        <span
-          key={`in-${input.name}`}
-          className={`graphSocket graphSocket--in graphSocket--${socketType(graph, node.id, input.name, 'input')}`}
-          style={{ top: SOCKET_TOP + index * SOCKET_SPACING - 5 }}
-          data-socket={`${node.id}|${input.name}|input`}
-          title={`${socketLabel(input.name)} — takes ${socketType(graph, node.id, input.name, 'input') === 'alpha' ? 'alpha' : 'colour'}`}
-          onPointerDown={(event) => onPointerDownSocket(event, node.id, input.name, 'input')}
-        >
-          <i />
-          <label>{socketLabel(input.name)}</label>
-        </span>
-      ))}
-
-      {spec.outputs.map((output, index) => (
-        <span
-          key={`out-${output.name}`}
-          className={`graphSocket graphSocket--out graphSocket--${socketType(graph, node.id, output.name, 'output')}`}
-          style={{ top: SOCKET_TOP + index * SOCKET_SPACING - 5 }}
-          data-socket={`${node.id}|${output.name}|output`}
-          title={`${socketLabel(output.name)} — gives ${socketType(graph, node.id, output.name, 'output') === 'alpha' ? 'alpha' : 'colour'}`}
-          onPointerDown={(event) => onPointerDownSocket(event, node.id, output.name, 'output')}
-        >
-          <label>{socketLabel(output.name)}</label>
-          <i />
-        </span>
-      ))}
-
-      <div className="graphNodeBody" onPointerDown={(event) => event.stopPropagation()}>
-        {node.type === 'texture' && (
-          <>
-            <TexturePreview
-              archivePath={archivePath}
-              archiveBytes={archiveBytes}
-              texture={textures.find((texture) => texture.name === doc?.samplers[node.sampler]?.texture) ?? null}
-              revision={0}
-            />
-            <Select
-              label="Which texture"
-              size="sm"
-              value={String(node.sampler)}
-              options={(doc?.samplers ?? []).map((sampler, index) => ({ value: String(index), label: `Texture ${index + 1} — ${sampler.texture || 'none'}` }))}
-              onChange={(value) => onPatch({ sampler: Number(value) } as Partial<EditorGraphNode>)}
-            />
-            <Select
-              label="Coordinates"
-              size="sm"
-              value={String(node.texCoord)}
-              options={Array.from({ length: Math.max(1, doc?.texGens.length ?? 1) }, (_, index) => ({ value: String(index), label: `UV set ${index + 1}` }))}
-              onChange={(value) => onPatch({ texCoord: Number(value) } as Partial<EditorGraphNode>)}
-            />
-          </>
-        )}
-
-        {node.type === 'vertexColor' && (
-          <Select
-            label="Which channel"
-            size="sm"
-            value={String(node.channel)}
-            options={RAS_CHANNEL_OPTIONS}
-            onChange={(value) => onPatch({ channel: Number(value) } as Partial<EditorGraphNode>)}
-          />
-        )}
-
-        {node.type === 'storedValue' && (
-          <Select
-            label="Which slot"
-            size="sm"
-            value={String(node.slot)}
-            options={STORED_SLOT_OPTIONS}
-            onChange={(value) => onPatch({ slot: (value === 'prev' ? 'prev' : Number(value)) } as Partial<EditorGraphNode>)}
-          />
-        )}
-
-        {node.type === 'constant' && doc && (
-          <>
-            <div className="graphNodeColorRow">
-              <ColorField
-                label={konstColorName(node.slot)}
-                value={colorToRgb255(doc.konstColors[node.slot])}
-                onChange={(rgb) => onChangeDoc(setKonstColor(doc, node.slot, rgb255ToColor(rgb, doc.konstColors[node.slot].a)), { status: `${konstColorName(node.slot)} changed.` })}
-              />
-              <Select
-                label="Which colour"
-                size="sm"
-                value={String(node.slot)}
-                options={[0, 1, 2, 3].map((slot) => ({ value: String(slot), label: konstColorName(slot) }))}
-                onChange={(value) => {
-                  // Changing the slot resets any explicit selection, so the two cannot disagree.
-                  const slot = Number(value);
-                  onPatch({ slot, colorSel: undefined, alphaSel: undefined } as Partial<EditorGraphNode>);
-                }}
-              />
-            </div>
-            {/* Most materials just read the whole K register, so the exact selection is folded
-                away; a stage that wants a hardware fraction or a single channel needs it. */}
-            <details className="graphNodeAdvanced">
-              <summary>Advanced</summary>
-              <Select
-                label="Colour selection"
-                size="sm"
-                value={String(node.colorSel ?? defaultKonstColorSel(node.slot))}
-                options={KONST_COLOR_SEL_OPTIONS}
-                onChange={(value) => onPatch({ colorSel: Number(value) } as Partial<EditorGraphNode>)}
-              />
-              <Select
-                label="Alpha selection"
-                size="sm"
-                value={String(node.alphaSel ?? defaultKonstAlphaSel(node.slot))}
-                options={KONST_ALPHA_SEL_OPTIONS}
-                onChange={(value) => onPatch({ alphaSel: Number(value) } as Partial<EditorGraphNode>)}
-              />
-            </details>
-          </>
-        )}
-
-        {node.type === 'register' && doc && (
-          <div className="graphNodeColorRow">
-            <ColorField
-              label={colorRegisterName(node.slot)}
-              value={registerToRgb255(doc.colorRegisters[node.slot])}
-              onChange={(rgb) => onChangeDoc(setColorRegister(doc, node.slot, rgb255ToRegister(rgb, doc.colorRegisters[node.slot].a)), { status: `${colorRegisterName(node.slot)} changed.` })}
-            />
-            <Select
-              label="Which slot"
-              size="sm"
-              value={String(node.slot)}
-              options={[0, 1, 2].map((slot) => ({ value: String(slot), label: colorRegisterName(slot) }))}
-              onChange={(value) => onPatch({ slot: Number(value) } as Partial<EditorGraphNode>)}
-            />
-          </div>
-        )}
-
-        {node.type === 'value' && (
-          <div className="graphSegmented" role="group" aria-label="Value">
-            {[0, 0.5, 1].map((value) => (
-              <button
-                key={value}
-                type="button"
-                className={node.value === value ? 'active' : undefined}
-                onClick={() => onPatch({ value: value as 0 | 0.5 | 1 } as Partial<EditorGraphNode>)}
-              >
-                {value}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {node.type === 'scale' && (
-          <>
-            <div className="graphSegmented" role="group" aria-label="Scale">
-              {[0.5, 1, 2, 4].map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={node.scale === value ? 'active' : undefined}
-                  onClick={() => onPatch({ scale: value as 0.5 | 1 | 2 | 4 } as Partial<EditorGraphNode>)}
+      <div className="graphNodeRows">
+        {Array.from({ length: rows }, (_, index) => {
+          const input = spec.inputs[index];
+          const output = spec.outputs[index];
+          return (
+            <div className="graphRow" key={index}>
+              {input ? (
+                <InputPin
+                  node={node}
+                  name={input.name}
+                  alpha={socketType(graph, node.id, input.name, 'input') === 'alpha'}
+                  wired={connected.has(`${node.id}|${input.name}|input`)}
+                  onPointerDownSocket={onPointerDownSocket}
+                  onSetInputValue={onSetInputValue}
+                />
+              ) : <span />}
+              {output && (
+                <span
+                  className={[
+                    'graphSocket',
+                    'graphSocket--out',
+                    socketType(graph, node.id, output.name, 'output') === 'alpha' && 'graphSocket--alpha',
+                    connected.has(`${node.id}|${output.name}|output`) && 'wired',
+                  ].filter(Boolean).join(' ')}
+                  data-socket={`${node.id}|${output.name}|output`}
+                  title={`${socketLabel(output.name)} — gives ${socketType(graph, node.id, output.name, 'output') === 'alpha' ? 'an alpha' : 'a colour'}. Drag to wire it.`}
+                  onPointerDown={(event) => onPointerDownSocket(event, node.id, output.name, 'output')}
                 >
-                  x{value}
-                </button>
-              ))}
+                  <span className="graphSocketLabel">{socketLabel(output.name)}</span>
+                  <i />
+                </span>
+              )}
             </div>
-            <div className="graphSegmented" role="group" aria-label="Bias">
-              {[-0.5, 0, 0.5].map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={node.bias === value ? 'active' : undefined}
-                  onClick={() => onPatch({ bias: value as -0.5 | 0 | 0.5 } as Partial<EditorGraphNode>)}
-                >
-                  {value > 0 ? `+${value}` : value}
-                </button>
-              ))}
-            </div>
-            <Toggle
-              variant="checkbox"
-              label="Clamp to 0..1"
-              checked={node.clamp}
-              onChange={(checked) => onPatch({ clamp: checked } as Partial<EditorGraphNode>)}
-            />
-          </>
-        )}
-
-        {node.type === 'compare' && (
-          <Select
-            label="Comparison"
-            size="sm"
-            value={String(node.op)}
-            options={TEV_OP_OPTIONS.filter((option) => option.numeric >= 8)}
-            onChange={(value) => onPatch({ op: Number(value) } as Partial<EditorGraphNode>)}
-          />
-        )}
-
-        {/* Where the step leaves its result. Almost always the working slot, which is why it is
-            folded away: it only matters when a later step has to read this value after something
-            else has overwritten the working slot. */}
-        {STEP_TYPES.has(node.type) && (
-          <details className="graphNodeAdvanced">
-            <summary>Advanced</summary>
-            <Select
-              label="Store result in"
-              size="sm"
-              value={String((node as { outputRegister?: 'prev' | 0 | 1 | 2 }).outputRegister ?? 'prev')}
-              options={OUTPUT_REGISTER_OPTIONS}
-              onChange={(value) => onPatch({ outputRegister: (value === 'prev' ? 'prev' : Number(value)) } as Partial<EditorGraphNode>)}
-            />
-          </details>
-        )}
-
-        {node.type === 'indirectWarp' && (
-          <>
-            <Select
-              label="Indirect stage"
-              size="sm"
-              value={String(node.indStage)}
-              options={[0, 1, 2, 3].map((slot) => ({ value: String(slot), label: `Stage ${slot + 1}` }))}
-              onChange={(value) => onPatch({ indStage: Number(value) } as Partial<EditorGraphNode>)}
-            />
-            <Select
-              label="Matrix"
-              size="sm"
-              value={String(node.matrix)}
-              options={IND_TEX_MATRIX_OPTIONS}
-              onChange={(value) => onPatch({ matrix: Number(value) } as Partial<EditorGraphNode>)}
-            />
-            <Select
-              label="Format"
-              size="sm"
-              value={String(node.format)}
-              options={IND_TEX_FORMAT_OPTIONS}
-              onChange={(value) => onPatch({ format: Number(value) } as Partial<EditorGraphNode>)}
-            />
-            <Select
-              label="Bias"
-              size="sm"
-              value={String(node.bias)}
-              options={IND_TEX_BIAS_OPTIONS}
-              onChange={(value) => onPatch({ bias: Number(value) } as Partial<EditorGraphNode>)}
-            />
-            <Select
-              label="Wrap across"
-              size="sm"
-              value={String(node.wrapS)}
-              options={IND_TEX_WRAP_OPTIONS}
-              onChange={(value) => onPatch({ wrapS: Number(value) } as Partial<EditorGraphNode>)}
-            />
-            <Select
-              label="Wrap down"
-              size="sm"
-              value={String(node.wrapT)}
-              options={IND_TEX_WRAP_OPTIONS}
-              onChange={(value) => onPatch({ wrapT: Number(value) } as Partial<EditorGraphNode>)}
-            />
-            <Toggle
-              variant="checkbox"
-              label="Add the previous warp"
-              checked={node.addPrevious}
-              onChange={(checked) => onPatch({ addPrevious: checked } as Partial<EditorGraphNode>)}
-            />
-          </>
-        )}
-
-        {/* Read-only on purpose: this is a stage the graph cannot express, kept exactly as the
-            file had it. Its `prev` socket carries no value, only the order it runs in.
-            Never a dead end: the card says what it is that cannot be drawn, and when the editor
-            has since learned the node, offers to redraw the whole graph. */}
-        {node.type === 'rawStage' && (
-          <>
-            <p className="graphRawStageNote">
-              {node.reason ?? 'This step does something the node editor cannot draw.'}
-              {' '}It is kept exactly as the file had it and written back untouched; the
-              <strong> Stages</strong> tab shows every field of it.
-            </p>
-            {onConvertRawStages && (
-              <button
-                type="button"
-                className="graphRawStageConvert"
-                onClick={onConvertRawStages}
-                title={rawStagesConvertible
-                  ? 'This editor can draw this step now. Rebuild the graph from the material\'s steps.'
-                  : 'Rebuild the graph from the material\'s steps.'}
-              >
-                {rawStagesConvertible ? 'Convert to nodes' : 'Rebuild from steps'}
-              </button>
-            )}
-            <dl className="graphRawStage">
-              <div>
-                <dt>Texture</dt>
-                <dd>{`${slotLabel(node.stage.texMap)} · ${channelLabel(node.stage.channelId)}`}</dd>
-              </div>
-              <div>
-                <dt>Colour</dt>
-                <dd title={`${ccLabel(node.stage.colorInA)}, ${ccLabel(node.stage.colorInB)}, ${ccLabel(node.stage.colorInC)}, ${ccLabel(node.stage.colorInD)}`}>
-                  {`${ccLabel(node.stage.colorInA)}, ${ccLabel(node.stage.colorInB)}, ${ccLabel(node.stage.colorInC)}, ${ccLabel(node.stage.colorInD)}`}
-                </dd>
-              </div>
-              <div>
-                <dt>Alpha</dt>
-                <dd title={`${caLabel(node.stage.alphaInA)}, ${caLabel(node.stage.alphaInB)}, ${caLabel(node.stage.alphaInC)}, ${caLabel(node.stage.alphaInD)}`}>
-                  {`${caLabel(node.stage.alphaInA)}, ${caLabel(node.stage.alphaInB)}, ${caLabel(node.stage.alphaInC)}, ${caLabel(node.stage.alphaInD)}`}
-                </dd>
-              </div>
-              <div>
-                <dt>Op</dt>
-                <dd>{`${tevOpLabel(node.stage.colorOp)} → ${storedSlotName(node.stage.colorRegId === 0 ? 'prev' : ((node.stage.colorRegId - 1) as 0 | 1 | 2))}`}</dd>
-              </div>
-            </dl>
-          </>
-        )}
+          );
+        })}
       </div>
+
+      {node.type === 'texture' && (
+        <div className="graphNodeBody graphNodeBody--texture">
+          <TexturePreview
+            archivePath={archivePath}
+            archiveBytes={archiveBytes}
+            texture={textures.find((texture) => texture.name === doc?.samplers[node.sampler]?.texture) ?? null}
+            revision={0}
+          />
+          <span className="graphNodeMeta">UV set {node.texCoord + 1}</span>
+        </div>
+      )}
+
+      {node.type === 'constant' && doc?.konstColors[node.slot] && (
+        <div className="graphNodeBody" onPointerDown={stop}>
+          <ColorField
+            label={konstColorName(node.slot)}
+            value={colorToRgb255(doc.konstColors[node.slot])}
+            onChange={(rgb) => onChangeDoc(setKonstColor(doc, node.slot, rgb255ToColor(rgb, doc.konstColors[node.slot].a)), { status: `${konstColorName(node.slot)} changed.` })}
+          />
+        </div>
+      )}
+
+      {node.type === 'register' && doc?.colorRegisters[node.slot] && (
+        <div className="graphNodeBody" onPointerDown={stop}>
+          <ColorField
+            label={colorRegisterName(node.slot)}
+            value={registerToRgb255(doc.colorRegisters[node.slot])}
+            onChange={(rgb) => onChangeDoc(setColorRegister(doc, node.slot, rgb255ToRegister(rgb, doc.colorRegisters[node.slot].a)), { status: `${colorRegisterName(node.slot)} changed.` })}
+          />
+        </div>
+      )}
+
+      {node.type === 'output' && (
+        <div className="graphNodeBody">
+          <span className="graphNodeMeta">What the material draws</span>
+        </div>
+      )}
+
+      {node.type === 'value' && (
+        <div className="graphNodeBody" onPointerDown={stop}>
+          <InlineValueSwitch
+            label="Value"
+            value={node.value}
+            onChange={(value) => onPatch({ value } as Partial<EditorGraphNode>)}
+          />
+        </div>
+      )}
+
+      {/* Read-only on purpose: a stage the graph cannot express, kept exactly as the file had it.
+          Never a dead end: the card says in one sentence what it is that cannot be drawn, and
+          offers to redraw the whole graph. Every field of it is in the Details panel. */}
+      {node.type === 'rawStage' && (
+        <div className="graphNodeBody graphNodeBody--raw" onPointerDown={stop}>
+          <p className="graphRawStageNote">
+            {node.reason ?? 'This step does something the node editor cannot draw.'}
+            {' '}Kept exactly as the file had it; the <strong>Stages</strong> tab shows every field.
+          </p>
+          {onConvertRawStages && (
+            <button
+              type="button"
+              className="graphRawStageConvert"
+              onClick={onConvertRawStages}
+              title={rawStagesConvertible
+                ? 'This editor can draw this step now. Rebuild the graph from the material\'s steps.'
+                : 'Rebuild the graph from the material\'s steps.'}
+            >
+              {rawStagesConvertible ? 'Convert to nodes' : 'Rebuild from steps'}
+            </button>
+          )}
+        </div>
+      )}
 
       {node.label && <p className="graphNodeLabel">{node.label}</p>}
     </div>
+  );
+}
+
+function InputPin({
+  node,
+  name,
+  alpha,
+  wired,
+  onPointerDownSocket,
+  onSetInputValue,
+}: {
+  node: EditorGraphNode;
+  name: string;
+  alpha: boolean;
+  wired: boolean;
+  onPointerDownSocket: GraphNodeCardProps['onPointerDownSocket'];
+  onSetInputValue: GraphNodeCardProps['onSetInputValue'];
+}) {
+  const value = wired ? null : inlineValue(node, name);
+  return (
+    <span className="graphRowIn">
+      <span
+        className={['graphSocket', 'graphSocket--in', alpha && 'graphSocket--alpha', wired && 'wired'].filter(Boolean).join(' ')}
+        data-socket={`${node.id}|${name}|input`}
+        title={`${socketLabel(name)} — takes ${alpha ? 'an alpha' : 'a colour'}.${value !== null ? ' Wire something in, or set a value here.' : ' Wire something in.'}`}
+        onPointerDown={(event) => onPointerDownSocket(event, node.id, name, 'input')}
+      >
+        <i />
+        <span className="graphSocketLabel">{socketLabel(name)}</span>
+      </span>
+      {value !== null && (
+        <InlineValueSwitch label={socketLabel(name)} value={value} onChange={(next) => onSetInputValue(name, next)} />
+      )}
+    </span>
+  );
+}
+
+/**
+ * The value typed into an unwired input, Unreal-style. The hardware's free constants are exactly
+ * 0, ½ and 1, so this is a three-way switch rather than a number field.
+ */
+function InlineValueSwitch({ label, value, onChange }: { label: string; value: GraphInlineValue; onChange: (value: GraphInlineValue) => void }) {
+  return (
+    <span className="graphInline" role="radiogroup" aria-label={`${label} value`} onPointerDown={stop}>
+      {INLINE_VALUES.map((option) => (
+        <button
+          key={option}
+          type="button"
+          role="radio"
+          aria-checked={value === option}
+          className={value === option ? 'active' : undefined}
+          title={`${label} = ${option}`}
+          onClick={() => onChange(option)}
+        >
+          {inlineValueLabel(option)}
+        </button>
+      ))}
+    </span>
   );
 }

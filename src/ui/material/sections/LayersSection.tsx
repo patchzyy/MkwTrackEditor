@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Download, Plus, Trash2, Upload } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronRight, Download, Plus, Trash2, Upload } from 'lucide-react';
 import { useCallback, useRef, useState } from 'react';
 import type { GxMaterialDoc } from '../../../lib/gxMaterial';
 import { calcTex0DataSize, encodeTex0Data, floorPowerOfTwo, maxMipCount } from '../../../lib/tex0Codec';
@@ -60,59 +60,101 @@ const FILTER_CHOICES: Array<{ value: FilterChoice; label: string; tooltip: strin
   { value: 'pixelated', label: 'Pixelated', tooltip: 'Shows hard texel edges close up. For pixel art and sharp signage.' },
 ];
 
-export interface LayersSectionProps {
+export interface TextureListProps {
   doc: GxMaterialDoc;
   textures: VisualTextureInfo[];
   archivePath: string;
   archiveBytes: Uint8Array | null;
   onChange: MaterialDocChange;
-  onImportTexture: (texture: ImportedTexture) => boolean;
+  /** Opens one texture's full details — in the graph hosts, by selecting its node. */
+  onOpenLayer: (index: number) => void;
 }
 
 /**
- * One card per texture layer. The card shows what an author changes daily — which texture, how it
- * tiles, whether it is smoothed, how big it is on the surface and where it sits — and folds the
- * sampler and texture-coordinate machinery into the layer's own **Advanced** disclosure.
+ * The material's textures as a compact list: a thumbnail, the slot and the image name. This is
+ * the overview, not the editor — clicking a row opens that one texture's details (the host
+ * selects its node in the shader graph), which is where tiling, sampling, placement and the
+ * replace/export actions live. Reordering and removing are list operations, so they stay here.
  *
  * The indirect-texture stages, which warp a later layer's coordinates, are a property of the
- * material rather than of one layer, so they get the section's own disclosure at the bottom.
+ * material rather than of one layer, so they get the list's own disclosure at the bottom.
  */
-export function LayersSection({ doc, textures, archivePath, archiveBytes, onChange, onImportTexture }: LayersSectionProps) {
-  const textureOptions = textures.map((texture) => ({ value: texture.name, label: `${texture.name} — ${texture.width}x${texture.height}` }));
-
+export function TextureList({ doc, textures, archivePath, archiveBytes, onChange, onOpenLayer }: TextureListProps) {
   return (
-    <div className="materialLayers">
-      {doc.samplers.length === 0 && (
+    <div className="detailsTextureList">
+      {doc.samplers.length === 0 ? (
         <EmptyState
           size="sm"
           title="No textures"
           description="This material samples no textures. Add one to give it a surface."
         />
+      ) : (
+        <ul className="detailsTextureRows" aria-label="Textures this material uses">
+          {doc.samplers.map((sampler, index) => {
+            const texture = textures.find((entry) => entry.name === sampler.texture) ?? null;
+            return (
+              <li key={index} className="detailsTextureRow">
+                <button
+                  type="button"
+                  className="detailsTextureOpen"
+                  title={`Show texture ${index + 1}'s settings`}
+                  onClick={() => onOpenLayer(index)}
+                >
+                  <span className="detailsTextureThumb">
+                    <TexturePreview archivePath={archivePath} archiveBytes={archiveBytes} texture={texture} revision={0} />
+                  </span>
+                  <span className="detailsTextureText">
+                    <span className="detailsTextureSlot">Texture {index + 1}</span>
+                    <strong className="detailsTextureName">{sampler.texture || 'None'}</strong>
+                    <span className="detailsTextureFacts">{texture ? textureFacts(texture) : 'Not in this archive'}</span>
+                  </span>
+                  <ChevronRight size={14} className="detailsTextureChevron" aria-hidden="true" />
+                </button>
+                <span className="detailsTextureActions">
+                  <IconButton
+                    size="sm"
+                    variant="ghost"
+                    icon={<ArrowUp size={13} />}
+                    tooltip="Move this texture up"
+                    disabled={index === 0}
+                    disabledReason="This is already the first texture."
+                    onClick={() => onChange(moveLayer(doc, index, -1), { status: `Moved texture ${index + 1} up.` })}
+                  />
+                  <IconButton
+                    size="sm"
+                    variant="ghost"
+                    icon={<ArrowDown size={13} />}
+                    tooltip="Move this texture down"
+                    disabled={index >= doc.samplers.length - 1}
+                    disabledReason="This is already the last texture."
+                    onClick={() => onChange(moveLayer(doc, index, 1), { status: `Moved texture ${index + 1} down.` })}
+                  />
+                  <IconButton
+                    size="sm"
+                    variant="ghost"
+                    icon={<Trash2 size={13} />}
+                    tooltip="Remove this texture"
+                    onClick={() => onChange(removeLayer(doc, index), { status: `Removed texture ${index + 1}.` })}
+                  />
+                </span>
+              </li>
+            );
+          })}
+        </ul>
       )}
 
-      {doc.samplers.map((sampler, index) => (
-        <LayerCard
-          key={index}
-          index={index}
-          doc={doc}
-          textures={textures}
-          textureOptions={textureOptions}
-          archivePath={archivePath}
-          archiveBytes={archiveBytes}
-          onChange={onChange}
-          onImportTexture={onImportTexture}
-        />
-      ))}
-
-      <Button
-        variant="ghost"
-        icon={<Plus size={13} />}
-        disabled={doc.samplers.length >= MAX_SAMPLERS}
-        disabledReason={`A GX material can have at most ${MAX_SAMPLERS} textures.`}
-        onClick={() => onChange(addLayer(doc, textures[0]?.name ?? ''), { status: `Added texture ${doc.samplers.length + 1}.` })}
-      >
-        Add texture
-      </Button>
+      <div className="detailsTextureAdd">
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={<Plus size={13} />}
+          disabled={doc.samplers.length >= MAX_SAMPLERS}
+          disabledReason={`A GX material can have at most ${MAX_SAMPLERS} textures.`}
+          onClick={() => onChange(addLayer(doc, textures[0]?.name ?? ''), { status: `Added texture ${doc.samplers.length + 1}.` })}
+        >
+          Add texture
+        </Button>
+      </div>
 
       <AdvancedBlock
         storageKey="indirect"
@@ -125,29 +167,36 @@ export function LayersSection({ doc, textures, archivePath, archiveBytes, onChan
   );
 }
 
-function LayerCard({
-  index,
-  doc,
-  textures,
-  textureOptions,
-  archivePath,
-  archiveBytes,
-  onChange,
-  onImportTexture,
-}: {
+/** "256x128 CMPR · 1 mip" — what a texture is, in one line. */
+function textureFacts(texture: VisualTextureInfo): string {
+  return `${texture.width}x${texture.height} ${texture.formatLabel} · ${texture.mipCount} mip${texture.mipCount === 1 ? '' : 's'}`;
+}
+
+export interface TextureLayerDetailsProps {
+  /** Which of `doc.samplers` this is. */
   index: number;
   doc: GxMaterialDoc;
   textures: VisualTextureInfo[];
-  textureOptions: Array<{ value: string; label: string }>;
   archivePath: string;
   archiveBytes: Uint8Array | null;
   onChange: MaterialDocChange;
   onImportTexture: (texture: ImportedTexture) => boolean;
-}) {
+}
+
+/**
+ * Everything about one texture layer, for the Details panel when its node is selected: a big
+ * preview, what the image is, replace and export, and then how it is sampled — tiling,
+ * smoothing, environment mapping, placement on the surface — with the sampler and texture
+ * coordinate machinery folded into the layer's own **Advanced** disclosure.
+ *
+ * The whole panel is a drop target: an image dropped anywhere on it replaces the texture.
+ */
+export function TextureLayerDetails({ index, doc, textures, archivePath, archiveBytes, onChange, onImportTexture }: TextureLayerDetailsProps) {
   const sampler = doc.samplers[index];
   const srt = doc.texSrts[index];
   const texGen = doc.texGens[index];
   const texture = textures.find((entry) => entry.name === sampler.texture) ?? null;
+  const textureOptions = textures.map((entry) => ({ value: entry.name, label: `${entry.name} — ${entry.width}x${entry.height}` }));
   // C4 / C8 / C14X2 — the only formats that read a palette.
   const isPaletted = texture !== null && PALETTED_FORMATS.has(texture.format);
   const toast = useToast();
@@ -191,14 +240,18 @@ function LayerCard({
 
   return (
     <section
-      className={dragOver ? 'materialLayerCard isDragTarget' : 'materialLayerCard'}
+      className={dragOver ? 'detailsTexture isDragTarget' : 'detailsTexture'}
+      aria-label={`Texture ${index + 1}`}
       onDragOver={(event) => {
         if (!event.dataTransfer.types.includes('Files')) return;
         event.preventDefault();
         event.stopPropagation();
         setDragOver(true);
       }}
-      onDragLeave={() => setDragOver(false)}
+      onDragLeave={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+        setDragOver(false);
+      }}
       onDrop={(event) => {
         if (event.dataTransfer.files.length === 0) return;
         event.preventDefault();
@@ -207,88 +260,59 @@ function LayerCard({
         void importFile(event.dataTransfer.files[0]);
       }}
     >
-      <header className="materialLayerHeader">
-        <span className="materialLayerIndex">Texture {index + 1}</span>
-        <span className="materialLayerActions">
-          <IconButton
-            size="sm"
-            variant="ghost"
-            icon={<ArrowUp size={13} />}
-            tooltip="Move this texture up"
-            disabled={index === 0}
-            disabledReason="This is already the first texture."
-            onClick={() => onChange(moveLayer(doc, index, -1), { status: `Moved texture ${index + 1} up.` })}
-          />
-          <IconButton
-            size="sm"
-            variant="ghost"
-            icon={<ArrowDown size={13} />}
-            tooltip="Move this texture down"
-            disabled={index >= doc.samplers.length - 1}
-            disabledReason="This is already the last texture."
-            onClick={() => onChange(moveLayer(doc, index, 1), { status: `Moved texture ${index + 1} down.` })}
-          />
-          <IconButton
-            size="sm"
-            variant="ghost"
-            icon={<Trash2 size={13} />}
-            tooltip="Remove this texture"
-            onClick={() => onChange(removeLayer(doc, index), { status: `Removed texture ${index + 1}.` })}
-          />
+      <div className="detailsTexturePreview">
+        <TexturePreview archivePath={archivePath} archiveBytes={archiveBytes} texture={texture} revision={0} size="large" />
+        <span className="detailsTextureDropHint" aria-hidden="true">
+          <Upload size={14} /> Drop an image to replace this texture
         </span>
-      </header>
+      </div>
 
-      <div className="materialLayerTop">
-        <TexturePreview archivePath={archivePath} archiveBytes={archiveBytes} texture={texture} revision={0} />
-        <div className="materialLayerTopFields">
-          <Select
-            label={`Texture ${index + 1} image`}
-            value={sampler.texture}
-            options={textureOptions.length > 0 ? textureOptions : [{ value: sampler.texture, label: sampler.texture || 'None' }]}
-            onChange={(value) => onChange(patchSampler(doc, index, { texture: value }), { status: `Texture ${index + 1} is now ${value}.` })}
+      <div className="detailsTextureIdentity">
+        <Select
+          label={`Texture ${index + 1} image`}
+          value={sampler.texture}
+          options={textureOptions.length > 0 ? textureOptions : [{ value: sampler.texture, label: sampler.texture || 'None' }]}
+          onChange={(value) => onChange(patchSampler(doc, index, { texture: value }), { status: `Texture ${index + 1} is now ${value}.` })}
+        />
+        <p className="detailsTextureFactsLine">{texture ? textureFacts(texture) : 'This texture is not in the archive.'}</p>
+        <div className="detailsTextureButtons">
+          <Button
+            size="sm"
+            icon={<Upload size={13} />}
+            disabled={busy}
+            disabledReason="Still encoding the last image."
+            tooltip="Pick a PNG or JPEG; it is encoded with the settings under Advanced › Import encoding"
+            onClick={() => fileRef.current?.click()}
+          >
+            {busy ? 'Encoding…' : 'Replace…'}
+          </Button>
+          <Button
+            size="sm"
+            icon={<Download size={13} />}
+            disabled={!texture || !archiveBytes}
+            disabledReason="This texture is not in the archive."
+            tooltip="Download this texture as a PNG"
+            onClick={() => {
+              if (!texture || !archiveBytes) return;
+              void exportTextureAsPng(archiveBytes, texture).catch((error: unknown) =>
+                toast.showToast({ tone: 'error', title: 'Could not export the texture', detail: error instanceof Error ? error.message : String(error) }),
+              );
+            }}
+          >
+            Save PNG
+          </Button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            className="materialFileInput"
+            aria-label={`Import an image for texture ${index + 1}`}
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = '';
+              if (file) void importFile(file);
+            }}
           />
-          <p className="materialLayerFacts">
-            {texture ? `${texture.width}x${texture.height} ${texture.formatLabel}, ${texture.mipCount} mip${texture.mipCount === 1 ? '' : 's'}` : 'This texture is not in the archive.'}
-          </p>
-          <div className="materialLayerImportRow">
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={<Upload size={13} />}
-              disabled={busy}
-              disabledReason="Still encoding the last image."
-              onClick={() => fileRef.current?.click()}
-            >
-              Replace…
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={<Download size={13} />}
-              disabled={!texture || !archiveBytes}
-              disabledReason="This texture is not in the archive."
-              onClick={() => {
-                if (!texture || !archiveBytes) return;
-                void exportTextureAsPng(archiveBytes, texture).catch((error: unknown) =>
-                  toast.showToast({ tone: 'error', title: 'Could not export the texture', detail: error instanceof Error ? error.message : String(error) }),
-                );
-              }}
-            >
-              Save PNG
-            </Button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*"
-              className="materialFileInput"
-              aria-label={`Import an image for texture ${index + 1}`}
-              onChange={(event) => {
-                const file = event.currentTarget.files?.[0];
-                event.currentTarget.value = '';
-                if (file) void importFile(file);
-              }}
-            />
-          </div>
         </div>
       </div>
 
@@ -590,7 +614,6 @@ function LayerCard({
         </FieldGroup>
       </AdvancedBlock>
 
-      <p className="materialLayerHint">Drop an image on this card to replace the texture.</p>
     </section>
   );
 }

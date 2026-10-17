@@ -1,12 +1,13 @@
 // Pure model behind the shader-graph node editor: geometry, hit testing, socket typing, edge
 // rules, selection, clipboard and layout. No React, no DOM — everything here is unit tested in
 // `graphModel.test.ts`, and `GraphEditor.tsx` is only the pointer/keyboard shell around it.
-// Imported from the contract file rather than from `../../lib/gxMaterial`: this is the only
-// *value* the editor needs from the library, and going through the barrel would pull the whole
-// BRRES parser into the main bundle instead of leaving it behind `loadMaterialLibrary`.
+// Imported from the contract file rather than from `../../lib/gxMaterial`: going through the
+// barrel would pull the whole BRRES parser into the main bundle instead of leaving it behind
+// `loadMaterialLibrary`.
 import {
   GRAPH_NODE_SOCKETS,
   type GraphEdge,
+  type GraphInlineValue,
   type GraphNode,
   type GraphNodeSpec,
   type GraphNodeType,
@@ -15,7 +16,10 @@ import {
   type GxMaterialDoc,
   type ShaderGraph,
 } from '../../lib/gxMaterial/types';
-import { channelName, colorRegisterName, konstColorName, storedSlotName } from './gxOptions';
+// Both of these import only the contract too, so they cost the main bundle nothing.
+import { layoutShaderGraph, type GraphNodeSize } from '../../lib/gxMaterial/graphLayout';
+import { acceptsInlineValue, inlineInputValue, withInlineValue } from '../../lib/gxMaterial/graphLiterals';
+import { TEV_OP_OPTIONS, channelName, colorRegisterName, konstColorName, storedSlotName } from './gxOptions';
 
 // ---------------------------------------------------------------------------- node types
 
@@ -42,27 +46,13 @@ export function isMathNode(node: EditorGraphNode): boolean {
   return node.type === 'multiply' || node.type === 'add' || node.type === 'subtract' || node.type === 'lerp';
 }
 
-/** Node types the "Add node" palette offers, in menu order. `output` is never addable twice. */
-export const ADDABLE_NODE_TYPES: GraphNodeType[] = [
-  'texture', 'vertexColor', 'constant', 'register', 'value',
-  'multiply', 'add', 'subtract', 'lerp', 'scale', 'comment',
-  'alphaAsColor', 'storedValue', 'compare', 'indirectWarp',
-];
-
 /**
- * The palette's second half. Everything above the line is what a material is normally made of;
- * these four are the hardware showing through, and a first-time author does not need them to
- * build a road. They are still one click away, under a heading, rather than hidden.
+ * Which colour a node's header strip is drawn in, Unreal-style: what feeds the graph, what does
+ * maths on it, the result node, and the read-only step copied out of the file.
  */
-export const ADVANCED_NODE_TYPES: ReadonlySet<GraphNodeType> = new Set<GraphNodeType>([
-  'alphaAsColor', 'storedValue', 'compare', 'indirectWarp',
-]);
+export type NodeCategory = 'source' | 'math' | 'output' | 'raw' | 'note';
 
-export function nodePaletteSection(type: EditorGraphNodeType): 'basic' | 'advanced' {
-  return ADVANCED_NODE_TYPES.has(type) ? 'advanced' : 'basic';
-}
-
-export const NODE_CATEGORY: Record<EditorGraphNodeType, 'source' | 'math' | 'output' | 'note'> = {
+export const NODE_CATEGORY: Record<EditorGraphNodeType, NodeCategory> = {
   output: 'output',
   texture: 'source',
   vertexColor: 'source',
@@ -79,8 +69,22 @@ export const NODE_CATEGORY: Record<EditorGraphNodeType, 'source' | 'math' | 'out
   compare: 'math',
   indirectWarp: 'math',
   comment: 'note',
-  rawStage: 'output',
+  rawStage: 'raw',
 };
+
+/** The add-node menu's headings, in order, and which node types sit under each. */
+export const PALETTE_GROUPS: ReadonlyArray<{ title: string; types: readonly EditorGraphNodeType[] }> = [
+  { title: 'Inputs', types: ['texture', 'vertexColor', 'constant', 'register', 'value'] },
+  { title: 'Maths', types: ['multiply', 'add', 'subtract', 'lerp', 'scale'] },
+  { title: 'Advanced', types: ['alphaAsColor', 'storedValue', 'compare', 'indirectWarp'] },
+  { title: 'Notes', types: ['comment'] },
+];
+
+/**
+ * Node types the "Add node" menu offers, in menu order. `output` is never addable (there is only
+ * ever one) and neither is `rawStage`, which only the decompiler can fill in.
+ */
+export const ADDABLE_NODE_TYPES: GraphNodeType[] = PALETTE_GROUPS.flatMap((group) => group.types);
 
 /** One-line explanation of what a node does, used by the palette and the node tooltip. */
 export const NODE_SUMMARY: Record<EditorGraphNodeType, string> = {
@@ -90,7 +94,7 @@ export const NODE_SUMMARY: Record<EditorGraphNodeType, string> = {
   constant: 'One of the material\'s four colours. The swatch on the card edits it, live.',
   register: 'The colour a scratch slot starts at, before any step writes to it.',
   storedValue: 'Reads a slot back: whatever the steps before this one left in it.',
-  value: 'A plain number the hardware supplies for free: 0, a half, or 1.',
+  value: 'A plain number — 0, a half or 1 — for feeding several inputs at once. A single input can hold one inline instead.',
   alphaAsColor: 'Uses an alpha where a colour is wanted, so one image\'s transparency can tint or blend another.',
   multiply: 'Multiplies two things together. Tinting and masking are both this.',
   add: 'Adds two things together. Brightens, and stacks glows.',
@@ -127,6 +131,8 @@ export function nodeTypeTitle(type: EditorGraphNodeType): string {
 export function nodeTitle(node: EditorGraphNode): string {
   switch (node.type) {
     case 'texture': return `Texture ${node.sampler + 1}`;
+    // "Vertex colour 1", "Bump alpha", "Nothing (black)": the source says what the node is.
+    case 'vertexColor': return channelName(node.channel);
     case 'constant': return konstColorName(node.slot);
     case 'register': return colorRegisterName(node.slot);
     case 'storedValue': return storedSlotName(node.slot);
@@ -138,9 +144,13 @@ export function nodeTitle(node: EditorGraphNode): string {
 export function nodeCaption(node: EditorGraphNode, doc: GxMaterialDoc | null): string | null {
   switch (node.type) {
     case 'texture': return doc?.samplers[node.sampler]?.texture || 'no image';
-    case 'vertexColor': return channelName(node.channel);
     case 'value': return String(node.value);
     case 'scale': return `x${node.scale}${node.bias === 0 ? '' : node.bias > 0 ? ' +0.5' : ' -0.5'}`;
+    case 'compare': {
+      const option = TEV_OP_OPTIONS.find((entry) => entry.numeric === node.op);
+      return option ? String(option.label) : null;
+    }
+    case 'indirectWarp': return `stage ${node.indStage + 1}`;
     case 'rawStage': return 'from the file';
     default: return null;
   }
@@ -148,10 +158,21 @@ export function nodeCaption(node: EditorGraphNode, doc: GxMaterialDoc | null): s
 
 // ---------------------------------------------------------------------------- geometry
 
-export const NODE_WIDTH = 176;
-export const NODE_HEADER_HEIGHT = 24;
+/**
+ * Card geometry. Every card is drawn at exactly `nodeSize` — the card's CSS height is set from it
+ * and nothing inside may grow it — so the wire anchors, hit tests and layout here are the DOM.
+ */
+export const NODE_WIDTH = 168;
+/** The Material node is the big result node on the right, Unreal-style. */
+export const OUTPUT_NODE_WIDTH = 196;
+export const NODE_HEADER_HEIGHT = 22;
+/** Gap between the header and the first pin row. */
+export const ROWS_TOP_PADDING = 4;
 export const SOCKET_SPACING = 20;
-export const SOCKET_TOP = NODE_HEADER_HEIGHT + 12;
+/** Centre of the first pin row, from the top of the card. */
+export const SOCKET_TOP = NODE_HEADER_HEIGHT + ROWS_TOP_PADDING + SOCKET_SPACING / 2;
+export const NODE_LABEL_HEIGHT = 16;
+export const NODE_BOTTOM_PADDING = 6;
 export const GRID_SIZE = 8;
 
 export interface Rect {
@@ -161,21 +182,22 @@ export interface Rect {
   height: number;
 }
 
-/** Extra height a node's own controls take, on top of its socket rows. */
+/**
+ * Height of what a card draws under its pin rows. Most nodes draw nothing there: their settings
+ * live in the Details panel and the title or caption says what they are set to. What stays is
+ * what an author reads at a glance — the texture's thumbnail, a colour's swatch, a value — and
+ * the read-only step's explanation.
+ */
 export function nodeBodyHeight(node: EditorGraphNode): number {
   switch (node.type) {
-    case 'texture': return 96;
-    case 'constant': return 56;
-    case 'register': return 30;
-    case 'storedValue': return 30;
-    case 'value': return 30;
-    case 'alphaAsColor': return 0;
-    case 'scale': return 62;
-    case 'compare': return 30;
-    case 'indirectWarp': return 94;
-    case 'vertexColor': return 30;
-    // Four detail rows plus the sentence that explains why the card is read-only.
-    case 'rawStage': return 122;
+    case 'texture': return 60;
+    case 'constant':
+    case 'register': return 28;
+    case 'value': return 26;
+    // The result node says what it is, which also gives it the presence of Unreal's result node.
+    case 'output': return 22;
+    // The decompiler's one sentence (clamped to four lines) and the "Convert to nodes" button.
+    case 'rawStage': return 92;
     default: return 0;
   }
 }
@@ -185,10 +207,9 @@ export function nodeSize(node: EditorGraphNode): { width: number; height: number
   const spec = nodeSpec(node.type);
   const rows = Math.max(spec.inputs.length, spec.outputs.length);
   return {
-    width: NODE_WIDTH,
-    // The caption under the title is part of the node's box; leaving it out of the height is what
-    // makes a laid-out graph overlap.
-    height: NODE_HEADER_HEIGHT + 10 + rows * SOCKET_SPACING + nodeBodyHeight(node) + (node.label ? 18 : 0) + 10,
+    width: node.type === 'output' ? OUTPUT_NODE_WIDTH : NODE_WIDTH,
+    height: NODE_HEADER_HEIGHT + ROWS_TOP_PADDING + rows * SOCKET_SPACING + nodeBodyHeight(node)
+      + (node.label ? NODE_LABEL_HEIGHT : 0) + NODE_BOTTOM_PADDING,
   };
 }
 
@@ -234,11 +255,15 @@ export function nodeAtPoint(graph: EditorShaderGraph, x: number, y: number): Edi
   return null;
 }
 
-/** Bounding box of everything in the graph, for fit-to-content. Null when the graph is empty. */
-export function graphBounds(graph: EditorShaderGraph): Rect | null {
-  if (graph.nodes.length === 0) return null;
+/**
+ * Bounding box of everything in the graph — or of just `nodeIds`, for framing a selection — for
+ * fit-to-content. Null when there is nothing to frame.
+ */
+export function graphBounds(graph: EditorShaderGraph, nodeIds?: readonly string[]): Rect | null {
+  const nodes = nodeIds ? graph.nodes.filter((node) => nodeIds.includes(node.id)) : graph.nodes;
+  if (nodes.length === 0) return null;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const node of graph.nodes) {
+  for (const node of nodes) {
     const rect = nodeRect(node);
     minX = Math.min(minX, rect.x);
     minY = Math.min(minY, rect.y);
@@ -271,10 +296,13 @@ export function zoomAbout(view: Viewport, factor: number, screenX: number, scree
   return { zoom, panX: graphX - screenX / zoom, panY: graphY - screenY / zoom };
 }
 
-/** The view that fits `bounds` into a `width` x `height` surface with a little margin. */
-export function fitView(bounds: Rect | null, width: number, height: number, margin = 40): Viewport {
+/**
+ * The view that fits `bounds` into a `width` x `height` surface with a little margin. `maxZoom`
+ * keeps a single small node from being blown up to fill the screen when it is framed.
+ */
+export function fitView(bounds: Rect | null, width: number, height: number, margin = 40, maxZoom = MAX_ZOOM): Viewport {
   if (!bounds || bounds.width === 0 || bounds.height === 0) return { panX: -width / 2, panY: -height / 2, zoom: 1 };
-  const zoom = clampZoom(Math.min((width - margin * 2) / bounds.width, (height - margin * 2) / bounds.height));
+  const zoom = clampZoom(Math.min(maxZoom, (width - margin * 2) / bounds.width, (height - margin * 2) / bounds.height));
   return {
     zoom,
     panX: bounds.x + bounds.width / 2 - width / (2 * zoom),
@@ -292,6 +320,34 @@ export function toScreenPoint(view: Viewport, graphX: number, graphY: number): {
 
 export function snapToGrid(value: number, snap: boolean): number {
   return snap ? Math.round(value / GRID_SIZE) * GRID_SIZE : Math.round(value);
+}
+
+/**
+ * What one wheel event means to the graph, Unreal-style: a mouse wheel zooms about the cursor, a
+ * trackpad's two-finger scroll pans, and a pinch (which the browser reports as a ctrl+wheel)
+ * zooms. A mouse wheel arrives in whole notches — integer deltas of 50 and up, straight down the
+ * Y axis — while a trackpad sends small, often fractional deltas and moves sideways too. Some
+ * trackpads do send a large integer now and then, so a gesture that has just looked like a
+ * trackpad (`recentTrackpad`) stays one.
+ */
+export type WheelGesture = { kind: 'zoom'; factor: number } | { kind: 'pan'; dx: number; dy: number };
+
+export function wheelGesture(
+  event: { deltaX: number; deltaY: number; deltaMode: number; ctrlKey: boolean },
+  recentTrackpad = false,
+): WheelGesture {
+  if (event.ctrlKey) {
+    // Pinch deltas are a few units per event; ctrl+wheel notches are about 100. Both zoom, and the
+    // clamp keeps one notch from jumping a whole zoom level.
+    return { kind: 'zoom', factor: Math.max(0.8, Math.min(1.25, Math.exp(-event.deltaY * 0.01))) };
+  }
+  // Line-mode deltas only ever come from a real wheel.
+  if (event.deltaMode === 1) return { kind: 'zoom', factor: event.deltaY < 0 ? 1.12 : 1 / 1.12 };
+  const notch = event.deltaX === 0 && Number.isInteger(event.deltaY) && Math.abs(event.deltaY) >= 50;
+  if (notch && !recentTrackpad) {
+    return { kind: 'zoom', factor: Math.max(0.6, Math.min(1.6, Math.pow(1.12, -event.deltaY / 100))) };
+  }
+  return { kind: 'pan', dx: event.deltaX, dy: event.deltaY };
 }
 
 // ---------------------------------------------------------------------------- socket typing
@@ -572,74 +628,24 @@ export function pasteNodes(
 
 // ---------------------------------------------------------------------------- layout
 
-const LAYOUT_COLUMN = NODE_WIDTH + 84;
-const LAYOUT_ROW = 24;
+/**
+ * The size and pin positions of a card exactly as `GraphNodeCard` draws it, for the layout: every
+ * card is drawn at `nodeSize`, with pin row `i` centred at `SOCKET_TOP + i * SOCKET_SPACING`.
+ */
+export function measureCard(node: EditorGraphNode): GraphNodeSize {
+  const spec = nodeSpec(node.type);
+  const at = (list: readonly GraphSocketSpec[]) =>
+    Object.fromEntries(list.map((socket, index) => [socket.name, SOCKET_TOP + index * SOCKET_SPACING]));
+  return { ...nodeSize(node), inputs: at(spec.inputs), outputs: at(spec.outputs) };
+}
 
 /**
- * Left-to-right layered layout, "as late as possible": a node's column is set by how far it still
- * is from the Material node, so a texture feeding the last stage sits next to that stage rather
- * than back at the far left with every other source. Laying it out the other way round (one column
- * right of the deepest input) piles every source into column 0, which for a real material is a
- * single unreadable stack.
- *
+ * Unreal-style layered layout, left to right into the Material node, with the colour pipeline
+ * above the alpha one (`layoutShaderGraph`), measured against the cards this editor draws.
  * Comments keep their position — they are annotations on a layout, not part of it.
  */
 export function autoLayout(graph: EditorShaderGraph): EditorShaderGraph {
-  const laidOut = graph.nodes.filter((node) => !isCommentNode(node));
-  if (laidOut.length === 0) return graph;
-
-  const distance = new Map<string, number>();
-  const visiting = new Set<string>();
-  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
-
-  /** Longest path from this node to a node nothing consumes (the Material node, normally). */
-  function distanceToSink(nodeId: string): number {
-    const known = distance.get(nodeId);
-    if (known !== undefined) return known;
-    if (visiting.has(nodeId)) return 0; // a cycle: stop rather than recurse for ever
-    visiting.add(nodeId);
-    let best = 0;
-    for (const edge of graph.edges) {
-      if (edge.from.node !== nodeId) continue;
-      const to = nodeById.get(edge.to.node);
-      if (!to || isCommentNode(to)) continue;
-      best = Math.max(best, distanceToSink(to.id) + 1);
-    }
-    visiting.delete(nodeId);
-    distance.set(nodeId, best);
-    return best;
-  }
-
-  for (const node of laidOut) distanceToSink(node.id);
-  const longest = Math.max(0, ...laidOut.map((node) => distance.get(node.id) ?? 0));
-  const columnOf = (node: EditorGraphNode) => longest - (distance.get(node.id) ?? 0);
-
-  const columns = new Map<number, EditorGraphNode[]>();
-  for (const node of laidOut) {
-    const column = columnOf(node);
-    const list = columns.get(column) ?? [];
-    list.push(node);
-    columns.set(column, list);
-  }
-
-  const positions = new Map<string, { x: number; y: number }>();
-  for (const [column, list] of columns) {
-    const heights = list.map((node) => nodeSize(node).height);
-    const total = heights.reduce((sum, height) => sum + height + LAYOUT_ROW, -LAYOUT_ROW);
-    let y = -total / 2;
-    list.forEach((node, index) => {
-      positions.set(node.id, { x: column * LAYOUT_COLUMN, y: Math.round(y) });
-      y += heights[index] + LAYOUT_ROW;
-    });
-  }
-
-  return {
-    ...graph,
-    nodes: graph.nodes.map((node) => {
-      const position = positions.get(node.id);
-      return position ? { ...node, x: position.x, y: position.y } : node;
-    }),
-  };
+  return layoutShaderGraph(graph, measureCard);
 }
 
 // ---------------------------------------------------------------------------- wires
@@ -694,6 +700,43 @@ export function inputSource(graph: EditorShaderGraph, nodeId: string, socket: st
 export function socketSpecs(node: EditorGraphNode, side: 'input' | 'output'): GraphSocketSpec[] {
   const spec = nodeSpec(node.type);
   return side === 'input' ? spec.inputs : spec.outputs;
+}
+
+/** Ids of the wires touching any of `nodeIds`, for "Disconnect" on the node menu. */
+export function edgesTouching(graph: EditorShaderGraph, nodeIds: readonly string[]): string[] {
+  return graph.edges.filter((edge) => nodeIds.includes(edge.from.node) || nodeIds.includes(edge.to.node)).map((edge) => edge.id);
+}
+
+/** `node|socket|side` for every socket with a wire on it, so a card can draw its pins filled. */
+export function connectedSockets(graph: EditorShaderGraph): Set<string> {
+  const connected = new Set<string>();
+  for (const edge of graph.edges) {
+    connected.add(`${edge.from.node}|${edge.from.socket}|output`);
+    connected.add(`${edge.to.node}|${edge.to.socket}|input`);
+  }
+  return connected;
+}
+
+/** The values an input can hold inline, in the order the card's little switch shows them. */
+export const INLINE_VALUES: readonly GraphInlineValue[] = [0, 0.5, 1];
+
+/**
+ * What an unwired input shows inline, or null when it cannot hold a value: a texture's
+ * coordinates, a warp's bump map and a special step's ordering input mean nothing without a wire,
+ * and an unwired Material input means "this half computes nothing", not a constant.
+ */
+export function inlineValue(node: EditorGraphNode, socket: string): GraphInlineValue | null {
+  return acceptsInlineValue(node, socket) ? inlineInputValue(node, socket) : null;
+}
+
+/** Sets the inline value of one input, Unreal-style: the number typed into the node itself. */
+export function setInputValue(graph: EditorShaderGraph, nodeId: string, socket: string, value: GraphInlineValue): EditorShaderGraph {
+  return { ...graph, nodes: graph.nodes.map((node) => (node.id === nodeId ? withInlineValue(node, socket, value) : node)) };
+}
+
+/** How the card and the Details panel write an inline value: `½`, not `0.5`. */
+export function inlineValueLabel(value: GraphInlineValue): string {
+  return value === 0.5 ? '½' : String(value);
 }
 
 /**

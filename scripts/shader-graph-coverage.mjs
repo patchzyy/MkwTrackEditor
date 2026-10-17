@@ -7,6 +7,10 @@
  * node vocabulary has no source for, or which stage fields a recompile got wrong. The output is
  * a histogram of causes per family (driver / kart / course / object / other) and the raw-stage
  * share per family, which is what says what to build next — and, once built, that it stayed built.
+ * It also measures how readable the decompiled graphs are: cards and wires per stage, wires that
+ * skip a column, "Value" cards (should be none: literals are typed into the nodes), and overlapping
+ * cards at the layout's default sizes and wires running right to left (both must be none; the run
+ * fails otherwise).
  *
  * Headless: no browser, no GPU. Modules load through Vite's SSR pipeline so the TypeScript
  * sources and the `noclip-rust-support` alias resolve exactly as they do in the app.
@@ -140,6 +144,7 @@ async function main() {
     stages: 0,
     rawStages: 0,
     rawMaterials: 0,
+    tidy: { nodes: 0, edges: 0, valueNodes: 0, longWires: 0, backwardWires: 0, overlaps: 0 },
   };
 
   try {
@@ -150,6 +155,29 @@ async function main() {
     const codec = await server.ssrLoadModule('/src/lib/gxMaterial/materialCodec.ts');
     const decompile = await server.ssrLoadModule('/src/lib/gxMaterial/decompile.ts');
     const graph = await server.ssrLoadModule('/src/lib/gxMaterial/shaderGraph.ts');
+    const layout = await server.ssrLoadModule('/src/lib/gxMaterial/graphLayout.ts');
+
+    /** Readability of one decompiled graph, at the layout's default card sizes. */
+    function measureTidiness(shader) {
+      const boxes = new Map(shader.nodes.map((node) => [node.id, { node, ...layout.defaultGraphNodeSize(node) }]));
+      report.tidy.nodes += shader.nodes.length;
+      report.tidy.edges += shader.edges.length;
+      report.tidy.valueNodes += shader.nodes.filter((node) => node.type === 'value').length;
+      for (const edge of shader.edges) {
+        const from = boxes.get(edge.from.node);
+        const to = boxes.get(edge.to.node);
+        if (from && to && to.node.x <= from.node.x) report.tidy.backwardWires += 1;
+        if (from && to && to.node.x - (from.node.x + from.width) > layout.GRAPH_LAYOUT_COLUMN_GAP + from.width) report.tidy.longWires += 1;
+      }
+      const cards = [...boxes.values()].filter((box) => box.node.type !== 'comment');
+      for (let i = 0; i < cards.length; i++) {
+        for (let j = i + 1; j < cards.length; j++) {
+          const a = cards[i];
+          const b = cards[j];
+          if (a.node.x < b.node.x + b.width && b.node.x < a.node.x + a.width && a.node.y < b.node.y + b.height && b.node.y < a.node.y + a.height) report.tidy.overlaps += 1;
+        }
+      }
+    }
 
     /** Every BRRES inside a `.szs`/`.u8`, or the file itself when it already is one. */
     function brresIn(path, member) {
@@ -218,6 +246,7 @@ async function main() {
       report.archives += 1;
       for (const { model, material, doc } of materialsIn(data)) {
         const result = decompile.decompileShaderReport(doc);
+        measureTidiness(result.graph);
         stats.materials += 1;
         stats.stages += result.stages;
         stats.rawStages += result.rawStages;
@@ -319,6 +348,15 @@ async function main() {
     );
   }
 
+  const tidy = report.tidy;
+  const perStage = (value) => (report.stages === 0 ? '—' : (value / report.stages).toFixed(2));
+  console.log('');
+  console.log('Graph tidiness (default card sizes)');
+  console.log('');
+  console.log(`  cards per stage ${perStage(tidy.nodes)}, wires per stage ${perStage(tidy.edges)}`);
+  console.log(`  wires that skip a column: ${tidy.longWires} (${percent(tidy.longWires, tidy.edges)} of wires)`);
+  console.log(`  "Value" cards: ${tidy.valueNodes}   overlapping cards: ${tidy.overlaps}   wires running right to left: ${tidy.backwardWires}`);
+
   const failures = Object.entries(report.families).flatMap(([family, stats]) =>
     stats.roundTripFailures.map((entry) => `${family}: ${entry}`),
   );
@@ -344,7 +382,7 @@ async function main() {
     console.log(`Full table written to ${options.json}`);
   }
 
-  process.exit(failures.length === 0 ? 0 : 1);
+  process.exit(failures.length === 0 && tidy.overlaps === 0 && tidy.backwardWires === 0 ? 0 : 1);
 }
 
 main().catch((error) => {

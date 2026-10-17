@@ -67,7 +67,7 @@ async function layoutGraph(zoomSteps = 4, focus = null) {
       dockResized = true;
     }
   }
-  const fitButton = qa('button').find((node) => (node.getAttribute('aria-label') ?? '').includes('Fit the graph'));
+  const fitButton = qa('button').find((node) => (node.getAttribute('aria-label') ?? '').includes('Frame the whole graph'));
   if (fitButton) fitButton.click();
   await sleep(400);
   const surface = q('.graphSurface');

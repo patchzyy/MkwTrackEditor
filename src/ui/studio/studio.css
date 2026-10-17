@@ -15,6 +15,7 @@
   background: var(--surface-0);
   color: var(--text);
   font-size: var(--font-size-md);
+  --studio-outliner-width: 264px;
 }
 
 .studioRoot.is-dragTarget::after {
@@ -70,19 +71,135 @@
   white-space: nowrap;
 }
 
+.studioHeaderDirty {
+  align-self: center;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-pill);
+  color: var(--accent-text);
+  font-size: var(--font-size-xs);
+  line-height: 16px;
+  white-space: nowrap;
+}
+
 .studioHeaderSpacer {
   flex: 1;
+}
+
+.studioHeaderGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.studioHeaderDivider {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  background: var(--border-strong);
+}
+
+/* Until the tips have been opened once, the button carries a small dot so it gets found. */
+.studioTipsTrigger.is-new {
+  position: relative;
+}
+
+.studioTipsTrigger.is-new::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 
 .studioFileInput {
   display: none;
 }
 
+/* ---------------------------------------------------------------- tips */
+
+.studioTips {
+  position: absolute;
+  top: calc(var(--topbar-height) + var(--space-3));
+  right: var(--space-4);
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  width: min(480px, calc(100vw - 2 * var(--space-4)));
+  max-height: calc(100vh - var(--topbar-height) - var(--status-bar-height) - 2 * var(--space-4));
+  border: 1px solid var(--border-overlay);
+  border-radius: var(--radius-lg);
+  background: var(--surface-menu);
+  box-shadow: var(--shadow-3);
+}
+
+.studioTipsHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  color: var(--accent-text);
+}
+
+.studioTipsHeader strong {
+  flex: 1;
+  color: var(--text);
+  font-size: var(--font-size-md);
+}
+
+.studioTipsBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-4);
+  overflow-y: auto;
+}
+
+.studioTipsBody h3 {
+  margin: 0 0 var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.studioTipsBody ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.studioTipsBody li {
+  display: grid;
+  grid-template-columns: 136px minmax(0, 1fr);
+  gap: var(--space-3);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.studioTipsBody li strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.studioTipsBody li span {
+  color: var(--text-muted);
+}
+
 /* ---------------------------------------------------------------- body */
 
 .studioBody {
   display: grid;
-  grid-template-columns: 264px minmax(0, 1fr) 320px;
+  /* The details column's width is set inline, because it is resizable. */
+  grid-template-columns: var(--studio-outliner-width) minmax(0, 1fr) 340px;
   min-height: 0;
 }
 
@@ -94,11 +211,59 @@
   background: var(--surface-0);
 }
 
-.studioInspector {
+/* The graph dock keeps the height it is given; the preview above it takes the rest. */
+.studioCenter > .materialDock {
+  flex: none;
+}
+
+/* The outliner and Details share one header shape, the same one the graph dock uses. */
+.studioPanelHeader {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.studioDetails {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
   min-height: 0;
-  overflow-y: auto;
   border-left: 1px solid var(--border);
   background: var(--surface-1);
+}
+
+.studioDetailsBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-4) var(--space-5);
+}
+
+.studioDetailsHandle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  z-index: 4;
+  width: 6px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.studioDetailsHandle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: transparent;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.studioDetailsHandle:hover::before,
+.studioDetailsHandle.isActive::before {
+  background: var(--accent);
 }
 
 /* ---------------------------------------------------------------- viewport */
@@ -133,36 +298,97 @@
   font-size: var(--font-size-sm);
 }
 
-.studioViewOverlay {
+/* One row of preview switches along the top, like the toolbar of an Unreal viewport. */
+.studioViewToolbar {
   position: absolute;
   top: var(--space-3);
-  right: var(--space-3);
+  left: var(--space-3);
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: calc(100% - 2 * var(--space-3));
+  padding: var(--space-1);
   border: 1px solid var(--border-overlay);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   background: var(--surface-overlay);
   backdrop-filter: blur(8px);
-  box-shadow: var(--shadow-2);
+  box-shadow: var(--shadow-1);
 }
 
-.studioViewOverlayRow {
+.studioViewToolbarDivider {
+  width: 1px;
+  height: 16px;
+  margin: 0 var(--space-2);
+  background: var(--border-strong);
+}
+
+.studioViewChip {
+  height: var(--control-height-sm);
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.studioViewChip:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.studioViewChip.is-on {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.studioViewChip:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.studioViewSelection {
+  position: absolute;
+  left: var(--space-3);
+  bottom: var(--space-3);
   display: flex;
-  gap: var(--space-2);
-}
-
-.studioViewOverlayToggles {
-  display: grid;
-  gap: var(--space-1);
-}
-
-.studioViewOverlayHint {
+  align-items: baseline;
+  gap: var(--space-3);
+  max-width: 45%;
   margin: 0;
-  max-width: 200px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-overlay);
+  border-radius: var(--radius-md);
+  background: var(--surface-overlay);
   color: var(--text-muted);
   font-size: var(--font-size-xs);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.studioViewSelection strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  text-overflow: ellipsis;
+}
+
+.studioViewNavHint {
+  position: absolute;
+  right: var(--space-3);
+  bottom: var(--space-3);
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  text-shadow: 0 1px 2px rgb(0 0 0 / 80%);
+  pointer-events: none;
 }
 
 /* ---------------------------------------------------------------- transport */
@@ -173,7 +399,6 @@
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
   border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border-subtle);
   background: var(--surface-1);
 }
 
@@ -206,34 +431,19 @@
   font-variant-numeric: tabular-nums;
 }
 
-.studioTransportLoop {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--text-muted);
+.studioTransport .studioTransportSpeed {
+  flex: none;
+  width: 68px;
 }
 
 .studioTransportStatus {
-  min-width: 140px;
+  flex: 0 1 280px;
+  min-width: 0;
   color: var(--text-muted);
   font-size: var(--font-size-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* ---------------------------------------------------------------- dock */
-
-.studioDockHandle {
-  height: 4px;
-  cursor: row-resize;
-  background: transparent;
-  transition: background var(--dur-fast) var(--ease);
-}
-
-.studioDockHandle:hover,
-.studioDockHandle.isActive {
-  background: var(--accent-border);
 }
 
 /* ---------------------------------------------------------------- outliner */
@@ -359,8 +569,9 @@
   color: var(--text-dim);
 }
 
+/* The name wins the space; the detail (a path, a count) takes what is left and ellipsises first. */
 .studioTreeLabel {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -368,9 +579,14 @@
 }
 
 .studioTreeDetail {
-  flex: none;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-dim);
   font-size: var(--font-size-xs);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---------------------------------------------------------------- status bar */
@@ -386,16 +602,28 @@
   font-size: var(--font-size-xs);
 }
 
+.studioStatusText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .studioStatusSpacer {
   flex: 1;
 }
 
 .studioStatusHint {
+  flex: none;
   color: var(--text-dim);
 }
 
 @media (max-width: 1280px) {
-  .studioBody {
-    grid-template-columns: 224px minmax(0, 1fr) 288px;
+  .studioRoot {
+    --studio-outliner-width: 224px;
+  }
+
+  .studioViewNavHint {
+    display: none;
   }
 }

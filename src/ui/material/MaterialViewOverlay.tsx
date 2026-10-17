@@ -1,5 +1,6 @@
 import { Boxes, Crosshair, Eye } from 'lucide-react';
 import type { GxMaterialRef } from '../../lib/gxMaterial';
+import { Button } from '../components';
 
 export interface MaterialViewOverlayProps {
   materialRef: GxMaterialRef | null;
@@ -30,35 +31,42 @@ export function MaterialViewOverlay({ materialRef, meshCount, solo, onToggleSolo
               : 'Not drawn in the viewport'}
           </p>
           <div className="materialOverlayActions">
-            <button
-              type="button"
-              className={solo ? 'materialInlineButton active' : 'materialInlineButton'}
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<Eye size={13} />}
+              active={solo}
               disabled={meshCount === 0}
-              title={meshCount === 0 ? 'The viewport is not drawing this material.' : 'Hide every other mesh'}
+              disabledReason="The viewport is not drawing this material."
+              tooltip="Hide every other mesh"
               onClick={onToggleSolo}
             >
-              <Eye size={13} /> Solo
-            </button>
-            <button
-              type="button"
-              className="materialInlineButton"
+              Solo
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<Crosshair size={13} />}
               disabled={meshCount === 0}
-              title="Report which meshes use this material"
+              disabledReason="The viewport is not drawing this material."
+              tooltip="Say which meshes use this material"
               onClick={onFrame}
             >
-              <Crosshair size={13} /> Meshes
-            </button>
-            {onOpenInStudio && (
-              <button
-                type="button"
-                className="materialInlineButton"
-                title="Open this archive in the Model Studio: the model on its own, with its animations and a bigger shader canvas."
+              Meshes
+            </Button>
+          </div>
+          {onOpenInStudio && (
+            <div className="materialOverlayActions">
+              <Button
+                size="sm"
+                icon={<Boxes size={13} />}
+                tooltip="Open this archive in the Model Studio: the model on its own, with its animations and a bigger shader canvas."
                 onClick={onOpenInStudio}
               >
-                <Boxes size={13} /> Open in Model Studio
-              </button>
-            )}
-          </div>
+                Open in Model Studio
+              </Button>
+            </div>
+          )}
         </>
       ) : (
         <p className="materialOverlayMeta">Pick a material on the left to highlight its meshes.</p>

@@ -27,6 +27,18 @@ export {
 export { compileShaderGraph } from './shaderGraph';
 export { decompileShader, decompileShaderReport } from './decompile';
 export type { DecompileReport, RawStageCause } from './decompile';
+export { acceptsInlineValue, foldLiteralNodes, inlineInputValue, withInlineValue } from './graphLiterals';
+export {
+  layoutShaderGraph,
+  defaultGraphNodeSize,
+  GRAPH_LAYOUT_NODE_WIDTH,
+  GRAPH_LAYOUT_HEADER_HEIGHT,
+  GRAPH_LAYOUT_PIN_ROW_HEIGHT,
+  GRAPH_LAYOUT_COLUMN_GAP,
+  GRAPH_LAYOUT_ROW_GAP,
+  GRAPH_LAYOUT_BAND_GAP,
+} from './graphLayout';
+export type { GraphNodeSize, MeasureGraphNode } from './graphLayout';
 export { SHADER_GRAPH_PRESETS, PRESET_WANTS_LIGHTING } from './presets';
 
 export { GX_LIMITS, collectMaterialIssues, validateMaterialDoc } from './materialCodec';

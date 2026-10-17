@@ -14,7 +14,9 @@ import { compileShaderGraph } from './shaderGraph';
 import { decompileShader, decompileShaderReport } from './decompile';
 import { SHADER_GRAPH_PRESETS } from './presets';
 import { createDefaultMaterialDoc, createDefaultStage, createPassThroughStage } from './defaults';
-import type { GraphEdge, GraphNode, GxMaterialDoc, GxTevStageDoc, ShaderGraph } from './types';
+import { acceptsInlineValue, foldLiteralNodes, inlineInputValue, withInlineValue } from './graphLiterals';
+import { defaultGraphNodeSize, layoutShaderGraph, type MeasureGraphNode } from './graphLayout';
+import type { GraphEdge, GraphInlineValue, GraphNode, GxMaterialDoc, GxTevStageDoc, ShaderGraph } from './types';
 
 // A spread of character models, not just the first alphabetically: they are where the graph is
 // stretched hardest, and 18 archives of them still runs in well under a second. The whole folder
@@ -64,6 +66,49 @@ function wire(nodes: GraphNode[], edges: Array<[string, string, string, string]>
       to: { node: to, socket: input },
     })),
   };
+}
+
+/**
+ * The graph an older decompiler made: every typed-in literal spelled as a wire from one shared
+ * "Value" node per value instead. What `foldLiteralNodes` exists to undo.
+ */
+function unfoldLiterals(graph: ShaderGraph): ShaderGraph {
+  const nodes: GraphNode[] = [];
+  const edges = [...graph.edges];
+  const shared = new Map<GraphInlineValue, string>();
+  for (const node of graph.nodes) {
+    const { inputValues, ...rest } = node;
+    nodes.push(rest as GraphNode);
+    for (const [socket, value] of Object.entries(inputValues ?? {})) {
+      if (value === undefined || edges.some((edge) => edge.to.node === node.id && edge.to.socket === socket)) continue;
+      let id = shared.get(value);
+      if (!id) {
+        id = `lit${value}`;
+        shared.set(value, id);
+        nodes.push({ id, type: 'value', value, x: 0, y: 0 });
+      }
+      // `s3a…` is stage 3's alpha half (the decompiler's id convention); everything else is colour.
+      const socketType = /^s\d+a/.test(node.id) ? 'alpha' : 'rgb';
+      edges.push({ id: `${id}-${node.id}-${socket}`, from: { node: id, socket: socketType }, to: { node: node.id, socket } });
+    }
+  }
+  return { ...graph, nodes, edges };
+}
+
+/** Pairs of cards whose boxes overlap, at the given sizes. Comments are annotations and excluded. */
+function overlappingCards(graph: ShaderGraph, measure: MeasureGraphNode = defaultGraphNodeSize): string[] {
+  const cards = graph.nodes.filter((node) => node.type !== 'comment').map((node) => ({ node, ...measure(node) }));
+  const hits: string[] = [];
+  for (let i = 0; i < cards.length; i++) {
+    for (let j = i + 1; j < cards.length; j++) {
+      const a = cards[i];
+      const b = cards[j];
+      if (a.node.x < b.node.x + b.width && b.node.x < a.node.x + a.width && a.node.y < b.node.y + b.height && b.node.y < a.node.y + a.height) {
+        hits.push(`${a.node.id}/${b.node.id}`);
+      }
+    }
+  }
+  return hits;
 }
 
 describe.skipIf(documents.length === 0)('decompile / compile round trip', () => {
@@ -127,7 +172,50 @@ describe.skipIf(documents.length === 0)('decompile / compile round trip', () => 
       expect(new Set(graph.nodes.map((node) => node.id)).size).toBe(graph.nodes.length);
     }
   });
+
+  it('types the hardware constants into the nodes instead of wiring a shared Value card', () => {
+    for (const { doc } of documents) {
+      const graph = decompileShader(doc);
+      expect(graph.nodes.filter((node) => node.type === 'value')).toEqual([]);
+      for (const node of graph.nodes) {
+        for (const socket of Object.keys(node.inputValues ?? {})) {
+          // Only where the compiler reads it, never on a wired socket, never repeating the default.
+          expect(acceptsInlineValue(node, socket)).toBe(true);
+          expect(graph.edges.some((edge) => edge.to.node === node.id && edge.to.socket === socket)).toBe(false);
+          expect(node.inputValues![socket]).not.toBe(socketDefault(node, socket));
+        }
+      }
+    }
+  });
+
+  it('folds the Value cards of a graph saved by an older build back into the same stages', () => {
+    for (const { label, doc } of documents) {
+      const graph = decompileShader(doc);
+      const old = unfoldLiterals(graph);
+      const folded = foldLiteralNodes(old);
+      expect(folded.nodes.filter((node) => node.type === 'value'), label).toEqual([]);
+      expect(JSON.stringify(compileShaderGraph(old, doc).tevStages), label).toBe(JSON.stringify(doc.tevStages));
+      expect(JSON.stringify(compileShaderGraph(folded, doc).tevStages), label).toBe(JSON.stringify(doc.tevStages));
+    }
+  });
+
+  it('lays every decompiled graph out without overlaps, flowing into the Material node on the right', () => {
+    for (const { label, doc } of documents) {
+      const graph = decompileShader(doc);
+      expect(overlappingCards(graph), label).toEqual([]);
+      const output = graph.nodes.find((node) => node.type === 'output')!;
+      for (const node of graph.nodes) if (node !== output) expect(node.x, `${label} ${node.id}`).toBeLessThan(output.x);
+      // Every wire runs left to right.
+      const xOf = new Map(graph.nodes.map((node) => [node.id, node.x]));
+      for (const edge of graph.edges) expect(xOf.get(edge.from.node)!, label).toBeLessThan(xOf.get(edge.to.node)!);
+    }
+  });
 });
+
+/** The socket default, for the "never repeats the default" check. */
+function socketDefault(node: GraphNode, socket: string): GraphInlineValue | undefined {
+  return inlineInputValue({ ...node, inputValues: undefined }, socket);
+}
 
 describe('shader graph compiler', () => {
   const material = createDefaultMaterialDoc('test', 2);
@@ -603,6 +691,246 @@ describe('shader graph compiler', () => {
     // Multiply's `b` defaults to 1.
     expect(compiled.tevStages[0].colorInC).toBe(GX.CC.ONE);
   });
+
+  /** texture -> lerp(texture, b, t) on both pipelines, with these values typed into each lerp. */
+  // An alpha lerp left at its defaults (b = 1, t = 0.5) needs two konst fractions on one stage.
+  const ALPHA_ZERO = { b: 0, t: 0 } as const;
+
+  function lerpGraph(colorValues: GraphNode['inputValues'], alphaValues: GraphNode['inputValues']): ShaderGraph {
+    return wire(
+      [
+        { id: 't', type: 'texture', sampler: 0, texCoord: 0, x: 0, y: 0 },
+        { id: 'lc', type: 'lerp', inputValues: colorValues, x: 200, y: 0 },
+        { id: 'la', type: 'lerp', inputValues: alphaValues, x: 200, y: 200 },
+        { id: 'o', type: 'output', x: 400, y: 0 },
+      ],
+      [['t', 'rgb', 'lc', 'a'], ['t', 'alpha', 'la', 'a'], ['lc', 'out', 'o', 'color'], ['la', 'out', 'o', 'alpha']],
+    );
+  }
+
+  it('reads a value typed into an unwired colour input as the matching free constant', () => {
+    const compiled = compileShaderGraph(lerpGraph({ b: 0, t: 1 }, ALPHA_ZERO), material);
+    expect(compiled.ok).toBe(true);
+    const [stage] = compiled.tevStages;
+    expect([stage.colorInA, stage.colorInB, stage.colorInC, stage.colorInD]).toEqual([GX.CC.TEXC, GX.CC.ZERO, GX.CC.ONE, GX.CC.ZERO]);
+    const half = compileShaderGraph(lerpGraph({ t: 0.5, b: 0.5 }, ALPHA_ZERO), material).tevStages[0];
+    expect([half.colorInB, half.colorInC]).toEqual([GX.CC.HALF, GX.CC.HALF]);
+  });
+
+  it('lowers a typed-in half or one in the alpha pipeline to a konst selection, and zero to ZERO', () => {
+    // The alpha operands have ZERO but no HALF or ONE; those come from the konst fractions.
+    const one = compileShaderGraph(lerpGraph({}, { b: 0, t: 1 }), material);
+    expect(one.ok).toBe(true);
+    expect([one.tevStages[0].alphaInB, one.tevStages[0].alphaInC]).toEqual([GX.CA.ZERO, GX.CA.KONST]);
+    expect(one.tevStages[0].konstAlphaSel).toBe(GX.KonstAlphaSel.KASEL_1);
+    const half = compileShaderGraph(lerpGraph({}, { b: 0, t: 0.5 }), material);
+    expect(half.tevStages[0].alphaInC).toBe(GX.CA.KONST);
+    expect(half.tevStages[0].konstAlphaSel).toBe(GX.KonstAlphaSel.KASEL_4_8);
+    // Two different fractions on one stage need two konst selections, which one stage cannot have.
+    expect(compileShaderGraph(lerpGraph({}, { b: 1, t: 0.5 }), material).ok).toBe(false);
+  });
+
+  it('compiles a typed-in value exactly as a wired Value node, which still works', () => {
+    const inline = lerpGraph({ b: 0.5, t: 1 }, { b: 0, t: 0.5 });
+    const wired = wire(
+      [
+        ...lerpGraph({}, {}).nodes,
+        { id: 'half', type: 'value', value: 0.5, x: 0, y: 300 },
+        { id: 'one', type: 'value', value: 1, x: 0, y: 400 },
+        { id: 'zero', type: 'value', value: 0, x: 0, y: 500 },
+      ],
+      [
+        ['t', 'rgb', 'lc', 'a'], ['t', 'alpha', 'la', 'a'], ['lc', 'out', 'o', 'color'], ['la', 'out', 'o', 'alpha'],
+        ['half', 'rgb', 'lc', 'b'], ['one', 'rgb', 'lc', 't'], ['zero', 'alpha', 'la', 'b'], ['half', 'alpha', 'la', 't'],
+      ],
+    );
+    const fromInline = compileShaderGraph(inline, material);
+    const fromWired = compileShaderGraph(wired, material);
+    expect(fromWired.ok).toBe(true);
+    expect(fromInline.tevStages).toEqual(fromWired.tevStages);
+  });
+
+  it('ignores a typed-in value on a socket that has a wire', () => {
+    const graph = lerpGraph({ a: 1 }, ALPHA_ZERO);
+    expect(compileShaderGraph(graph, material).tevStages[0].colorInA).toBe(GX.CC.TEXC);
+  });
+
+  it('keeps two steps the decompiler drew from two stages as two stages', () => {
+    // A lone multiply that is all of stage 0's alpha, read by stage 1's add: fusing them, which is
+    // right for a hand-built graph, would fold two of the file's stages into one.
+    const graph = wire(
+      [
+        { id: 't', type: 'texture', sampler: 0, texCoord: 0, x: 0, y: 0 },
+        { id: 'v', type: 'vertexColor', channel: 0, x: 0, y: 100 },
+        { id: 's0a', type: 'multiply', stageTemplate: createDefaultStage(), x: 200, y: 0 },
+        { id: 's1a', type: 'add', stageTemplate: createDefaultStage(), x: 400, y: 0 },
+        { id: 'o', type: 'output', x: 600, y: 0 },
+      ],
+      [['t', 'alpha', 's0a', 'a'], ['v', 'alpha', 's0a', 'b'], ['s0a', 'out', 's1a', 'b'], ['s1a', 'out', 'o', 'alpha']],
+    );
+    expect(compileShaderGraph(graph, material).tevStages).toHaveLength(2);
+    // The same shape without the stage ids is one fused stage, as it always was.
+    const handBuilt = { ...graph, nodes: graph.nodes.map((node) => ({ ...node, id: node.id.replace(/^s(\d)a$/, 'n$1'), stageTemplate: undefined })) };
+    handBuilt.edges = graph.edges.map((edge) => ({
+      ...edge,
+      from: { ...edge.from, node: edge.from.node.replace(/^s(\d)a$/, 'n$1') },
+      to: { ...edge.to, node: edge.to.node.replace(/^s(\d)a$/, 'n$1') },
+    }));
+    expect(compileShaderGraph(handBuilt as ShaderGraph, material).tevStages).toHaveLength(1);
+  });
+});
+
+describe('inline values and foldLiteralNodes', () => {
+  const material = createDefaultMaterialDoc('test', 1);
+
+  it('says which inputs read a typed-in value', () => {
+    expect(acceptsInlineValue({ type: 'lerp' }, 't')).toBe(true);
+    expect(acceptsInlineValue({ type: 'scale' }, 'x')).toBe(true);
+    // The output's unwired sockets mean "nothing", and a texture's UV is not a value.
+    expect(acceptsInlineValue({ type: 'output' }, 'color')).toBe(false);
+    expect(acceptsInlineValue({ type: 'texture' }, 'uv')).toBe(false);
+    expect(acceptsInlineValue({ type: 'lerp' }, 'nope')).toBe(false);
+  });
+
+  it('reads the typed-in value, else the default, and ignores garbage', () => {
+    const lerp: GraphNode = { id: 'l', type: 'lerp', x: 0, y: 0 };
+    expect(inlineInputValue(lerp, 't')).toBe(0.5);
+    expect(inlineInputValue({ ...lerp, inputValues: { t: 1 } }, 't')).toBe(1);
+    expect(inlineInputValue({ ...lerp, inputValues: { t: 0.25 as GraphInlineValue } }, 't')).toBe(0.5);
+  });
+
+  it('stores only values that differ from the default', () => {
+    const lerp: GraphNode = { id: 'l', type: 'lerp', x: 0, y: 0 };
+    const typed = withInlineValue(lerp, 'b', 0);
+    expect(typed.inputValues).toEqual({ b: 0 });
+    expect('inputValues' in withInlineValue(typed, 'b', 1)).toBe(false);
+    expect(lerp.inputValues).toBeUndefined();
+  });
+
+  it('turns a fanned-out Value node into typed-in values and drops it', () => {
+    const graph = wire(
+      [
+        { id: 't', type: 'texture', sampler: 0, texCoord: 0, x: 0, y: 0 },
+        { id: 'zero', type: 'value', value: 0, x: 0, y: 100 },
+        { id: 'l', type: 'lerp', x: 200, y: 0 },
+        { id: 'm', type: 'multiply', x: 200, y: 200 },
+        { id: 'o', type: 'output', x: 400, y: 0 },
+      ],
+      [
+        ['t', 'rgb', 'l', 'a'], ['zero', 'rgb', 'l', 'b'], ['zero', 'rgb', 'l', 't'],
+        ['t', 'alpha', 'm', 'a'], ['zero', 'alpha', 'm', 'b'],
+        ['l', 'out', 'o', 'color'], ['m', 'out', 'o', 'alpha'],
+      ],
+    );
+    const folded = foldLiteralNodes(graph);
+    expect(folded.nodes.map((node) => node.id)).toEqual(['t', 'l', 'm', 'o']);
+    expect(folded.edges.some((edge) => edge.from.node === 'zero')).toBe(false);
+    expect(folded.nodes.find((node) => node.id === 'l')?.inputValues).toEqual({ b: 0, t: 0 });
+    expect(folded.nodes.find((node) => node.id === 'm')?.inputValues).toEqual({ b: 0 });
+    expect(compileShaderGraph(folded, material).tevStages).toEqual(compileShaderGraph(graph, material).tevStages);
+  });
+
+  it('leaves a Value node wired into the output, and one nobody wired, where they are', () => {
+    const graph = wire(
+      [
+        { id: 'one', type: 'value', value: 1, x: 0, y: 0 },
+        { id: 'spare', type: 'value', value: 0.5, x: 0, y: 100 },
+        { id: 'o', type: 'output', x: 200, y: 0 },
+      ],
+      [['one', 'alpha', 'o', 'alpha']],
+    );
+    expect(foldLiteralNodes(graph)).toBe(graph);
+  });
+
+  it('omits an entry for a value that equals the socket default', () => {
+    const graph = wire(
+      [
+        { id: 'one', type: 'value', value: 1, x: 0, y: 0 },
+        { id: 'm', type: 'multiply', x: 200, y: 0 },
+        { id: 'o', type: 'output', x: 400, y: 0 },
+      ],
+      [['one', 'rgb', 'm', 'a'], ['m', 'out', 'o', 'color']],
+    );
+    const folded = foldLiteralNodes(graph);
+    expect(folded.nodes.map((node) => node.id)).toEqual(['m', 'o']);
+    expect(folded.nodes[0].inputValues).toBeUndefined();
+    expect(compileShaderGraph(folded, material).tevStages).toEqual(compileShaderGraph(graph, material).tevStages);
+  });
+});
+
+describe('layoutShaderGraph', () => {
+  const graph = SHADER_GRAPH_PRESETS.find((preset) => preset.id === 'texture-blend')!.graph;
+
+  it('is deterministic and never moves a comment', () => {
+    const withComment: ShaderGraph = {
+      ...graph,
+      nodes: [...graph.nodes, { id: 'note', type: 'comment', text: 'hi', width: 300, height: 120, x: -55, y: 77 }],
+    };
+    const once = layoutShaderGraph(withComment);
+    expect(layoutShaderGraph(withComment)).toEqual(once);
+    expect(layoutShaderGraph(once)).toEqual(once);
+    expect(once.nodes.find((node) => node.id === 'note')).toMatchObject({ x: -55, y: 77 });
+    // Only positions change.
+    expect(once.nodes.map(({ x: _x, y: _y, ...rest }) => rest)).toEqual(withComment.nodes.map(({ x: _x, y: _y, ...rest }) => rest));
+    expect(once.edges).toBe(withComment.edges);
+  });
+
+  it('puts the Material node alone on the right and keeps every wire flowing left to right', () => {
+    const laid = layoutShaderGraph(graph);
+    const output = laid.nodes.find((node) => node.type === 'output')!;
+    for (const node of laid.nodes) if (node !== output) expect(node.x).toBeLessThan(output.x);
+    const xOf = new Map(laid.nodes.map((node) => [node.id, node.x]));
+    for (const edge of laid.edges) expect(xOf.get(edge.from.node)!).toBeLessThan(xOf.get(edge.to.node)!);
+    expect(overlappingCards(laid)).toEqual([]);
+  });
+
+  it('puts the alpha chain in a band below the colour chain', () => {
+    const laid = layoutShaderGraph(graph);
+    const at = (id: string) => laid.nodes.find((node) => node.id === id)!;
+    // `alpha` multiplies two sources the colour chain reads too; `mix` is colour-only.
+    expect(at('alpha').y).toBeGreaterThan(at('mix').y + defaultGraphNodeSize(at('mix')).height);
+    expect(at('alpha').y).toBeGreaterThan(at('base').y + defaultGraphNodeSize(at('base')).height);
+  });
+
+  it('spaces the cards by the sizes the editor measured', () => {
+    const big: MeasureGraphNode = (node) => ({ ...defaultGraphNodeSize(node), width: 300, height: 200 });
+    const laid = layoutShaderGraph(graph, big);
+    expect(overlappingCards(laid, big)).toEqual([]);
+    const columns = [...new Set(laid.nodes.map((node) => node.x))].sort((a, b) => a - b);
+    for (let index = 1; index < columns.length; index++) expect(columns[index] - columns[index - 1]).toBeGreaterThanOrEqual(300);
+  });
+
+  it('lines a socket up with the measured socket it is wired to', () => {
+    // A chain of single-input steps should come out as one straight row.
+    const chain = wire(
+      [
+        { id: 'v', type: 'vertexColor', channel: 0, x: 0, y: 0 },
+        { id: 's1', type: 'scale', scale: 2, bias: 0, clamp: true, x: 0, y: 0 },
+        { id: 's2', type: 'scale', scale: 2, bias: 0, clamp: true, x: 0, y: 0 },
+        { id: 'o', type: 'output', x: 0, y: 0 },
+      ],
+      [['v', 'rgb', 's1', 'x'], ['s1', 'out', 's2', 'x'], ['s2', 'out', 'o', 'color']],
+    );
+    const laid = layoutShaderGraph(chain);
+    const ys = laid.nodes.map((node) => node.y);
+    expect(new Set(ys).size).toBe(1);
+  });
+
+  it('copes with an empty graph, a cycle and a node with no wires', () => {
+    expect(layoutShaderGraph({ version: 1, nodes: [], edges: [] })).toEqual({ version: 1, nodes: [], edges: [] });
+    const loop = wire(
+      [
+        { id: 'a', type: 'add', x: 0, y: 0 },
+        { id: 'b', type: 'add', x: 0, y: 0 },
+        { id: 'lonely', type: 'value', value: 1, x: 0, y: 0 },
+        { id: 'o', type: 'output', x: 0, y: 0 },
+      ],
+      [['a', 'out', 'b', 'a'], ['b', 'out', 'a', 'a'], ['b', 'out', 'o', 'color']],
+    );
+    const laid = layoutShaderGraph(loop);
+    expect(overlappingCards(laid)).toEqual([]);
+    for (const node of laid.nodes) expect(Number.isFinite(node.x) && Number.isFinite(node.y)).toBe(true);
+  });
 });
 
 /**
@@ -697,6 +1025,85 @@ describe('shader graph decompiler', () => {
     expect(graph.nodes.filter((node) => node.type === 'rawStage')).toEqual([]);
     const channel = graph.nodes.find((node) => node.type === 'vertexColor');
     expect(channel?.type === 'vertexColor' && channel.channel).toBe(GX.RasColorChannelID.COLOR_ZERO);
+  });
+
+  it('draws each stage with the fewest steps that say it', () => {
+    const doc = materialWith([
+      // texture x vertex colour: one multiply per half, the zeros typed in, not wired.
+      {
+        colorInA: GX.CC.ZERO, colorInB: GX.CC.TEXC, colorInC: GX.CC.RASC, colorInD: GX.CC.ZERO,
+        alphaInA: GX.CA.ZERO, alphaInB: GX.CA.TEXA, alphaInC: GX.CA.RASA, alphaInD: GX.CA.ZERO,
+        texMap: 0, texCoordId: 0, channelId: GX.RasColorChannelID.COLOR0A0,
+      },
+      // previous + half a texture: an add over a lerp whose mix is typed in as 0.5.
+      {
+        colorInA: GX.CC.ZERO, colorInB: GX.CC.TEXC, colorInC: GX.CC.HALF, colorInD: GX.CC.CPREV,
+        alphaInA: GX.CA.APREV, alphaInB: GX.CA.ZERO, alphaInC: GX.CA.ZERO, alphaInD: GX.CA.ZERO,
+        texMap: 1, texCoordId: 1,
+      },
+    ]);
+    const graph = roundTrips(doc);
+    const at = (id: string) => graph.nodes.find((node) => node.id === id);
+    expect(graph.nodes.filter((node) => node.type === 'value')).toEqual([]);
+    expect(at('s0c')?.type).toBe('multiply');
+    expect(at('s0a')?.type).toBe('multiply');
+    expect(at('s0cl')).toBeUndefined();
+    expect(at('s1c')?.type).toBe('add');
+    expect(at('s1cl')).toMatchObject({ type: 'multiply', inputValues: { b: 0.5 } });
+    // The alpha half is just "the previous alpha": an add of it, with nothing typed in.
+    expect(at('s1a')).toMatchObject({ type: 'add' });
+    expect(at('s1a')?.inputValues).toBeUndefined();
+    // One texture card per stage, each feeding its own stage's colour and alpha.
+    expect(graph.nodes.filter((node) => node.type === 'texture')).toHaveLength(2);
+  });
+
+  it('types a ONE into a colour input and a lerp\'s zero into its alpha input', () => {
+    const doc = materialWith([{
+      colorInA: GX.CC.TEXC, colorInB: GX.CC.ONE, colorInC: GX.CC.RASC, colorInD: GX.CC.ZERO,
+      alphaInA: GX.CA.TEXA, alphaInB: GX.CA.ZERO, alphaInC: GX.CA.RASA, alphaInD: GX.CA.ZERO,
+      texMap: 0, texCoordId: 0, channelId: GX.RasColorChannelID.COLOR0A0,
+    }]);
+    const graph = roundTrips(doc);
+    // `lerp.b` defaults to 1, so a ONE there needs no entry; an alpha zero there does.
+    expect(graph.nodes.find((node) => node.id === 's0c')).toMatchObject({ type: 'lerp' });
+    expect(graph.nodes.find((node) => node.id === 's0c')?.inputValues).toBeUndefined();
+    expect(graph.nodes.find((node) => node.id === 's0a')).toMatchObject({ type: 'lerp', inputValues: { b: 0 } });
+  });
+
+  it('keeps a whole-stage multiply apart from the add of the stage that reads it', () => {
+    // The shape that used to fuse two of the file's stages into one (a course's water).
+    const doc = materialWith([
+      {
+        colorInA: GX.CC.ZERO, colorInB: GX.CC.TEXC, colorInC: GX.CC.ONE, colorInD: GX.CC.ZERO,
+        alphaInA: GX.CA.ZERO, alphaInB: GX.CA.TEXA, alphaInC: GX.CA.RASA, alphaInD: GX.CA.ZERO,
+        texMap: 0, texCoordId: 0, channelId: GX.RasColorChannelID.COLOR_ZERO,
+      },
+      {
+        colorInA: GX.CC.CPREV, colorInB: GX.CC.ZERO, colorInC: GX.CC.ZERO, colorInD: GX.CC.ZERO,
+        alphaInA: GX.CA.APREV, alphaInB: GX.CA.ZERO, alphaInC: GX.CA.ZERO, alphaInD: GX.CA.KONST,
+        konstAlphaSel: GX.KonstAlphaSel.KASEL_K0_A,
+      },
+    ]);
+    const graph = roundTrips(doc);
+    expect(graph.nodes.filter((node) => node.type === 'rawStage')).toEqual([]);
+  });
+
+  it('gives a source read by far-apart steps a card beside each, and merges twins in one column', () => {
+    const doc = materialWith([
+      // Stage 0 reads K0; stages 1..3 build on it; stage 3 reads K0 again.
+      { colorInA: GX.CC.ZERO, colorInB: GX.CC.KONST, colorInC: GX.CC.ONE, colorInD: GX.CC.ZERO, konstColorSel: GX.KonstColorSel.KCSEL_K0 },
+      { colorInA: GX.CC.ZERO, colorInB: GX.CC.TEXC, colorInC: GX.CC.CPREV, colorInD: GX.CC.ZERO, texMap: 0, texCoordId: 0 },
+      { colorInA: GX.CC.ZERO, colorInB: GX.CC.TEXC, colorInC: GX.CC.CPREV, colorInD: GX.CC.ZERO, texMap: 1, texCoordId: 1 },
+      { colorInA: GX.CC.CPREV, colorInB: GX.CC.ZERO, colorInC: GX.CC.ZERO, colorInD: GX.CC.KONST, konstColorSel: GX.KonstColorSel.KCSEL_K0 },
+    ]);
+    const graph = roundTrips(doc);
+    const xOf = new Map(graph.nodes.map((node) => [node.id, node.x]));
+    for (const node of graph.nodes.filter((entry) => entry.type === 'constant')) {
+      // Each konst card sits right beside every step it feeds.
+      for (const edge of graph.edges.filter((entry) => entry.from.node === node.id)) {
+        expect(xOf.get(edge.to.node)! - node.x).toBeLessThanOrEqual(240);
+      }
+    }
   });
 
   it('keeps a stage that reads a texture it does not bind as a Special step, and says why', () => {

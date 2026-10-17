@@ -710,6 +710,20 @@ export function useStudioSession({
       const previous = doc;
       setDoc(entry.doc);
       setDocs(entry.docs);
+      // An edited graph *drives* its material: left in place, it would compile straight back over
+      // the stages just restored and undo would seem to do nothing. So a material the step changed
+      // drops its edited graph, which is then re-read for the restored stages — the stored layout
+      // when there is one, exactly as when the material is first opened.
+      const staleGraphs = [...new Set([...Object.keys(docs), ...Object.keys(entry.docs)])].filter(
+        (key) => docs[key] !== entry.docs[key] && editedGraphsRef.current.has(key),
+      );
+      if (staleGraphs.length > 0) {
+        for (const key of staleGraphs) {
+          editedGraphsRef.current.delete(key);
+          graphHistoryRef.current.delete(key);
+        }
+        setGraphs((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !staleGraphs.includes(key))));
+      }
       const scene = sceneRef.current;
       if (scene && previous) {
         for (const file of entry.doc.brresFiles) {
@@ -731,7 +745,7 @@ export function useStudioSession({
       setSceneEpoch((value) => value + 1);
       setStatus(direction === 'undo' ? 'Undid the last edit.' : 'Redid the last edit.');
     },
-    [doc],
+    [doc, docs],
   );
 
   const undo = useCallback(() => {

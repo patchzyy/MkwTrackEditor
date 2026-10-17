@@ -1,5 +1,5 @@
 import { ChevronsLeft, ChevronsRight, Pause, Play, Repeat, SkipBack } from 'lucide-react';
-import { IconButton, Select, Toggle, Tooltip } from '../components';
+import { IconButton, Select } from '../components';
 import {
   clampFrame,
   describeActiveAnimations,
@@ -90,17 +90,21 @@ export function StudioTransportBar({ transport, onChange, duration, active }: St
       <Select
         label="Playback speed"
         size="sm"
+        className="studioTransportSpeed"
         value={String(transport.speed)}
         options={STUDIO_TRANSPORT_SPEEDS.map((speed) => ({ value: String(speed), label: formatTransportSpeed(speed) }))}
         onChange={(value) => onChange({ ...transport, speed: Number(value) })}
       />
 
-      <Tooltip label="Loop the timeline when it reaches the end" side="top">
-        <span className="studioTransportLoop">
-          <Repeat size={12} aria-hidden="true" />
-          <Toggle label="Loop" checked={transport.loop} onChange={(loop) => onChange({ ...transport, loop })} />
-        </span>
-      </Tooltip>
+      <IconButton
+        tooltip={transport.loop ? 'Looping: the timeline starts again at the end' : 'Play once and stop on the last frame'}
+        tooltipSide="top"
+        size="sm"
+        variant="ghost"
+        icon={<Repeat size={13} />}
+        active={transport.loop}
+        onClick={() => onChange({ ...transport, loop: !transport.loop })}
+      />
 
       <span className="studioTransportStatus">{describeActiveAnimations(active)}</span>
     </div>

@@ -113,6 +113,35 @@ out.status = q('.uiStatusMessage')?.textContent.trim() ?? null;
 await shot('material-02-selected');
 await sleep(900);
 
+// ---------------------------------------------------------------- the inspector follows the graph
+// The inspector is a Details panel: a texture node clicked on the canvas shows that texture, and a
+// click on empty canvas brings the material back.
+const detailsNow = () => ({
+  crumbs: q('.materialInspector .detailsCrumbs')?.textContent.trim() ?? null,
+  texture: q('.materialInspector .detailsTexture') !== null,
+  overview: q('.materialInspector .materialInspectorHeader') !== null,
+});
+const pressAt = (node, point) => {
+  node.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: point.x, clientY: point.y, pointerId: 1, button: 0, buttons: 1 }));
+  window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: point.x, clientY: point.y, pointerId: 1, button: 0 }));
+};
+const textureCard = q('.graphNode[data-node-type="texture"]');
+if (textureCard) {
+  const box = rectOf(textureCard);
+  pressAt(textureCard, { x: box.left + box.width / 2, y: box.top + 10 });
+  await sleep(700);
+}
+out.detailsAfterTextureNode = detailsNow();
+await shot('material-02b-texture-details');
+await sleep(900);
+const graphSurface = q('.graphSurface');
+if (graphSurface) {
+  const box = rectOf(graphSurface);
+  pressAt(graphSurface, { x: box.left + 14, y: box.bottom - 14 });
+  await sleep(700);
+}
+out.detailsAfterEmptyClick = detailsNow();
+
 // ---------------------------------------------------------------- the node graph
 out.dockHeightForGraph = await setDockHeight(700);
 // Fit puts the whole graph on screen, which for a three-stage material is too small to read, so
@@ -137,12 +166,10 @@ out.graphNodes = qa('.graphNode').length;
 out.graphNodeTitles = [...new Set(qa('.graphNodeTitle').map((n) => n.textContent.trim()))];
 out.graphWires = qa('.graphWire').length;
 out.graphStatus = q('.materialDockStatusText')?.textContent.trim() ?? null;
-// A stage the graph cannot express comes back as a read-only "Raw stage" card, so nothing is
+// A stage the graph cannot express comes back as a read-only "Special step" card, so nothing is
 // silently lost when a material is opened.
-out.rawStageCards = qa('.graphRawStage').length;
-out.rawStageEditable = qa('.graphNode').some((n) =>
-  n.querySelector('.graphNodeTitle')?.textContent.trim() === 'Raw stage' &&
-  n.querySelector('input, select, textarea') !== null);
+out.rawStageCards = qa('.graphNode--raw').length;
+out.rawStageEditable = qa('.graphNode--raw').some((n) => n.querySelector('input, select, textarea') !== null);
 out.graphZoomFit = Number(q('.graphSurface').dataset.zoom);
 out.graphZoomReadable = await zoomTo(0.95);
 await shot('material-03-graph');
@@ -199,7 +226,7 @@ const dragSocket = async (fromSel, toSel) => {
   await sleep(400);
   return true;
 };
-const textureNodeId = qa('.graphNode').find((n) => n.querySelector('.graphNodeTitle')?.textContent.trim() === 'Texture')?.dataset.node;
+const textureNodeId = qa('.graphNode').find((n) => n.querySelector('.graphNodeTitle')?.textContent.trim().startsWith('Texture'))?.dataset.node;
 const outputNodeId = qa('.graphNode').find((n) => n.querySelector('.graphNodeTitle')?.textContent.trim() === 'Material')?.dataset.node;
 if (textureNodeId && outputNodeId) {
   const wiresBefore = qa('.graphWire').length;
@@ -234,14 +261,14 @@ if (surface) {
   q('.graphPaletteList button')?.click();
   await sleep(500);
   out.nodeAdded = qa('.graphNode').length - nodesBefore;
-  out.undoEnabled = !qa('.materialDockTools button').find((b) => b.getAttribute('aria-label') === 'Undo the last graph change')?.disabled;
+  out.undoEnabled = !qa('.materialDockTools button').find((b) => b.getAttribute('aria-label') === 'Undo')?.disabled;
 }
 
 // Auto layout and fit.
 clickText('Auto layout', '.materialDockTools button');
 await sleep(700);
 out.afterAutoLayout = qa('.graphNode').length;
-qa('.materialDockTools button').find((b) => b.getAttribute('aria-label') === 'Fit the graph in view')?.click();
+qa('.materialDockTools button').find((b) => b.getAttribute('aria-label') === 'Frame the whole graph')?.click();
 await sleep(600);
 await shot('material-07-auto-layout');
 await sleep(900);
@@ -262,12 +289,22 @@ if (surface) {
 // ---------------------------------------------------------------- the inspector
 await setDockHeight(360);
 await sleep(400);
+// The graph steps above leave a node selected, and the inspector shows the selection; an empty
+// spot on the canvas brings the whole material back.
+{
+  const surfaceNode = q('.graphSurface');
+  if (surfaceNode) {
+    const box = rectOf(surfaceNode);
+    pressAt(surfaceNode, { x: box.left + 14, y: box.bottom - 14 });
+    await sleep(600);
+  }
+}
 // Open every collapsed section so the screenshot shows the whole sheet.
 for (const toggle of qa('.materialInspector .uiPanelSectionToggle')) {
   if (toggle.getAttribute('aria-expanded') === 'false') toggle.click();
 }
 await sleep(500);
-out.layerCards = qa('.materialLayerCard').length;
+out.textureRows = qa('.materialInspector .detailsTextureRow').length;
 out.inspectorFields = qa('.materialInspector .uiFieldLabel').map((n) => n.childNodes[0]?.textContent?.trim()).filter(Boolean);
 out.colorSwatches = qa('.materialInspector input[type="color"]').length;
 await shot('material-08-inspector');
@@ -320,7 +357,7 @@ if (colourSwatch) {
 
 // A preset does more than swap the graph: `PRESET_WANTS_LIGHTING` says which ones also need
 // channel-0 lighting, which the graph cannot express.
-clickText('Presets', '.materialDockTools button');
+clickText('Start from…', '.materialDockTools button');
 await sleep(500);
 out.presetNames = qa('.uiMenuItem, [role="menuitem"]').map((n) => n.textContent.trim());
 const litPreset = qa('.uiMenuItem, [role="menuitem"]').find((n) => /lit/i.test(n.textContent));

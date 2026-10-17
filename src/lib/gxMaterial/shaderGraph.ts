@@ -22,6 +22,7 @@
 
 import * as GX from '../../../vendor/noclip.website/src/gx/gx_enum';
 import { createPassThroughStage } from './defaults';
+import { inlineInputValue } from './graphLiterals';
 import { GRAPH_NODE_SOCKETS } from './types';
 import type {
   CompiledShader,
@@ -321,7 +322,8 @@ class Compiler {
   private emitOrphanRawStages(): void {
     const orphans = this.graph.nodes
       .filter((node) => node.type === 'rawStage' && !this.rawSlots.has(node.id))
-      .sort((a, b) => a.x - b.x || a.id.localeCompare(b.id));
+      // Stage order first: where the layout happens to put a card must not reorder the stages.
+      .sort((a, b) => (groupOf(a) ?? Infinity) - (groupOf(b) ?? Infinity) || a.x - b.x || a.id.localeCompare(b.id));
     if (orphans.length === 0) return;
     this.domain = 'rgb';
     this.memo = new Map();
@@ -368,13 +370,16 @@ class Compiler {
     return this.nodes.get(edge.to.node)?.type === 'rawStage' && (edge.to.socket === 'prev' || edge.to.socket === 'prevAlpha');
   }
 
-  /** Resolves an input socket to an operand, using the socket's default when nothing is wired. */
+  /**
+   * Resolves an input socket to an operand. An unwired socket reads the value typed into the node
+   * (`inputValues`), else the socket's default. Both go through `literal`, so an inline 0.5 or 1 in
+   * the alpha pipeline — which has no free HALF or ONE operand — becomes a konst selection exactly
+   * as a wired "Value" node would.
+   */
   private lowerInput(nodeId: string, socket: string): Operand {
     const edge = this.incoming(nodeId, socket);
     if (edge) return this.lowerEdgeValue(edge, nodeId, socket);
-    const node = this.nodes.get(nodeId)!;
-    const spec = GRAPH_NODE_SOCKETS[node.type].inputs.find((input) => input.name === socket);
-    return this.literal(spec?.default ?? 0);
+    return this.literal(inlineInputValue(this.nodes.get(nodeId)!, socket));
   }
 
   private lowerEdgeValue(edge: GraphEdge, toNode: string, toSocket: string): Operand {
@@ -794,6 +799,11 @@ class Compiler {
     const source = this.nodes.get(edge.from.node);
     if (!source) return null;
     if ((this.consumers.get(source.id) ?? 1) > 1) return null;
+    // Two steps the decompiler drew from two different stages stay two stages: a lone multiply
+    // that is a whole stage of its own, read by the next stage's add, is not that add's lerp.
+    const own = groupOf(this.nodes.get(nodeId)!);
+    const theirs = groupOf(source);
+    if (own !== undefined && theirs !== undefined && own !== theirs) return null;
     if (source.type === 'lerp') return { node: source, kind: 'lerp', inputs: ['a', 'b', 't'] };
     if (source.type === 'multiply') return { node: source, kind: 'multiply', inputs: ['a', 'b'] };
     return null;
@@ -1088,17 +1098,17 @@ class Compiler {
   }
 }
 
+/** `0 | 1 | 2` -> `REG0 | REG1 | REG2`, clamped. */
+function registerOfSlot(slot: number): GX.Register {
+  return (GX.Register.REG0 + Math.max(0, Math.min(2, slot))) as GX.Register;
+}
+
 /**
  * Which original TEV stage a node belongs to, by the id convention the decompiler uses (`s3c`,
  * `s3a`, `s3r`). It is how the colour and alpha halves of one stage find each other again after
  * being compiled through two separate trees. Nodes the editor creates have their own ids and no
  * group, which is right: there is no original stage to line up with.
  */
-/** `0 | 1 | 2` -> `REG0 | REG1 | REG2`, clamped. */
-function registerOfSlot(slot: number): GX.Register {
-  return (GX.Register.REG0 + Math.max(0, Math.min(2, slot))) as GX.Register;
-}
-
 function groupOf(node: GraphNode): number | undefined {
   const match = /^s(\d+)[a-z]+$/.exec(node.id);
   return match ? Number(match[1]) : undefined;

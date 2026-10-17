@@ -237,8 +237,10 @@ indirect bindings agree (konst is two separate fields, so it never conflicts). W
 disagree, one side gets a pass-through — `d = PREV`, everything else zero — which leaves the other
 pipeline's previous-stage register untouched. Pass-throughs count against the 16-stage limit.
 
-`compileShaderGraph` never throws. Unwired inputs take the socket's `default` from
-`GRAPH_NODE_SOCKETS`; nodes that cannot reach the output are `warning` diagnostics; a wire between
+`compileShaderGraph` never throws. Unwired inputs read the node's inline value
+(`inputValues[socket]`, Unreal-style: typed into the node rather than wired from a literal node),
+else the socket's `default` from `GRAPH_NODE_SOCKETS`; in the alpha pipeline 0.5 and 1 come from a
+konst selection, exactly as a wired `value` node does; nodes that cannot reach the output are `warning` diagnostics; a wire between
 the colour and alpha pipelines, a cycle, a sampler the material does not have, and two textures on
 one stage are `error` diagnostics, and an errored compile returns no stages. `usage` reports which
 samplers, texture coordinates, channels, konst colours, registers and indirect stages the shader
@@ -246,12 +248,23 @@ actually touched, so the inspector can grey out the rest.
 
 ### The decompiler, and how it stays exact
 
-`decompileShader` builds one cluster per stage, laid out left to right at `x = 260 * index` with
-colour on the top row and alpha below. Each stage becomes an `add` (or `subtract`) fed by a
-`lerp`, with a `scale` on top when the stage biases, scales or leaves its result unclamped. The
-inputs become shared source nodes: one `texture` per (sampler, coordinate) pair, one
-`vertexColor` per channel, one `constant` per konst selection, one `register` per register the
-material starts with.
+`decompileShader` gives each stage the fewest nodes that say what it does: a lone `multiply`,
+`lerp` or `add` where one covers it, an `add` fed by a `multiply`/`lerp` only when it has to, and a
+`scale` on top when the stage biases, scales or leaves its result unclamped. `ZERO` / `HALF` /
+`ONE` operands are never nodes: they become `inputValues` on the consuming node, so a decompiled
+graph has no `value` cards. Source cards (`texture`, `vertexColor`, `constant`, `register`) are
+shared between a stage's colour and alpha halves but not across stages; after layout a source
+whose readers sit two or more columns apart is copied beside the far ones, and identical cards
+stacked in one column are merged — and the untidied graph is kept if the tidy one would ever
+recompile differently.
+
+Positions come from `layoutShaderGraph(graph, measure?)` (`graphLayout.ts`): a pure, deterministic
+layered layout with the Material node alone at the far right, every wire running left to right,
+colour in the upper band and alpha in the lower one, sources used by both at the seam, columns
+ordered to reduce crossings and lanes kept clear for long wires. The editor's **Auto layout** calls
+it with the real card sizes; comments keep their place. Graphs saved by older builds go through
+`foldLiteralNodes` (`graphLiterals.ts`) when loaded, which turns wired `value` nodes into inline
+values and keeps the author's layout.
 
 `compileShaderGraph(decompileShader(m), m).tevStages` equals `m.tevStages` for every fixture
 material — 16671 of them in the measurement below. Two mechanisms get it there:
@@ -396,12 +409,12 @@ it runs -27..36. Both are exact.
 
 ## Editor
 
-> The same inspector and the same shader-graph dock are also the right-hand and bottom panels of
-> the **Model Studio** (`docs/STUDIO.md`), which drives them over a standalone model archive
-> instead of a track. Both take a `GxMaterialDoc` and a change callback and know nothing about
-> `TrackDocument`, so neither needed a fork; what differs is only who owns the bytes and the undo
-> stack. Material mode's **Open in Model Studio** button, under the viewport overlay, hands the
-> selected material's archive over.
+> The same Details panel and the same shader-graph dock are also the right-hand panel and the
+> lower half of the centre column of the **Model Studio** (`docs/STUDIO.md`), which drives them over
+> a standalone model archive instead of a track. Both take a `GxMaterialDoc` and a change callback
+> and know nothing about `TrackDocument`, so neither needed a fork; what differs is only who owns
+> the bytes and the undo stack. Material mode's **Open in Model Studio** button, in the viewport
+> overlay, hands the selected material's archive over.
 
 Material mode sits next to KMP / Camera / Model / Visual in the top bar. Like every other mode it
 is a hook (`useMaterialMode` in `src/ui/material/MaterialMode.tsx`) that returns a `ModeUi`; the
@@ -415,9 +428,9 @@ would draw.
 | Region | What it is |
 | --- | --- |
 | Left dock | `MaterialOutliner` — the track's BRRES archives → models → materials. |
-| Viewport | Unchanged, plus a top-right overlay with the selection, its mesh count and **Solo**. |
+| Viewport | Unchanged, plus a top-right overlay with the selection, its mesh count, **Solo** and **Open in Model Studio**. |
 | Bottom dock | `ShaderGraphDock` replaces the content browser: **Graph** and **Stages** tabs. |
-| Inspector | `MaterialInspector` — seven sections for the selected material. |
+| Inspector | `MaterialInspector` — the **Details** panel: the material, or whatever is selected in the graph. |
 
 The bottom dock takes over the content browser's slot through `ModeUi.bottomDock`, a function the
 shell calls with the dock's size, collapse flag and resize handlers (`ModeBottomDock` in
@@ -445,7 +458,31 @@ more strongly and fills the inspector and the graph.
 
 ![A material selected](screenshots/material-02-selected.png)
 
-### The inspector
+### The inspector: a Details panel
+
+The inspector works like the Details panel of Unreal's material editor: it shows **whatever is
+selected in the shader graph**, so the right-hand side is never a dump of everything at once.
+
+| Selected in the graph | Details shows |
+| --- | --- |
+| Nothing, or the **Material** output node | The material: its name, a one-line summary, a compact list of its textures, and the Transparency / Lighting / Colours / Surface sections below. |
+| A **Texture** node | That one texture: a big preview, the image picker and its size / format / mips, **Replace…** and **Save PNG**, tiling, sampling, the environment-map switch, placement and its **Advanced** block — then the node's own fields. The whole panel takes a dropped image. |
+| A **Colour** or **Start colour** node | The colour slot it stands for, as a picker, then the node's fields. |
+| A **Vertex colour** node | The lighting it reads (the simple Lighting controls for channel 1), then the node's fields. |
+| Any other node | The node's fields: what it reads, its inline input values, where a step stores its result, a note. |
+| Several nodes | How many, and a list to pick one from. |
+
+A breadcrumb above a node's details (`Material.007 › Texture 2 · lines`) says what is shown, and
+its first crumb goes back to the material. Clicking a row in the overview's texture list selects
+that texture's node in the graph and frames it, so both directions work; a texture no node samples
+opens straight in Details. Clicking an empty spot on the canvas, or `Esc` in the graph, brings the
+material back.
+
+The node half is `GraphNodeDetails` (the graph's own file). The host — `MaterialMode` here,
+`ModelStudio` in the studio — keeps the selection (`ShaderGraphDock`'s `onSelectionChange`), sends
+selection requests back (`selectionRequest`, a key that only grows), and applies a node edited in
+Details by swapping it into the graph through the same `setGraph` path a canvas edit takes: one
+graph-history entry, compiled and previewed live.
 
 **Simple by default, hardware on demand.** A GX material is a pile of fixed-function state, and
 the first version of this panel showed all of it: blend factors, depth comparisons, konst
@@ -456,12 +493,12 @@ opened (`useRemembered`, `localStorage`). Nothing was removed: every raw field i
 away from where it used to be, and the panel is about 45% shorter by default.
 
 Header: the material's name as an editable heading, its model and archive, how many meshes draw
-with it, a one-line summary (`describeMaterial`, e.g. "See-through · vertex-coloured · 2 textures ·
-two-sided.") and a strip of its layer thumbnails.
+with it, and a one-line summary (`describeMaterial`, e.g. "See-through · vertex-coloured · 2
+textures · two-sided.").
 
 | Section | Simple | Behind **Advanced** |
 | --- | --- | --- |
-| **Textures** | Per layer: thumbnail, image picker, **Repeat / Mirror / Clamp**, **Smooth / Pixelated**, tiling scale (U/V), offset (U/V), rotation, an **Environment map** switch, and Replace / Save PNG. Add, remove, reorder. | Palette (and its TLUT slot, for a paletted texture), per-axis wrap, the exact min/mag filters, detail (LOD) bias, sharpening, bias clamp, edge mips, map mode, the reference camera and light, the texgen, and the import encoding — plus, for the section, the indirect stages and matrices. |
+| **Textures** | A compact list — thumbnail, slot, image name, size and format — with add, remove and reorder. A row opens that texture's details: image picker, **Repeat / Mirror / Clamp**, **Smooth / Pixelated**, tiling scale (U/V), offset (U/V), rotation, an **Environment map** switch, and Replace… / Save PNG. | Per texture: palette (and its TLUT slot, for a paletted texture), per-axis wrap, the exact min/mag filters, detail (LOD) bias, sharpening, bias clamp, edge mips, map mode, the reference camera and light, the texgen, and the import encoding. On the list: the indirect stages and matrices. |
 | **Transparency** | One **Opaque / Cutout / Transparent** choice, the cut-off slider when it is cutting, and **hides what is behind** (depth write). | Blend mode, source and destination factors, logic operation, the constant-alpha register, the two-part alpha test, and the depth test / comparison / compare-before-texturing. |
 | **Lighting** | **Lit / Vertex colours / Unlit**, the base colour when the material supplies it, the ambient colour when it is lit. | Both channels in full: material and ambient colour, and for each of the colour and alpha halves the lighting switch, the two sources, falloff, attenuation and the eight light bits. |
 | **Colours** | Only the constants and registers the stages actually read, named **Colour 1..4** and **Start colour 1..3**, each captioned with which stages read it. | All four constants and all three registers, including the ones nothing reads, plus the four swap tables. |
@@ -503,8 +540,8 @@ material back unchanged has to keep working. `applyMaterial` only refuses the de
 
 #### Importing a texture
 
-Every layer card takes a PNG, either through **Import PNG…** or by dropping the file on the card.
-The card's three controls decide how it is encoded:
+A texture's details take a PNG, either through **Replace…** or by dropping the file anywhere on
+them. Three controls under its **Advanced › Import encoding** decide how it is encoded:
 
 - **Format** — CMPR by default (smallest), RGB5A3 when soft alpha matters, RGBA8 for full quality,
   plus the greyscale and 16-bit formats.
@@ -513,8 +550,10 @@ The card's three controls decide how it is encoded:
 
 The image is decoded with `readImageFile`, encoded with `encodeTex0Data` (both already used by
 Visual mode's texture replacement), added to the archive with `addTexture`, and the layer is
-pointed at it. **Export PNG** writes the layer's current texture back out through
+pointed at it. **Save PNG** writes the layer's current texture back out through
 `exportTextureAsPng`.
+
+![A texture node selected: Details shows that texture](screenshots/material-02b-texture-details.png)
 
 ### The shader graph
 
@@ -538,14 +577,14 @@ texture's outputs read **Colour / Alpha**. The names are shared with the inspect
 | **Material** | The output. Its `color` and `alpha` inputs are the last stage's result. There is exactly one, and it cannot be deleted or duplicated. |
 | **Texture** | Binds a layer and a texture-coordinate set to the stage: `TEXC` / `TEXA`. Shows the layer's thumbnail. |
 | **Vertex colour** | What the rasteriser hands the stage: **Vertex colour 1 / 2** (the two lighting channels), **Bump alpha** and **Bump alpha, inverted** (fed by an indirect stage), or **Nothing (black)**. |
-| **Colour** | One of the konst colours K0..K3 (`KONST`). The swatch edits the material's konst colour, so it previews live. Its **Advanced** block picks the exact selection (`colorSel` / `alphaSel`) for the cases the slot cannot name: the eight hardware fractions and the single-channel reads. |
+| **Colour** | One of the konst colours K0..K3 (`KONST`). The swatch edits the material's konst colour, so it previews live. Its Details panel picks the exact selection (`colorSel` / `alphaSel`) for the cases the slot cannot name: the eight hardware fractions and the single-channel reads. |
 | **Register** ("Start colour") | The starting value of C0, C1 or C2. The swatch edits the material's register. |
-| **Value** | The literals 0, 0.5 and 1, which the hardware supplies for free. |
+| **Value** | The literals 0, 0.5 and 1, which the hardware supplies for free. Rarely needed: every unwired input on a step has its own 0 / ½ / 1 switch on the card. Useful to feed one literal into several inputs. |
 | **Multiply** | `a x b` — one stage, as `lerp(0, a, b)`. |
 | **Add** / **Subtract** | `a + b` / `a - b` — the stage's D input plus or minus the rest. |
 | **Lerp** | `lerp(a, b, t)` — exactly one whole TEV stage. |
 | **Scale** | Multiplies by 0.5 / 1 / 2 / 4 with an optional ±0.5 bias and a clamp. Free on a stage. |
-| *(on every step node)* **Store result in** | Behind the card's **Advanced** disclosure: the working slot (the default) or one of the three stored slots. The compiler honours it and keeps the spill allocator off that slot. |
+| *(on every step node)* **Store result in** | In the node's Details panel: the working slot (the default) or one of the three stored slots. The compiler honours it and keeps the spill allocator off that slot. |
 | **Compare** | The TEV compare ops: `(a op b) ? c : 0`, plus `d`. All eight widths (`R8`, `GR16`, `BGR24`, `RGB8`, each `>` and `=`). |
 | **Indirect warp** | Routes an indirect stage into the texture sampled after it. |
 | **Alpha as colour** | An alpha source read into a *colour* input. The only place the two halves meet, and what nearly every character model blends two textures with. Only a source can feed it — a texture, a vertex colour, a constant, a start colour or a stored value — because a colour operand names a place, not another step's result; wire a step into it and the message says to store that step in a slot first. |
@@ -680,6 +719,12 @@ from the restored bytes would mean re-parsing a multi-megabyte BRRES on every `C
 mode keeps a `WeakMap<TrackDocument, docs>` instead and puts the exact document that produced each
 version back.
 
+An *edited* graph drives its material — its compile is written over the stages whenever the two
+differ — so a track undo that changes a material whose graph was edited would be compiled straight
+back over. Such a material therefore drops its graph on undo or redo, and the graph is re-read for
+the restored stages: the stored layout when one was saved for exactly those stages, otherwise a
+fresh decompile. The studio's own undo does the same.
+
 ![Editing the culling, live](screenshots/material-09-cull-draw-nothing.png)
 
 ![And back again after Ctrl+Z](screenshots/material-12-after-undo.png)
@@ -789,7 +834,7 @@ Pure logic is unit tested with no DOM (`npm test`):
 | `src/ui/material/materialOutlinerModel.test.ts` | Archive naming and ordering, the tree, the search, the shared-shader badge, reference keys. |
 | `src/ui/material/graphStore.test.ts` | The stage hash and both storage keys. |
 | `src/lib/gxMaterial/shaderGraph.test.ts` | The retail round trip with a per-family raw-stage ceiling (zero for drivers, karts and objects; 1% for course models), a compile *and* a decompile test per node, and that every "Special step" carries a sentence. |
-| `src/ui/material/MaterialInspector.test.tsx` | The inspector, the outliner, the dock's tab state and the stage table, rendered with `renderToStaticMarkup`: the five simple sections, that the hardware controls really are behind closed disclosures, that only the colours the shader reads are shown, that the preset chips are on the graph tab, that node titles name the thing rather than the register — and the assertion that no raw GX enum identifier reaches the user. |
+| `src/ui/material/MaterialInspector.test.tsx` | The inspector, the outliner, the dock's tab state and the stage table, rendered with `renderToStaticMarkup`: the five simple sections, that Details follows the graph selection (a texture node shows that texture in full, a Colour node its colour, the output node the material, several nodes a count, and ids the graph no longer has fall back to the material), that the hardware controls really are behind closed disclosures, that only the colours the shader reads are shown, that the preset chips are on the graph tab, that node titles name the thing rather than the register — and the assertion that no raw GX enum identifier reaches the user. |
 
 `scripts/probe-refresh-track.js` covers Refresh on its own: it rebuilds twice to measure the noise
 floor, edits a material, rebuilds again and compares the frames, checks the camera ray, the mode,

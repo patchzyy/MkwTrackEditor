@@ -84,6 +84,7 @@ export function InspectorPanel({
   validationCounts: { errorCount: number; warningCount: number };
 }) {
   const selectionCount = selectedEntities.length;
+  const hasModeContent = modeContent !== undefined && modeContent !== null;
   return (
     <aside className="inspector" aria-label="Inspector">
       {inspectorOpen && (
@@ -99,15 +100,19 @@ export function InspectorPanel({
       )}
       <div className="panelHeader">
         <div>
-          <h2>Inspector</h2>
-          <p className="panelSubtle">{selectionCount > 1 ? `${selectionCount} selected` : selected ? entityLabel(selected) : 'Nothing selected'}</p>
+          {/* A mode with its own inspector (Material mode's Details) names its own selection;
+              the KMP selection underneath has nothing to do with what the panel shows. */}
+          <h2>{hasModeContent ? 'Details' : 'Inspector'}</h2>
+          {!hasModeContent && (
+            <p className="panelSubtle">{selectionCount > 1 ? `${selectionCount} selected` : selected ? entityLabel(selected) : 'Nothing selected'}</p>
+          )}
         </div>
         <IconButton size="sm" variant="ghost" icon={<PanelRightClose size={15} />} tooltip="Hide inspector" tooltipSide="left" onClick={onClose} />
       </div>
       <div className="rightSidebarPanels">
         <section className="sidebarPane detailsPane">
           <div className="paneBody">
-            {modeContent !== undefined && modeContent !== null ? (
+            {hasModeContent ? (
               modeContent
             ) : (
               <>

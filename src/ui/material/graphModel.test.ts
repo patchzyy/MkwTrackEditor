@@ -1,25 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import {
   ADDABLE_NODE_TYPES,
-  ADVANCED_NODE_TYPES,
   NODE_SUMMARY,
+  PALETTE_GROUPS,
   addNode,
   autoLayout,
   canConnect,
   compatibleNodeTypes,
   connectEdge,
+  connectedSockets,
   copyNodes,
   createNode,
   deleteNodes,
   duplicateNodes,
+  edgesTouching,
   fitView,
   graphBounds,
+  inlineValue,
   marqueeRect,
+  measureCard,
   moveNodes,
   nodeAtPoint,
   countRawStages,
   nodeCaption,
-  nodePaletteSection,
   nodeSize,
   nodeSpec,
   nodeTitle,
@@ -29,11 +32,13 @@ import {
   pasteNodes,
   removeEdges,
   resolvedMathType,
+  setInputValue,
   snapToGrid,
   socketPosition,
   socketType,
   toGraphPoint,
   toScreenPoint,
+  wheelGesture,
   wireAtPoint,
   wouldCycle,
   zoomAbout,
@@ -314,9 +319,26 @@ describe('pan and zoom', () => {
   it('has no bounds for an empty graph', () => {
     expect(graphBounds(graphOf([]))).toBeNull();
   });
+
+  it('frames just the selection, without blowing one small node up past 100%', () => {
+    const graph = graphOf([texture('a', 0, 0), texture('b', 2000, 800)]);
+    const bounds = graphBounds(graph, ['b'])!;
+    expect(bounds.x).toBe(2000);
+    expect(bounds.width).toBe(nodeSize(graph.nodes[1]).width);
+    expect(graphBounds(graph, ['nobody'])).toBeNull();
+    expect(fitView(bounds, 1600, 900, 48, 1).zoom).toBe(1);
+  });
 });
 
 describe('auto layout', () => {
+  it('measures each card exactly as it is drawn, pins included', () => {
+    const size = measureCard(multiply('m'));
+    expect(size.width).toBe(nodeSize(multiply('m')).width);
+    expect(size.inputs?.b! - size.inputs?.a!).toBe(20);
+    expect(size.outputs?.out).toBe(socketPosition(multiply('m', 0, 0), 'out', 'output')!.y);
+    expect(measureCard(output('o')).width).toBeGreaterThan(size.width);
+  });
+
   it('puts a source in the column just left of what it feeds, not back at the far left', () => {
     // `late` feeds the last node in the chain, so it belongs beside it rather than beside `early`.
     let graph = graphOf([texture('early'), texture('late'), multiply('m1'), multiply('m2'), output('o')]);
@@ -361,6 +383,67 @@ describe('auto layout', () => {
   });
 });
 
+describe('inline values', () => {
+  it('lets a step input hold a value, and nothing else', () => {
+    expect(inlineValue(multiply('m'), 'a')).toBe(1);
+    // A texture's coordinates mean nothing without a wire, and an unwired Material input means
+    // "this half computes nothing" rather than a constant.
+    expect(inlineValue(texture('t'), 'uv')).toBeNull();
+    expect(inlineValue(output('o'), 'alpha')).toBeNull();
+  });
+
+  it('reads the inline value, falling back to the socket default', () => {
+    const lerp: EditorGraphNode = { id: 'l', type: 'lerp', x: 0, y: 0 };
+    expect(inlineValue(lerp, 't')).toBe(0.5);
+    const graph = setInputValue(graphOf([lerp]), 'l', 't', 1);
+    expect(inlineValue(graph.nodes[0], 't')).toBe(1);
+    expect(graph.nodes[0].inputValues).toEqual({ t: 1 });
+    // Setting it back to the default leaves no entry behind.
+    expect(setInputValue(graph, 'l', 't', 0.5).nodes[0].inputValues).toBeUndefined();
+    // The other inputs are untouched and still read their defaults.
+    expect(inlineValue(graph.nodes[0], 'a')).toBe(0);
+  });
+
+  it('reports which sockets have wires, so a card can draw its pins filled', () => {
+    const graph = connectEdge(graphOf([texture('a'), output('o')]), { node: 'a', socket: 'rgb', side: 'output' }, { node: 'o', socket: 'color', side: 'input' });
+    const wired = connectedSockets(graph);
+    expect(wired.has('a|rgb|output')).toBe(true);
+    expect(wired.has('o|color|input')).toBe(true);
+    expect(wired.has('o|alpha|input')).toBe(false);
+    expect(edgesTouching(graph, ['o'])).toHaveLength(1);
+    expect(edgesTouching(graph, ['nobody'])).toHaveLength(0);
+  });
+});
+
+describe('the wheel', () => {
+  const event = (deltaY: number, extra: Partial<{ deltaX: number; deltaMode: number; ctrlKey: boolean }> = {}) =>
+    ({ deltaX: 0, deltaMode: 0, ctrlKey: false, deltaY, ...extra });
+
+  it('zooms on a mouse wheel notch, in towards the cursor for a notch up', () => {
+    const up = wheelGesture(event(-100));
+    const down = wheelGesture(event(120));
+    expect(up.kind).toBe('zoom');
+    expect(down.kind).toBe('zoom');
+    expect(up.kind === 'zoom' && up.factor).toBeGreaterThan(1);
+    expect(down.kind === 'zoom' && down.factor).toBeLessThan(1);
+    expect(wheelGesture(event(3, { deltaMode: 1 })).kind).toBe('zoom');
+  });
+
+  it('pans on a trackpad two-finger scroll', () => {
+    expect(wheelGesture(event(4.5))).toEqual({ kind: 'pan', dx: 0, dy: 4.5 });
+    expect(wheelGesture(event(12, { deltaX: 30 }))).toEqual({ kind: 'pan', dx: 30, dy: 12 });
+    // A trackpad's occasional big integer stays a pan while the gesture is still going.
+    expect(wheelGesture(event(100), true).kind).toBe('pan');
+  });
+
+  it('zooms on a pinch, which arrives as a ctrl+wheel, without jumping on a ctrl+wheel notch', () => {
+    const pinch = wheelGesture(event(-6, { ctrlKey: true }));
+    expect(pinch.kind === 'zoom' && pinch.factor).toBeGreaterThan(1);
+    const notch = wheelGesture(event(100, { ctrlKey: true }));
+    expect(notch.kind === 'zoom' && notch.factor).toBeGreaterThanOrEqual(0.8);
+  });
+});
+
 describe('raw stages', () => {
   it('has ordering-only inputs, one per pipeline, and both outputs', () => {
     const spec = nodeSpec('rawStage');
@@ -396,15 +479,15 @@ describe('the new nodes', () => {
   it('offers them in the palette, with the hardware ones under Advanced', () => {
     expect(ADDABLE_NODE_TYPES).toContain('alphaAsColor');
     expect(ADDABLE_NODE_TYPES).toContain('storedValue');
-    expect(nodePaletteSection('alphaAsColor')).toBe('advanced');
-    expect(nodePaletteSection('storedValue')).toBe('advanced');
-    expect(nodePaletteSection('compare')).toBe('advanced');
-    expect(nodePaletteSection('indirectWarp')).toBe('advanced');
+    const groupOf = (type: string) => PALETTE_GROUPS.find((group) => group.types.includes(type as never))?.title;
+    for (const type of ['alphaAsColor', 'storedValue', 'compare', 'indirectWarp']) expect(groupOf(type)).toBe('Advanced');
     // The everyday half stays the everyday half.
-    for (const type of ['texture', 'vertexColor', 'constant', 'multiply', 'lerp', 'scale'] as const) {
-      expect(nodePaletteSection(type)).toBe('basic');
-    }
-    expect([...ADVANCED_NODE_TYPES]).toHaveLength(4);
+    for (const type of ['texture', 'vertexColor', 'constant']) expect(groupOf(type)).toBe('Inputs');
+    for (const type of ['multiply', 'lerp', 'scale']) expect(groupOf(type)).toBe('Maths');
+    // Every addable type is under exactly one heading, and the two that cannot be added are under none.
+    expect(new Set(ADDABLE_NODE_TYPES).size).toBe(ADDABLE_NODE_TYPES.length);
+    expect(ADDABLE_NODE_TYPES).not.toContain('output');
+    expect(ADDABLE_NODE_TYPES).not.toContain('rawStage');
   });
 
   it('names them in words, and explains each in one line', () => {
@@ -418,10 +501,11 @@ describe('the new nodes', () => {
     }
   });
 
-  it('captions a vertex colour with the source it rasterises', () => {
-    expect(nodeCaption({ id: 'v', type: 'vertexColor', channel: 0, x: 0, y: 0 }, null)).toBe('Vertex colour 1');
-    expect(nodeCaption({ id: 'v', type: 'vertexColor', channel: 5, x: 0, y: 0 }, null)).toBe('Bump alpha');
-    expect(nodeCaption({ id: 'v', type: 'vertexColor', channel: 7, x: 0, y: 0 }, null)).toBe('Nothing (black)');
+  it('names a vertex colour after the source it rasterises', () => {
+    expect(nodeTitle({ id: 'v', type: 'vertexColor', channel: 0, x: 0, y: 0 })).toBe('Vertex colour 1');
+    expect(nodeTitle({ id: 'v', type: 'vertexColor', channel: 5, x: 0, y: 0 })).toBe('Bump alpha');
+    expect(nodeTitle({ id: 'v', type: 'vertexColor', channel: 7, x: 0, y: 0 })).toBe('Nothing (black)');
+    expect(nodeCaption({ id: 'v', type: 'vertexColor', channel: 0, x: 0, y: 0 }, null)).toBeNull();
   });
 
   it('starts a new one on the sensible default', () => {
@@ -475,7 +559,7 @@ describe('graphs saved by an older build', () => {
       expect(nodeSpec(to.type).inputs.some((socket) => socket.name === edge.to.socket)).toBe(true);
     }
     // A `vertexColor` saved as channel 1 still means the second lighting channel.
-    expect(nodeCaption(legacy.nodes[1], null)).toBe('Vertex colour 2');
+    expect(nodeTitle(legacy.nodes[1])).toBe('Vertex colour 2');
   });
 
   it('counts its read-only cards, which is what decides whether re-reading gains anything', () => {

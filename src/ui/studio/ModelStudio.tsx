@@ -8,6 +8,7 @@ import {
   Focus,
   Grid3x3,
   Library,
+  Lightbulb,
   Redo2,
   RotateCw,
   Sparkles,
@@ -15,13 +16,15 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent } from 'react';
 import type { GxMaterialSummary } from '../../lib/gxMaterial';
-import { Button, EmptyState, IconButton, LoadingOverlay, MenuSurface, Toggle, Tooltip, useToast, type MenuSection } from '../components';
+import { Button, EmptyState, IconButton, LoadingOverlay, MenuSurface, Tooltip, useToast, type MenuSection } from '../components';
 import { downloadBytes } from '../downloadFile';
 import { MaterialInspector } from '../material/MaterialInspector';
 import type { MaterialDockTab } from '../material/MaterialMode';
 import { ShaderGraphDock } from '../material/ShaderGraphDock';
-import { emptyGraph } from '../material/graphModel';
+import { emptyGraph, type EditorGraphNode } from '../material/graphModel';
+import { materialRefKey } from '../material/materialOutlinerModel';
 import { StudioOutliner } from './StudioOutliner';
+import { StudioTips } from './StudioTips';
 import { StudioTransportBar } from './StudioTransportBar';
 import { StudioViewport, type StudioViewportApi } from './StudioViewport';
 import { exportStudioBrres, exportStudioDocument, describeStudioDocument } from './studioDocument';
@@ -39,27 +42,65 @@ export interface ModelStudioProps {
   initialOpen?: { fileName: string; bytes: Uint8Array } | null;
 }
 
+/** The graph never gets smaller than this, and the preview above it never gets smaller than that. */
 const DOCK_MIN_HEIGHT = 180;
-const DOCK_MAX_HEIGHT = 620;
+const VIEWPORT_MIN_HEIGHT = 180;
 const DOCK_COLLAPSED_HEIGHT = 34;
+/** The share of the centre column the graph starts with: Unreal's graph is the main canvas. */
+const DOCK_DEFAULT_SHARE = 0.5;
+const DETAILS_MIN_WIDTH = 280;
+const DETAILS_MAX_WIDTH = 560;
+const DETAILS_DEFAULT_WIDTH = 340;
+const DOCK_HEIGHT_KEY = 'mkw.studio.graphHeight';
+const DETAILS_WIDTH_KEY = 'mkw.studio.detailsWidth';
+const TIPS_SEEN_KEY = 'mkw.studio.tipsSeen';
+
+/** Half the centre column, before it has been measured: the window minus header, status and transport. */
+function defaultDockHeight(): number {
+  const height = typeof window === 'undefined' ? 900 : window.innerHeight;
+  return Math.max(DOCK_MIN_HEIGHT, Math.round((height - 110) * DOCK_DEFAULT_SHARE));
+}
+
+function readStoredNumber(key: string): number | null {
+  try {
+    const value = Number(window.localStorage.getItem(key));
+    return Number.isFinite(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeValue(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Without storage the layout just starts at its defaults next time.
+  }
+}
 
 /**
  * The Model Studio: a full-window workspace over the track editor for looking at a model, playing
  * its animations and authoring its materials.
  *
- * The shape is the one Unreal uses for an asset editor — the Skeletal Mesh editor, the Material
- * editor — rather than a fifth viewport mode: its own window, its own preview viewport with its
- * own camera, an asset outliner on the left, a details panel on the right, an animation transport
- * under the preview and the shader graph in the bottom dock. It works with no track loaded, and
- * when it was opened *from* a track its edits go straight back into that track's archive.
+ * The shape is Unreal's Material editor with a mesh instead of a material ball: its own window,
+ * an asset outliner on the left, the preview (with its animation transport) on top of the centre
+ * column and the shader graph — the main canvas — under it, split by a draggable bar, and a
+ * contextual **Details** panel on the right that shows whatever is selected in the graph. It works
+ * with no track loaded, and when it was opened *from* a track its edits go straight back into that
+ * track's archive.
  */
 export function ModelStudio({ onClose, trackBridge, onSaveToAssets, initialOpen = null }: ModelStudioProps) {
   const toast = useToast();
   const session = useStudioSession({ toast, trackBridge });
   const [dockOpen, setDockOpen] = useState(true);
-  const [dockHeight, setDockHeight] = useState(260);
+  const centerRef = useRef<HTMLDivElement | null>(null);
+  const [dockHeight, setDockHeight] = useState(() => readStoredNumber(DOCK_HEIGHT_KEY) ?? defaultDockHeight());
   const [dockResizing, setDockResizing] = useState(false);
   const [dockTab, setDockTab] = useState<MaterialDockTab>('graph');
+  const [detailsWidth, setDetailsWidth] = useState(() => readStoredNumber(DETAILS_WIDTH_KEY) ?? DETAILS_DEFAULT_WIDTH);
+  const [detailsResizing, setDetailsResizing] = useState(false);
+  const [tipsOpen, setTipsOpen] = useState(false);
+  const [tipsSeen, setTipsSeen] = useState(() => readStoredNumber(TIPS_SEEN_KEY) !== null);
   const [dragTarget, setDragTarget] = useState(false);
   const viewportApiRef = useRef<StudioViewportApi | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -83,13 +124,24 @@ export function ModelStudio({ onClose, trackBridge, onSaveToAssets, initialOpen 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      const typing = target !== null && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+      const typing = target !== null && (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable);
+      // The graph has keys of its own: Escape clears its selection (and leaves its fullscreen, its
+      // palette, its help) and Ctrl+Z / Ctrl+Y step its own history. This listener runs first, in
+      // the capture phase, so it has to stand aside for them rather than close the studio or undo
+      // twice.
+      const inGraph = target instanceof Element && target.closest('.materialDock') !== null;
       if (event.key === 'Escape' && !typing) {
+        if (tipsOpen) {
+          event.preventDefault();
+          setTipsOpen(false);
+          return;
+        }
+        if (inGraph || document.querySelector('.materialDock--fullscreen, .graphPalette, .graphHelp, .uiMenu, .uiPopover')) return;
         event.preventDefault();
         onClose();
         return;
       }
-      if (!(event.ctrlKey || event.metaKey) || typing) return;
+      if (!(event.ctrlKey || event.metaKey) || typing || inGraph) return;
       if (event.key === 'z' || event.key === 'Z') {
         event.preventDefault();
         if (event.shiftKey) session.redo();
@@ -101,7 +153,41 @@ export function ModelStudio({ onClose, trackBridge, onSaveToAssets, initialOpen 
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [onClose, session]);
+  }, [onClose, session, tipsOpen]);
+
+  // ------------------------------------------------------------------ graph selection
+
+  // What is selected in the shader graph decides what the Details panel shows. The graph owns the
+  // selection and reports it; a request goes the other way when Details wants a node selected (a
+  // texture row clicked in the overview). The key only ever grows, so every request is a new one.
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [selectionRequest, setSelectionRequest] = useState<{ nodeIds: string[]; key: number } | null>(null);
+  const selectionKeyRef = useRef(0);
+  const materialKey = session.selectedRef ? materialRefKey(session.selectedRef) : '';
+  useEffect(() => {
+    setSelectedNodeIds([]);
+    setSelectionRequest(null);
+  }, [materialKey]);
+
+  const requestNodeSelection = useCallback((nodeIds: string[]) => {
+    setSelectedNodeIds(nodeIds);
+    selectionKeyRef.current += 1;
+    setSelectionRequest({ nodeIds, key: selectionKeyRef.current });
+    if (nodeIds.length > 0) {
+      setDockOpen(true);
+      setDockTab('graph');
+    }
+  }, []);
+
+  const { graph: sessionGraph, setGraph: setSessionGraph } = session;
+  /** A node edited in Details: one graph edit, recorded for undo and previewed like any other. */
+  const changeNode = useCallback(
+    (next: EditorGraphNode) => {
+      if (!sessionGraph) return;
+      setSessionGraph({ ...sessionGraph, nodes: sessionGraph.nodes.map((node) => (node.id === next.id ? next : node)) });
+    },
+    [sessionGraph, setSessionGraph],
+  );
 
   // ------------------------------------------------------------------ dev hook
 
@@ -110,6 +196,10 @@ export function ModelStudio({ onClose, trackBridge, onSaveToAssets, initialOpen 
   // transport and sample the rendered pixels, and nothing the product depends on.
   const sessionRef = useRef(session);
   sessionRef.current = session;
+  const selectedNodeIdsRef = useRef(selectedNodeIds);
+  selectedNodeIdsRef.current = selectedNodeIds;
+  const requestNodeSelectionRef = useRef(requestNodeSelection);
+  requestNodeSelectionRef.current = requestNodeSelection;
   useEffect(() => {
     if (!import.meta.env.DEV) return;
     const hook = {
@@ -176,6 +266,9 @@ export function ModelStudio({ onClose, trackBridge, onSaveToAssets, initialOpen 
             };
       },
       rawStagesConvertible: () => sessionRef.current.rawStagesConvertible,
+      /** The graph nodes the Details panel is showing, and a way to select some the way Details does. */
+      selectedNodes: () => selectedNodeIdsRef.current,
+      selectNodes: (nodeIds: string[]) => requestNodeSelectionRef.current(nodeIds),
       convertRawStages: () => sessionRef.current.convertRawStages(),
       setGraphNode: (nodeId: string, patch: Record<string, unknown>) => {
         const graph = sessionRef.current.graph;
@@ -227,26 +320,92 @@ export function ModelStudio({ onClose, trackBridge, onSaveToAssets, initialOpen 
 
   // ------------------------------------------------------------------ dock resize
 
+  /** The tallest the graph may be: whatever still leaves the preview and its transport usable. */
+  const maxDockHeight = useCallback(() => {
+    const center = centerRef.current;
+    if (!center) return Number.POSITIVE_INFINITY;
+    const transport = center.querySelector('.studioTransport')?.getBoundingClientRect().height ?? 40;
+    return Math.max(DOCK_MIN_HEIGHT, Math.floor(center.clientHeight - transport - VIEWPORT_MIN_HEIGHT));
+  }, []);
+
   const beginDockResize = useCallback(
     (event: React.PointerEvent<HTMLElement>) => {
       event.preventDefault();
       const startY = event.clientY;
       const startHeight = dockHeight;
+      const limit = maxDockHeight();
+      let latest = startHeight;
       setDockResizing(true);
       const move = (moveEvent: PointerEvent) => {
-        const next = Math.min(DOCK_MAX_HEIGHT, Math.max(DOCK_MIN_HEIGHT, startHeight - (moveEvent.clientY - startY)));
-        setDockHeight(next);
+        latest = Math.round(Math.min(limit, Math.max(DOCK_MIN_HEIGHT, startHeight - (moveEvent.clientY - startY))));
+        setDockHeight(latest);
       };
       const up = () => {
         setDockResizing(false);
+        storeValue(DOCK_HEIGHT_KEY, String(latest));
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', up);
       };
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', up);
     },
-    [dockHeight],
+    [dockHeight, maxDockHeight],
   );
+
+  const resetDockHeight = useCallback(() => {
+    const center = centerRef.current;
+    const next = center ? Math.round(center.clientHeight * DOCK_DEFAULT_SHARE) : defaultDockHeight();
+    const clamped = Math.min(Math.max(DOCK_MIN_HEIGHT, next), maxDockHeight());
+    setDockHeight(clamped);
+    storeValue(DOCK_HEIGHT_KEY, String(clamped));
+  }, [maxDockHeight]);
+
+  // With nothing remembered, the graph starts at half the measured column (the first render could
+  // only estimate it from the window). A height remembered from a taller window must not push the
+  // preview off the screen in this one.
+  useEffect(() => {
+    const center = centerRef.current;
+    if (!center) return;
+    if (readStoredNumber(DOCK_HEIGHT_KEY) === null) {
+      setDockHeight(Math.max(DOCK_MIN_HEIGHT, Math.round(center.clientHeight * DOCK_DEFAULT_SHARE)));
+    }
+    const clamp = () => setDockHeight((current) => Math.min(current, maxDockHeight()));
+    clamp();
+    const observer = new ResizeObserver(clamp);
+    observer.observe(center);
+    return () => observer.disconnect();
+  }, [maxDockHeight]);
+
+  const beginDetailsResize = useCallback(
+    (event: React.PointerEvent<HTMLElement>) => {
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = detailsWidth;
+      let latest = startWidth;
+      setDetailsResizing(true);
+      const move = (moveEvent: PointerEvent) => {
+        latest = Math.round(Math.min(DETAILS_MAX_WIDTH, Math.max(DETAILS_MIN_WIDTH, startWidth - (moveEvent.clientX - startX))));
+        setDetailsWidth(latest);
+      };
+      const up = () => {
+        setDetailsResizing(false);
+        storeValue(DETAILS_WIDTH_KEY, String(latest));
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    },
+    [detailsWidth],
+  );
+
+  const toggleTips = useCallback(() => {
+    setTipsOpen((open) => !open);
+    if (!tipsSeen) {
+      setTipsSeen(true);
+      storeValue(TIPS_SEEN_KEY, '1');
+    }
+  }, [tipsSeen]);
 
   // ------------------------------------------------------------------ file actions
 
@@ -347,6 +506,22 @@ export function ModelStudio({ onClose, trackBridge, onSaveToAssets, initialOpen 
     void openFiles(event.dataTransfer?.files ?? null);
   }
 
+  const renderToggle = (key: 'textures' | 'lighting' | 'vertexColors' | 'wireframe', label: string, tooltip: string) => {
+    const on = session.renderSettings[key];
+    return (
+      <Tooltip label={tooltip} side="bottom">
+        <button
+          type="button"
+          className={on ? 'studioViewChip is-on' : 'studioViewChip'}
+          aria-pressed={on}
+          onClick={() => session.setRenderSettings({ ...session.renderSettings, [key]: !on })}
+        >
+          {label}
+        </button>
+      </Tooltip>
+    );
+  };
+
   return (
     <div
       className={`studioRoot${dragTarget ? ' is-dragTarget' : ''}`}
@@ -370,76 +545,102 @@ export function ModelStudio({ onClose, trackBridge, onSaveToAssets, initialOpen 
         <span className="studioHeaderTitle">
           <Boxes size={15} aria-hidden="true" />
           <strong>{title}</strong>
+          {session.doc?.dirty && (
+            <span className="studioHeaderDirty" title="Edited since it was opened">
+              Edited
+            </span>
+          )}
           <span className="studioHeaderSubtitle">{subtitle}</span>
         </span>
         <span className="studioHeaderSpacer" />
-        <IconButton
-          tooltip="Undo"
-          shortcut="Ctrl+Z"
-          size="sm"
-          icon={<Undo2 size={14} />}
-          disabled={session.historyState.undo === 0}
-          onClick={session.undo}
-        />
-        <IconButton
-          tooltip="Redo"
-          shortcut="Ctrl+Y"
-          size="sm"
-          icon={<Redo2 size={14} />}
-          disabled={session.historyState.redo === 0}
-          onClick={session.redo}
-        />
-        <Button icon={<FolderOpen size={14} />} size="sm" onClick={() => fileInputRef.current?.click()} tooltip="Open a .brres, .szs or .u8 model archive">
-          Open model
-        </Button>
-        <Button
-          ref={recentTriggerRef}
-          icon={<Clock size={14} />}
-          size="sm"
-          active={recentOpen}
-          disabled={session.recents.length === 0}
-          disabledReason="Nothing opened in the studio yet"
-          aria-haspopup="menu"
-          aria-expanded={recentOpen}
-          tooltip="Files opened in the studio before, kept in this browser"
-          onClick={() => setRecentOpen((value) => !value)}
-        >
-          Recent
-          <ChevronDown size={12} className="uiButtonChevron" />
-        </Button>
-        {recentOpen && recentAnchor && (
-          <MenuSurface
-            label="Recent studio files"
-            anchor={recentAnchor}
-            sections={recentSections}
-            onClose={() => setRecentOpen(false)}
-            minWidth={240}
-          />
-        )}
-        <Button icon={<Sparkles size={14} />} size="sm" onClick={() => void session.openDemo()} tooltip="Load the bundled Funky Kong and Flame Runner">
-          Demo character
-        </Button>
-        {onSaveToAssets && (
-          <Button
-            icon={<Library size={14} />}
+        <span className="studioHeaderGroup">
+          <IconButton
+            tooltip="Undo"
+            shortcut="Ctrl+Z"
             size="sm"
-            disabled={session.doc === null}
-            onClick={() => void saveToAssets()}
-            tooltip="Keep this model in My Assets so it can be placed in a track"
-          >
-            Save to My Assets
+            icon={<Undo2 size={14} />}
+            disabled={session.historyState.undo === 0}
+            onClick={session.undo}
+          />
+          <IconButton
+            tooltip="Redo"
+            shortcut="Ctrl+Y"
+            size="sm"
+            icon={<Redo2 size={14} />}
+            disabled={session.historyState.redo === 0}
+            onClick={session.redo}
+          />
+        </span>
+        <span className="studioHeaderDivider" aria-hidden="true" />
+        <span className="studioHeaderGroup">
+          <Button icon={<FolderOpen size={14} />} size="sm" onClick={() => fileInputRef.current?.click()} tooltip="Open a .brres, .szs or .u8 model archive — or drop one anywhere">
+            Open model
           </Button>
-        )}
-        <Button
-          icon={<Download size={14} />}
-          size="sm"
-          variant="primary"
-          disabled={session.doc === null}
-          onClick={exportDocument}
-          tooltip={session.doc?.kind === 'brres' ? 'Download this .brres' : 'Download the whole archive'}
-        >
-          Export
-        </Button>
+          <Button
+            ref={recentTriggerRef}
+            icon={<Clock size={14} />}
+            size="sm"
+            active={recentOpen}
+            disabled={session.recents.length === 0}
+            disabledReason="Nothing opened in the studio yet"
+            aria-haspopup="menu"
+            aria-expanded={recentOpen}
+            tooltip="Files opened in the studio before, kept in this browser"
+            onClick={() => setRecentOpen((value) => !value)}
+          >
+            Recent
+            <ChevronDown size={12} className="uiButtonChevron" />
+          </Button>
+          {recentOpen && recentAnchor && (
+            <MenuSurface
+              label="Recent studio files"
+              anchor={recentAnchor}
+              sections={recentSections}
+              onClose={() => setRecentOpen(false)}
+              minWidth={240}
+            />
+          )}
+          <Button icon={<Sparkles size={14} />} size="sm" onClick={() => void session.openDemo()} tooltip="Load the bundled Funky Kong and Flame Runner">
+            Demo character
+          </Button>
+        </span>
+        <span className="studioHeaderDivider" aria-hidden="true" />
+        <span className="studioHeaderGroup">
+          <Button
+            icon={<Lightbulb size={14} />}
+            size="sm"
+            variant="ghost"
+            active={tipsOpen}
+            className={tipsSeen ? undefined : 'studioTipsTrigger is-new'}
+            aria-haspopup="dialog"
+            aria-expanded={tipsOpen}
+            tooltip="How the studio works, in a minute"
+            onClick={toggleTips}
+          >
+            Tips
+          </Button>
+          {onSaveToAssets && (
+            <Button
+              icon={<Library size={14} />}
+              size="sm"
+              disabled={session.doc === null}
+              onClick={() => void saveToAssets()}
+              tooltip="Keep this model in My Assets so it can be placed in a track"
+            >
+              Save to My Assets
+            </Button>
+          )}
+          <Button
+            icon={<Download size={14} />}
+            size="sm"
+            variant="primary"
+            disabled={session.doc === null}
+            onClick={exportDocument}
+            tooltip={session.doc?.kind === 'brres' ? 'Download this .brres' : 'Download the whole archive'}
+          >
+            Export
+          </Button>
+        </span>
         <input
           ref={fileInputRef}
           type="file"
@@ -453,7 +654,9 @@ export function ModelStudio({ onClose, trackBridge, onSaveToAssets, initialOpen 
         />
       </header>
 
-      <div className="studioBody">
+      {tipsOpen && <StudioTips onClose={() => setTipsOpen(false)} />}
+
+      <div className="studioBody" style={{ gridTemplateColumns: `var(--studio-outliner-width) minmax(0, 1fr) ${detailsWidth}px` }}>
         <StudioOutliner
           tree={session.tree}
           query={session.query}
@@ -468,7 +671,7 @@ export function ModelStudio({ onClose, trackBridge, onSaveToAssets, initialOpen 
           hasDocument={session.doc !== null}
         />
 
-        <div className="studioCenter">
+        <div className="studioCenter" ref={centerRef}>
           <StudioViewport
             frameRequest={session.frameRequest}
             turntable={session.renderSettings.turntable}
@@ -488,67 +691,55 @@ export function ModelStudio({ onClose, trackBridge, onSaveToAssets, initialOpen 
             onHoverMesh={session.setHoveredMesh}
             onStatus={session.setStatus}
             overlay={
-              <div className="studioViewOverlay">
-                <div className="studioViewOverlayRow">
-                  <Tooltip label="Frame the model (F)" side="left">
-                    <span>
-                      <IconButton
-                        tooltip={session.selectedMeshes.length > 0 ? 'Frame the selected material' : 'Frame the model'}
-                        shortcut="F"
-                        size="sm"
-                        icon={<Focus size={13} />}
-                        onClick={() => {
-                          const mesh = session.selectedMeshes[0];
-                          if (mesh) viewportApiRef.current?.frameMesh(mesh);
-                          else viewportApiRef.current?.frameAll();
-                        }}
-                      />
-                    </span>
-                  </Tooltip>
+              <>
+                <div className="studioViewToolbar" role="toolbar" aria-label="Preview">
                   <IconButton
-                    tooltip="Turntable"
+                    tooltip={session.selectedMeshes.length > 0 ? 'Frame the selected material' : 'Frame the model'}
+                    tooltipSide="bottom"
+                    shortcut="F"
                     size="sm"
+                    variant="ghost"
+                    icon={<Focus size={13} />}
+                    onClick={() => {
+                      const mesh = session.selectedMeshes[0];
+                      if (mesh) viewportApiRef.current?.frameMesh(mesh);
+                      else viewportApiRef.current?.frameAll();
+                    }}
+                  />
+                  <IconButton
+                    tooltip="Turntable: spin the model slowly"
+                    tooltipSide="bottom"
+                    size="sm"
+                    variant="ghost"
                     icon={<RotateCw size={13} />}
                     active={session.renderSettings.turntable}
                     onClick={() => session.setRenderSettings({ ...session.renderSettings, turntable: !session.renderSettings.turntable })}
                   />
                   <IconButton
                     tooltip="Ground grid"
+                    tooltipSide="bottom"
                     size="sm"
+                    variant="ghost"
                     icon={<Grid3x3 size={13} />}
                     active={session.renderSettings.grid}
                     onClick={() => session.setRenderSettings({ ...session.renderSettings, grid: !session.renderSettings.grid })}
                   />
-                </div>
-                <div className="studioViewOverlayToggles">
-                  <Toggle
-                    label="Textures"
-                    checked={session.renderSettings.textures}
-                    onChange={(textures) => session.setRenderSettings({ ...session.renderSettings, textures })}
-                  />
-                  <Toggle
-                    label="Lighting"
-                    checked={session.renderSettings.lighting}
-                    onChange={(lighting) => session.setRenderSettings({ ...session.renderSettings, lighting })}
-                  />
-                  <Toggle
-                    label="Vertex colours"
-                    checked={session.renderSettings.vertexColors}
-                    onChange={(vertexColors) => session.setRenderSettings({ ...session.renderSettings, vertexColors })}
-                  />
-                  <Toggle
-                    label="Wireframe"
-                    checked={session.renderSettings.wireframe}
-                    onChange={(wireframe) => session.setRenderSettings({ ...session.renderSettings, wireframe })}
-                  />
+                  <span className="studioViewToolbarDivider" aria-hidden="true" />
+                  {renderToggle('textures', 'Textures', 'Draw the textures, or flat surfaces without them')}
+                  {renderToggle('lighting', 'Lighting', "Light the model with the studio's three-point rig")}
+                  {renderToggle('vertexColors', 'Vertex colours', "Use the mesh's painted vertex colours")}
+                  {renderToggle('wireframe', 'Wireframe', 'Draw the triangle edges over the model')}
                 </div>
                 {session.selectedRef && (
-                  <p className="studioViewOverlayHint">
-                    {session.selectedRef.materialName} · {session.selectedMeshes.length} mesh
-                    {session.selectedMeshes.length === 1 ? '' : 'es'}
+                  <p className="studioViewSelection">
+                    <strong>{session.selectedRef.materialName}</strong>
+                    {session.selectedMeshes.length} mesh{session.selectedMeshes.length === 1 ? '' : 'es'}
                   </p>
                 )}
-              </div>
+                <p className="studioViewNavHint" aria-hidden="true">
+                  Drag to orbit · right-drag to pan · scroll to zoom · F to frame · click to pick
+                </p>
+              </>
             }
           />
 
@@ -559,23 +750,13 @@ export function ModelStudio({ onClose, trackBridge, onSaveToAssets, initialOpen 
             active={session.activeAnimations}
           />
 
-          <div
-            className={dockResizing ? 'studioDockHandle isActive' : 'studioDockHandle'}
-            role="separator"
-            aria-orientation="horizontal"
-            aria-label="Resize the shader panel"
-            title="Drag to resize · double-click to reset"
-            onPointerDown={beginDockResize}
-            onDoubleClick={() => setDockHeight(260)}
-          />
-
           <ShaderGraphDock
             open={dockOpen}
             height={dockHeight}
             collapsedHeight={DOCK_COLLAPSED_HEIGHT}
             resizing={dockResizing}
             onBeginResize={beginDockResize}
-            onResetSize={() => setDockHeight(260)}
+            onResetSize={resetDockHeight}
             onToggleOpen={() => setDockOpen((value) => !value)}
             tab={dockTab}
             onChangeTab={setDockTab}
@@ -598,38 +779,61 @@ export function ModelStudio({ onClose, trackBridge, onSaveToAssets, initialOpen 
             onApplyPreset={session.applyPreset}
             onAutoLayout={session.runAutoLayout}
             onChangeDoc={session.updateMaterial}
+            onSelectionChange={setSelectedNodeIds}
+            selectionRequest={selectionRequest}
           />
         </div>
 
-        <div className="studioInspector">
-          {session.doc === null ? (
-            <EmptyState
-              icon={<Boxes size={22} />}
-              title="Nothing open"
-              description="Open a model archive or load the demo character to start editing its materials."
-            />
-          ) : (
-            <MaterialInspector
-              materialRef={session.selectedRef}
-              doc={session.materialDoc}
-              issues={issues}
-              summary={materialSummary}
-              textures={session.materialSummary?.textures ?? []}
-              archivePath={session.selectedRef?.archivePath ?? ''}
-              archiveBytes={archiveBytes}
-              meshCount={session.selectedMeshes.length}
-              onChange={session.updateMaterial}
-              onImportTexture={session.importTexture}
-              hasTrack
-            />
-          )}
-        </div>
+        <aside className="studioDetails" aria-label="Details">
+          <div
+            className={detailsResizing ? 'studioDetailsHandle isActive' : 'studioDetailsHandle'}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize the details panel"
+            title="Drag to resize · double-click to reset"
+            onPointerDown={beginDetailsResize}
+            onDoubleClick={() => {
+              setDetailsWidth(DETAILS_DEFAULT_WIDTH);
+              storeValue(DETAILS_WIDTH_KEY, String(DETAILS_DEFAULT_WIDTH));
+            }}
+          />
+          <header className="placeAssetsHeader studioPanelHeader">
+            <h2>Details</h2>
+          </header>
+          <div className="studioDetailsBody">
+            {session.doc === null ? (
+              <EmptyState
+                icon={<Boxes size={22} />}
+                title="Nothing open"
+                description="Open a model archive or load the demo character to start editing its materials."
+              />
+            ) : (
+              <MaterialInspector
+                materialRef={session.selectedRef}
+                doc={session.materialDoc}
+                issues={issues}
+                summary={materialSummary}
+                textures={session.materialSummary?.textures ?? []}
+                archivePath={session.selectedRef?.archivePath ?? ''}
+                archiveBytes={archiveBytes}
+                meshCount={session.selectedMeshes.length}
+                onChange={session.updateMaterial}
+                onImportTexture={session.importTexture}
+                hasTrack
+                graph={session.graph}
+                selectedNodeIds={selectedNodeIds}
+                onSelectNodes={requestNodeSelection}
+                onChangeNode={changeNode}
+              />
+            )}
+          </div>
+        </aside>
       </div>
 
       <div className="studioStatusBar" role="status">
-        <span>{session.status}</span>
+        <span className="studioStatusText">{session.status}</span>
         <span className="studioStatusSpacer" />
-        {session.doc && <span className="studioStatusHint">Left-drag orbits · right-drag pans · wheel zooms · F frames · click selects</span>}
+        {trackBridge && <span className="studioStatusHint">Edits go straight into {trackBridge.origin.trackName}</span>}
       </div>
 
       {session.loading && <LoadingOverlay title="Opening the model" detail="Reading the archive and uploading its textures." />}

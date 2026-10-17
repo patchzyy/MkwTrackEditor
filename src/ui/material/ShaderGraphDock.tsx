@@ -1,8 +1,22 @@
-import { AlertTriangle, ChevronDown, ChevronUp, LayoutGrid, Maximize2, Redo2, RotateCcw, Undo2, Wand2 } from 'lucide-react';
-import { useState, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  CircleHelp,
+  LayoutGrid,
+  Maximize,
+  Minimize,
+  Redo2,
+  RotateCcw,
+  Scan,
+  Undo2,
+  Wand2,
+} from 'lucide-react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { CompiledShader, GxMaterialDoc, GxMaterialRef, GxTextureSummary, ShaderGraphPreset } from '../../lib/gxMaterial';
-import { Button, EmptyState, IconButton, Tabs, Tooltip } from '../components';
+import { Button, EmptyState, IconButton, MenuSurface, Tabs } from '../components';
 import { GraphEditor } from './GraphEditor';
+import { GraphHelpCard } from './GraphHelpCard';
 import { StagesTable } from './StagesTable';
 import type { EditorShaderGraph } from './graphModel';
 import type { MaterialDockTab } from './MaterialMode';
@@ -47,19 +61,20 @@ export interface ShaderGraphDockProps {
   onApplyPreset: (presetId: string) => void;
   onAutoLayout: () => void;
   onChangeDoc: MaterialDocChange;
+  /** Called whenever the graph's node selection changes, including clearing to `[]`. */
+  onSelectionChange?: (nodeIds: string[]) => void;
+  /** When `key` changes, the graph selects `nodeIds` and frames them. */
+  selectionRequest?: { nodeIds: string[]; key: number } | null;
 }
 
 /**
- * Bottom dock for Material mode. It takes the content browser's slot and its size, and offers two
- * views of the same thing: the node graph an author works in, and the TEV stages it compiles to.
+ * Bottom dock for Material mode and the Model Studio. Two views of the same thing: the node
+ * graph an author works in, and the TEV stages it compiles to.
  *
- * The status line is the honest one — how many stages and textures the current graph produces,
- * and the first error when it does not compile, in which case the material keeps the last stages
- * that did.
- *
- * The presets sit in the open, as a row of chips above the graph rather than behind a menu: they
- * are the fastest way out of a graph an author does not understand, and that should not be three
- * clicks deep.
+ * The header is one tidy row, Unreal-style: the view tabs, then the graph's tools — a "Start
+ * from…" menu of presets, reset, auto layout, frame, undo/redo, help and fullscreen — and on the
+ * right the honest status line: how many stages and textures the material draws with, or the
+ * first error when the graph does not compile (the material then keeps the last stages that did).
  */
 export function ShaderGraphDock({
   open,
@@ -90,9 +105,25 @@ export function ShaderGraphDock({
   onApplyPreset,
   onAutoLayout,
   onChangeDoc,
+  onSelectionChange,
+  selectionRequest,
 }: ShaderGraphDockProps) {
   const [fitRequest, setFitRequest] = useState(0);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const textureInfos = useArchiveTextures(archiveBytes, textures);
+
+  // Fullscreen is a view of the graph; Escape leaves it unless something inside wants the key.
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (document.querySelector('.graphPalette, .uiMenu')) return;
+      setFullscreen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [fullscreen]);
 
   const error = compiled?.diagnostics.find((diagnostic) => diagnostic.severity === 'error') ?? null;
   const warningCount = compiled?.diagnostics.filter((diagnostic) => diagnostic.severity === 'warning').length ?? 0;
@@ -103,22 +134,32 @@ export function ShaderGraphDock({
     : doc
       ? describeShader(stages.length, doc.samplers.length)
       : '';
+  const showGraphTools = open && materialRef && tab === 'graph';
+  const contextKey = materialRef ? `${materialRef.archivePath}|${materialRef.modelName}|${materialRef.materialName}` : '';
+  const expanded = open && fullscreen;
 
   return (
     <section
-      className={`${open ? 'contentBrowser' : 'contentBrowser collapsed'} materialDock${resizing ? ' resizing' : ''}`}
-      style={{ height: `${open ? height : collapsedHeight}px` }}
+      className={[
+        open ? 'contentBrowser' : 'contentBrowser collapsed',
+        'materialDock',
+        resizing && 'resizing',
+        expanded && 'materialDock--fullscreen',
+      ].filter(Boolean).join(' ')}
+      style={expanded ? undefined : { height: `${open ? height : collapsedHeight}px` }}
       aria-label="Shader graph"
     >
-      <div
-        className="contentBrowserResizeHandle"
-        onPointerDown={onBeginResize}
-        onDoubleClick={onResetSize}
-        role="separator"
-        aria-orientation="horizontal"
-        aria-label="Resize the shader graph"
-        title="Drag to resize · double-click to reset"
-      />
+      {!expanded && (
+        <div
+          className="contentBrowserResizeHandle"
+          onPointerDown={onBeginResize}
+          onDoubleClick={onResetSize}
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize the shader graph"
+          title="Drag to resize · double-click to reset"
+        />
+      )}
       <header className="browserHeader materialDockHeader">
         <div className="materialDockTitle">
           <h2>Shader</h2>
@@ -133,49 +174,63 @@ export function ShaderGraphDock({
           />
         </div>
 
-        {open && materialRef && (
-          <div className="materialDockTools">
-            <Button size="sm" variant="ghost" icon={<RotateCcw size={13} />} onClick={onResetFromStages}>
-              Reset from stages
-            </Button>
-            <Button size="sm" variant="ghost" icon={<LayoutGrid size={13} />} onClick={onAutoLayout}>
+        {showGraphTools && (
+          <div className="materialDockTools" role="toolbar" aria-label="Graph tools">
+            {presets.length > 0 && <PresetMenu presets={presets} onApplyPreset={onApplyPreset} />}
+            <span className="materialDockDivider" aria-hidden="true" />
+            <IconButton size="sm" variant="ghost" icon={<Undo2 size={14} />} tooltip="Undo" shortcut="Ctrl+Z" disabled={historyState.undo === 0} disabledReason="Nothing to undo in this graph." onClick={onUndo} />
+            <IconButton size="sm" variant="ghost" icon={<Redo2 size={14} />} tooltip="Redo" shortcut="Ctrl+Y" disabled={historyState.redo === 0} disabledReason="Nothing to redo in this graph." onClick={onRedo} />
+            <span className="materialDockDivider" aria-hidden="true" />
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<LayoutGrid size={13} />}
+              tooltip="Lay the nodes out left to right, ending at the Material node"
+              onClick={() => {
+                onAutoLayout();
+                setFitRequest((value) => value + 1);
+              }}
+            >
               Auto layout
             </Button>
-            <IconButton size="sm" variant="ghost" icon={<Maximize2 size={13} />} tooltip="Fit the graph in view" onClick={() => setFitRequest((value) => value + 1)} />
+            <IconButton size="sm" variant="ghost" icon={<Scan size={14} />} tooltip="Frame the whole graph" shortcut="Home" onClick={() => setFitRequest((value) => value + 1)} />
             <IconButton
               size="sm"
               variant="ghost"
-              icon={<Undo2 size={13} />}
-              tooltip="Undo the last graph change"
-              shortcut="Ctrl+Z"
-              disabled={historyState.undo === 0}
-              disabledReason="Nothing to undo in this graph."
-              onClick={onUndo}
+              icon={<RotateCcw size={14} />}
+              tooltip="Reset: rebuild the graph from the material's stages"
+              onClick={onResetFromStages}
             />
+            <span className="materialDockDivider" aria-hidden="true" />
+            <IconButton size="sm" variant="ghost" icon={<CircleHelp size={14} />} tooltip="Controls and tips" active={helpOpen} onClick={() => setHelpOpen((value) => !value)} />
             <IconButton
               size="sm"
               variant="ghost"
-              icon={<Redo2 size={13} />}
-              tooltip="Redo the last graph change"
-              shortcut="Ctrl+Y"
-              disabled={historyState.redo === 0}
-              disabledReason="Nothing to redo in this graph."
-              onClick={onRedo}
+              icon={fullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
+              tooltip={fullscreen ? 'Leave fullscreen' : 'Fullscreen graph'}
+              shortcut={fullscreen ? 'Esc' : undefined}
+              active={fullscreen}
+              onClick={() => {
+                setFullscreen((value) => !value);
+                setFitRequest((value) => value + 1);
+              }}
             />
           </div>
         )}
 
         <div className="materialDockStatus">
           {error && graphDrivesMaterial && <AlertTriangle size={13} className="materialDockStatusIcon" aria-hidden="true" />}
-          <span className={error && graphDrivesMaterial ? 'materialDockStatusText error' : 'materialDockStatusText'}>{status}</span>
+          <span className={error && graphDrivesMaterial ? 'materialDockStatusText error' : 'materialDockStatusText'} title={status}>{status}</span>
           {warningCount > 0 && <span className="materialTag">{warningCount} note{warningCount === 1 ? '' : 's'}</span>}
-          <IconButton
-            size="sm"
-            variant="ghost"
-            icon={open ? <ChevronDown size={15} /> : <ChevronUp size={15} />}
-            tooltip={open ? 'Hide the shader panel' : 'Show the shader panel'}
-            onClick={onToggleOpen}
-          />
+          {!expanded && (
+            <IconButton
+              size="sm"
+              variant="ghost"
+              icon={open ? <ChevronDown size={15} /> : <ChevronUp size={15} />}
+              tooltip={open ? 'Hide the shader panel' : 'Show the shader panel'}
+              onClick={onToggleOpen}
+            />
+          )}
         </div>
       </header>
 
@@ -191,24 +246,6 @@ export function ShaderGraphDock({
             <StagesTable stages={stages} />
           ) : graph ? (
             <>
-              {/* Presets used to be a dropdown, which is where a one-click "make this look like a
-                  normal road" went to die. They are the fastest way out of a graph an author does
-                  not understand, so they sit in the open. */}
-              {presets.length > 0 && (
-                <div className="materialPresetBar" role="group" aria-label="Shader presets">
-                  <span className="materialPresetBarLabel">
-                    <Wand2 size={12} aria-hidden="true" />
-                    Start from
-                  </span>
-                  {presets.map((preset) => (
-                    <Tooltip key={preset.id} label={preset.description} side="top">
-                      <button type="button" className="materialPresetChip" onClick={() => onApplyPreset(preset.id)}>
-                        {preset.title}
-                      </button>
-                    </Tooltip>
-                  ))}
-                </div>
-              )}
               <GraphEditor
                 graph={graph}
                 doc={doc}
@@ -223,7 +260,12 @@ export function ShaderGraphDock({
                 onConvertRawStages={onConvertRawStages}
                 rawStagesConvertible={rawStagesConvertible}
                 fitRequest={fitRequest}
+                contextKey={contextKey}
+                onSelectionChange={onSelectionChange}
+                selectionRequest={selectionRequest}
+                emptyAction={presets.length > 0 ? <PresetMenu presets={presets} onApplyPreset={onApplyPreset} variant="default" /> : undefined}
               />
+              {helpOpen && <GraphHelpCard onClose={() => setHelpOpen(false)} />}
             </>
           ) : (
             <EmptyState icon={<Wand2 size={22} />} title="Building the graph" description="Reading this material's TEV stages…" />
@@ -231,5 +273,73 @@ export function ShaderGraphDock({
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * The presets, one menu instead of a row of chips: still one click to open and one to pick, but it
+ * no longer takes a strip of the graph's height. Each item says what the preset makes.
+ */
+function PresetMenu({
+  presets,
+  onApplyPreset,
+  variant = 'ghost',
+}: {
+  presets: ShaderGraphPreset[];
+  onApplyPreset: (presetId: string) => void;
+  variant?: 'ghost' | 'default';
+}) {
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const [anchor, setAnchor] = useState<{ top: number; left: number; bottom: number; right: number } | null>(null);
+  // The menu closes on any press outside it, the button included; without this, pressing the
+  // button to close the menu would close it and then open it again on the click.
+  const closedAtRef = useRef(0);
+  return (
+    <>
+      <Button
+        ref={buttonRef}
+        size="sm"
+        variant={variant}
+        icon={<Wand2 size={13} />}
+        active={anchor !== null}
+        tooltip="Replace this graph with a ready-made shader"
+        aria-haspopup="menu"
+        aria-expanded={anchor !== null}
+        onClick={() => {
+          if (performance.now() - closedAtRef.current < 250) return;
+          const rect = buttonRef.current?.getBoundingClientRect();
+          if (rect) setAnchor({ top: rect.top, left: rect.left, bottom: rect.bottom + 4, right: rect.right });
+        }}
+      >
+        Start from…
+      </Button>
+      {anchor && (
+        <MenuSurface
+          anchor={anchor}
+          label="Shader presets"
+          minWidth={280}
+          onClose={() => {
+            closedAtRef.current = performance.now();
+            setAnchor(null);
+          }}
+          sections={[
+            {
+              id: 'presets',
+              title: 'Start from a preset',
+              items: presets.map((preset) => ({
+                id: preset.id,
+                label: (
+                  <span className="materialPresetItem">
+                    <strong>{preset.title}</strong>
+                    <span>{preset.description}</span>
+                  </span>
+                ),
+                onSelect: () => onApplyPreset(preset.id),
+              })),
+            },
+          ]}
+        />
+      )}
+    </>
   );
 }

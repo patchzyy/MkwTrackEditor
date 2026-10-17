@@ -1,0 +1,366 @@
+/*
+ * The material Details panel (MaterialInspector): the right-hand side of Material mode and of the
+ * Model Studio. It shows whatever is selected in the shader graph — the material overview, one
+ * texture, one node, or a multi-selection — so these are the shapes those views share.
+ * Tokens: docs/UI.md.
+ */
+
+/* ---------------------------------------------------------------- breadcrumbs */
+
+.detailsCrumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+}
+
+.detailsCrumb {
+  min-width: 0;
+  max-width: 50%;
+  padding: 2px var(--space-2);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent-text);
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.detailsCrumb:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.detailsCrumb.is-current {
+  flex: 1;
+  max-width: none;
+  color: var(--text-secondary);
+  cursor: default;
+}
+
+.detailsCrumb.is-current:hover {
+  background: transparent;
+}
+
+/* ---------------------------------------------------------------- headers and hints */
+
+.detailsNodeHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.detailsNodeHeader strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailsNodeHeader span {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+}
+
+.detailsHint {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+}
+
+.detailsHint > svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--accent-text);
+}
+
+.detailsNote {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+}
+
+.detailsMissingLayer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+}
+
+/* ---------------------------------------------------------------- texture list (overview) */
+
+.detailsTextureList {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+.detailsTextureAdd {
+  display: flex;
+}
+
+.detailsTextureRows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.detailsTextureRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+
+.detailsTextureRow:hover {
+  border-color: var(--border-hover);
+  background: var(--surface-3);
+}
+
+.detailsTextureOpen {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-2);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.detailsTextureOpen:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: -2px;
+  border-radius: var(--radius-md);
+}
+
+.detailsTextureThumb {
+  display: inline-flex;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.detailsTextureThumb > * {
+  width: 100%;
+  height: 100%;
+}
+
+.detailsTextureText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.detailsTextureSlot {
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.detailsTextureName {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailsTextureFacts {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailsTextureChevron {
+  flex: none;
+  color: var(--text-dim);
+}
+
+/* Reorder / remove are there, but only once the row is pointed at, so the list reads as a list. */
+.detailsTextureActions {
+  position: absolute;
+  top: 50%;
+  right: 22px;
+  display: flex;
+  gap: 1px;
+  padding: 1px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.detailsTextureRow:hover .detailsTextureActions,
+.detailsTextureRow:focus-within .detailsTextureActions {
+  opacity: 1;
+}
+
+/* ---------------------------------------------------------------- one texture */
+
+.detailsTexture {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border-radius: var(--radius-md);
+  outline: 2px dashed transparent;
+  outline-offset: 2px;
+  transition: outline-color var(--dur-fast) var(--ease);
+}
+
+.detailsTexture.isDragTarget {
+  outline-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.detailsTexturePreview {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.detailsTexturePreview > .visualCheckerboard {
+  height: 200px;
+  min-height: 0;
+  max-height: none;
+  border-radius: 0;
+}
+
+.detailsTexturePreview .visualCheckerboard img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.detailsTextureDropHint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+}
+
+.detailsTexture.isDragTarget .detailsTextureDropHint {
+  color: var(--accent-text);
+}
+
+.detailsTextureIdentity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.detailsTextureFactsLine {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+}
+
+.detailsTextureButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* ---------------------------------------------------------------- multi-selection */
+
+.detailsMulti {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.detailsMultiList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.detailsMultiItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.detailsMultiItem:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  color: var(--text);
+}
+
+/* ---------------------------------------------------------------- shared-grid fixes */
+
+/*
+ * `.propertyGrid label` (styles.css) lays out every label in a property grid as a two-column row,
+ * which also catches the `<label>` a Toggle is built from: the switch and its caption end up a
+ * column apart. Inside Details a toggle is one control again.
+ */
+.materialInspector .propertyGrid .uiToggle {
+  display: inline-flex;
+  padding: 0;
+  border-bottom: 0;
+}

@@ -66,12 +66,9 @@ export function StudioOutliner({
 
   return (
     <aside className="placeAssetsPanel studioOutliner" aria-label="Studio outliner">
-      <div className="panelHeader placeAssetsHeader">
-        <div>
-          <h2>Outliner</h2>
-          <p className="panelSubtle">Models, materials, textures and animations in what is open.</p>
-        </div>
-      </div>
+      <header className="placeAssetsHeader studioPanelHeader">
+        <h2>Outliner</h2>
+      </header>
 
       <div className="studioOutlinerSearch">
         <Search size={13} aria-hidden="true" />

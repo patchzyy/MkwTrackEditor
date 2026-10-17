@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createDefaultMaterialDoc, type GxTevStageDoc } from '../../lib/gxMaterial';
-import { graphStorageKey, hashTevStages, sessionGraphKey } from './graphStore';
+import { compileShaderGraph, createDefaultMaterialDoc, type GxTevStageDoc, type ShaderGraph } from '../../lib/gxMaterial';
+import { graphStorageKey, hashTevStages, migrateStoredGraph, sessionGraphKey } from './graphStore';
 
 function stage(overrides: Partial<GxTevStageDoc> = {}): GxTevStageDoc {
   return {
@@ -78,5 +78,41 @@ describe('sessionGraphKey', () => {
 
   it('does not include the stage hash, so a graph survives its own edits in one session', () => {
     expect(sessionGraphKey(ref)).toBe('course_model.brres|course|road');
+  });
+});
+
+describe('migrateStoredGraph', () => {
+  // What an older build saved: one Value card wired into every input that wanted a zero.
+  const old: ShaderGraph = {
+    version: 1,
+    nodes: [
+      { id: 'tex', type: 'texture', sampler: 0, texCoord: 0, x: 0, y: 0 },
+      { id: 'zero', type: 'value', value: 0, x: 0, y: 200 },
+      { id: 'mix', type: 'lerp', x: 260, y: 0, label: 'Kept as authored' },
+      { id: 'out', type: 'output', x: 520, y: 0 },
+    ],
+    edges: [
+      { id: 'e0', from: { node: 'tex', socket: 'rgb' }, to: { node: 'mix', socket: 'a' } },
+      { id: 'e1', from: { node: 'zero', socket: 'rgb' }, to: { node: 'mix', socket: 'b' } },
+      { id: 'e2', from: { node: 'zero', socket: 'rgb' }, to: { node: 'mix', socket: 't' } },
+      { id: 'e3', from: { node: 'mix', socket: 'out' }, to: { node: 'out', socket: 'color' } },
+    ],
+  };
+
+  it('types the Value card into the inputs it fed and drops it, keeping the layout', () => {
+    const migrated = migrateStoredGraph(old);
+    expect(migrated.nodes.map((node) => node.id)).toEqual(['tex', 'mix', 'out']);
+    expect(migrated.nodes.find((node) => node.id === 'mix')).toMatchObject({ x: 260, y: 0, label: 'Kept as authored', inputValues: { b: 0, t: 0 } });
+    expect(migrated.edges.map((edge) => edge.id)).toEqual(['e0', 'e3']);
+  });
+
+  it('compiles to the same stages it did before', () => {
+    const material = createDefaultMaterialDoc('road', 1);
+    expect(compileShaderGraph(migrateStoredGraph(old), material).tevStages).toEqual(compileShaderGraph(old, material).tevStages);
+  });
+
+  it('returns a graph with nothing to fold unchanged', () => {
+    const current = migrateStoredGraph(old);
+    expect(migrateStoredGraph(current)).toBe(current);
   });
 });
