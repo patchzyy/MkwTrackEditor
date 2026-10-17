@@ -4,6 +4,7 @@ import { raycastDown } from '../../lib/kcl';
 import type { KmpFile } from '../../lib/kmpFile';
 import type { PathPointSection } from '../../lib/kmpGraph';
 import type { TrackIssue } from '../../lib/kmpValidation';
+import { validateTrack } from '../../lib/track';
 import type { EditorModeContext, ModeUi } from '../modes/types';
 import type { PathLinkSection } from '../Noclip3DViewport';
 import { browserObjectTitle } from '../objects/objectCatalog';
@@ -151,9 +152,9 @@ export function useKmpMode(ctx: EditorModeContext): ModeUi {
         return entityId ? { label: 'Remove the broken link', run: () => graph.clearDanglingRouteReference(entityId) } : null;
       case 'camera.next-out-of-range':
       case 'camera.next-self':
+      case 'camera.opening-loop':
       case 'area.camera-out-of-range':
         return entityId ? { label: 'Remove the broken link', run: () => graph.clearDanglingCameraReference(entityId) } : null;
-      case 'object.disabled':
       case 'object.never-visible':
         return entityId ? { label: 'Show it everywhere', run: () => graph.makeObjectAlwaysPresent(indexOf(entityId)) } : null;
       case 'object.route-required':
@@ -163,7 +164,9 @@ export function useKmpMode(ctx: EditorModeContext): ModeUi {
           : null;
       case 'checkpoint.no-respawn':
       case 'checkpoint.respawn-out-of-range':
-        return { label: 'Use the nearest respawn everywhere', run: () => graph.assignAllNearestRespawns(issue.code === 'checkpoint.respawn-out-of-range') };
+        return (trackRef.current ?? track)?.kmpFile?.respawnPoints.length
+          ? { label: 'Use the nearest respawn everywhere', run: () => graph.assignAllNearestRespawns(false) }
+          : null;
       case 'checkpoint.keys-out-of-order':
       case 'checkpoint.duplicate-key':
       case 'checkpoint.missing-key':
@@ -171,6 +174,30 @@ export function useKmpMode(ctx: EditorModeContext): ModeUi {
       default:
         return null;
     }
+  }
+
+  function fixAll() {
+    const currentTrack = trackRef.current;
+    if (!currentTrack) return;
+    const before = validateTrack(currentTrack, { common: ctx.commonArchive });
+    let remaining = before;
+    const attempted = new Set<string>();
+    history.beginEditSession();
+    try {
+      for (;;) {
+        const issue = remaining.find((issue) => !attempted.has(`${issue.code}:${issue.entityId ?? ''}`) && quickFix(issue));
+        if (!issue) break;
+        attempted.add(`${issue.code}:${issue.entityId ?? ''}`);
+        quickFix(issue)!.run();
+        remaining = validateTrack(trackRef.current!, { common: ctx.commonArchive });
+      }
+    } finally {
+      history.endEditSession();
+    }
+    const repaired = before.filter((issue) => !remaining.some((other) => other.code === issue.code && other.entityId === issue.entityId)).length;
+    const errors = remaining.filter((issue) => issue.level === 'error').length;
+    const warnings = remaining.filter((issue) => issue.level === 'warning').length + (trackRef.current?.warnings.length ?? 0);
+    setStatus(`Repaired ${repaired} issue${repaired === 1 ? '' : 's'}. ${errors} errors and ${warnings} warnings remain. Review the validation list and any generated routes before exporting.`);
   }
 
   if (!active) return {};
@@ -259,6 +286,7 @@ export function useKmpMode(ctx: EditorModeContext): ModeUi {
         }}
         onReverseRoute={() => context.route && graph.reverseRoute(context.route.routeIndex)}
         quickFix={quickFix}
+        onFixAll={fixAll}
       />
     ),
     topRightOverlay: (

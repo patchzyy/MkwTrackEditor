@@ -86,6 +86,7 @@ export interface KmpInspectorProps {
 
   /** Maps an issue to its one-click repair, when there is one. */
   quickFix: (issue: TrackIssue) => KmpQuickFix | null;
+  onFixAll: () => void;
 }
 
 /**
@@ -125,6 +126,10 @@ export function KmpInspector(props: KmpInspectorProps) {
           <span className={`validationBadge${errorCount > 0 ? ' error' : ''}`}>{errorCount} errors</span>
           <span className={`validationBadge${warningCount > 0 ? ' warning' : ''}`}>{warningCount} warnings</span>
         </div>
+        <button type="button" className="inlineAction" disabled={!issues.some((issue) => props.quickFix(issue))} onClick={props.onFixAll}>
+          Fix all repairable issues
+        </button>
+        <p className="muted">Applies available fixes in one undo step. Missing files and layout issues need manual edits. Review any generated routes before exporting.</p>
         <div className="validationList">
           {issues.length === 0 && loadWarnings.length === 0 && <p className="muted">Nothing to fix — this track is ready to export.</p>}
           {issues.map((issue, index) => {
