@@ -40,13 +40,12 @@ describe('formatPlaytestTime', () => {
 describe('formatPlaytestSpeed', () => {
   it('converts units per frame to km/h', () => {
     expect(formatPlaytestSpeed(0)).toBe('0 km/h');
-    // A Flame Runner tops out around 17 units/frame, which is the game's ~37 km/h HUD reading
-    // scaled by the usual 2.16 factor.
-    expect(formatPlaytestSpeed(17)).toBe('37 km/h');
+    // Shown the way MKW-SP / CTGP speedometers do: the engine's speed value as-is.
+    expect(formatPlaytestSpeed(84.4)).toBe('84 km/h');
   });
 
   it('shows a reversing kart as a positive speed', () => {
-    expect(formatPlaytestSpeed(-5)).toBe('11 km/h');
+    expect(formatPlaytestSpeed(-5)).toBe('5 km/h');
   });
 });
 
@@ -79,7 +78,7 @@ describe('buildPlaytestHudView', () => {
     const view = buildPlaytestHudView(race({ stage: 'race', lap: 2, maxLap: 3, timeMs: 65432 }), { speed: 10 });
     expect(view.lap).toBe('2/3');
     expect(view.time).toBe('1:05.432');
-    expect(view.speed).toBe('22 km/h');
+    expect(view.speed).toBe('10 km/h');
     expect(view.finalTime).toBeNull();
   });
 
@@ -87,6 +86,13 @@ describe('buildPlaytestHudView', () => {
     const view = buildPlaytestHudView(race({ stage: 'finished', lap: 3, maxLap: 3, timeMs: 123456 }), { speed: 0 });
     expect(view.finalTime).toBe('2:03.456');
     expect(view.centerText).toBe('Finished');
+  });
+
+  it('shows the mushrooms left, or infinity when the slot is kept full', () => {
+    const racing = race({ stage: 'race' });
+    expect(buildPlaytestHudView(racing, { speed: 0, mushrooms: 2 }).mushrooms).toBe(2);
+    expect(buildPlaytestHudView(racing, { speed: 0 }).mushrooms).toBe(0);
+    expect(buildPlaytestHudView(racing, { speed: 0, mushrooms: 3 }, undefined, true).mushrooms).toBe('∞');
   });
 
   it('never shows lap 0 of 0', () => {

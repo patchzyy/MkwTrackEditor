@@ -48,6 +48,8 @@ export interface PlaytestHudSample {
   maxLap: number;
   speed: number;
   miniTurbo: PlaytestMiniTurbo;
+  mushrooms: number;
+  infiniteMushrooms: boolean;
 }
 
 /** The imperative handle the viewport drives once per animation frame. */
@@ -93,7 +95,7 @@ export interface PlaytestSession {
 }
 
 function emptyHudSample(): PlaytestHudSample {
-  return { stage: 'intro', frame: 0, timeMs: 0, lap: 1, maxLap: 3, speed: 0, miniTurbo: { kind: 'none', level: 0, charge: 0 } };
+  return { stage: 'intro', frame: 0, timeMs: 0, lap: 1, maxLap: 3, speed: 0, miniTurbo: { kind: 'none', level: 0, charge: 0 }, mushrooms: 0, infiniteMushrooms: false };
 }
 
 function describePlaytestError(error: unknown): string {
@@ -245,6 +247,8 @@ export function usePlaytestSession({
             hud.miniTurbo.kind = kart.miniTurbo.kind;
             hud.miniTurbo.level = kart.miniTurbo.level;
             hud.miniTurbo.charge = kart.miniTurbo.charge;
+            hud.mushrooms = kart.mushrooms;
+            hud.infiniteMushrooms = options.infiniteMushrooms;
           },
           onError: (error) => failSessionRef.current(error),
         });

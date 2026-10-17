@@ -20,6 +20,7 @@ export interface KinokoModule {
   _kinoko_clear_files(): void;
   _kinoko_load_course(character: number, vehicle: number, driftIsAuto: number): number;
   _kinoko_set_inputs(buttons: number, stickXRaw: number, stickYRaw: number, trick: number): void;
+  _kinoko_set_infinite_items(enabled: number): void;
   _kinoko_step(): void;
   _kinoko_frame(): number;
   _kinoko_read_kart_state(out: KinokoPtr): void;

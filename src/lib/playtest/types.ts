@@ -103,6 +103,8 @@ export interface PlaytestKartState {
   boosting: boolean;
   /** Mini-turbo being charged, if any. */
   miniTurbo: PlaytestMiniTurbo;
+  /** Mushrooms left in the item slot. Time trials start with three; 0 once they are used up. */
+  mushrooms: number;
 }
 
 export type PlaytestStage = 'intro' | 'countdown' | 'race' | 'finished';
@@ -217,12 +219,15 @@ export interface PlaytestCourseOptions {
   vehicle: PlaytestVehicle;
   /** Automatic drift (no hop; drifts by steering). */
   driftIsAuto: boolean;
+  /** Keep the item slot topped up with mushrooms, so the item button always boosts. */
+  infiniteMushrooms: boolean;
 }
 
 export const DEFAULT_PLAYTEST_COURSE_OPTIONS: Readonly<PlaytestCourseOptions> = Object.freeze({
   character: PLAYTEST_CHARACTERS.Funky_Kong,
   vehicle: PLAYTEST_VEHICLES.Flame_Runner,
   driftIsAuto: false,
+  infiniteMushrooms: false,
 });
 
 /**
