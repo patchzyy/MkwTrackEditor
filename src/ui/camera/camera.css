@@ -37,6 +37,35 @@
   width: 100%;
 }
 
+.cameraIntroGenerator,
+.cameraIntroShot {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.cameraIntroShot {
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border-radius: var(--radius-md);
+}
+
+.cameraIntroShot label {
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+}
+
+.cameraIntroShot input {
+  min-width: 0;
+  width: 100%;
+}
+
+.cameraIntroPoints {
+  margin: 0;
+  padding-left: var(--space-4);
+  font-size: var(--font-size-sm);
+}
+
 /* No inner scroller here: `.cameraPanelBody` is a height-constrained grid, so a scrolling child
    has an automatic minimum size of zero and its auto track collapses. The whole panel scrolls. */
 .cameraList {

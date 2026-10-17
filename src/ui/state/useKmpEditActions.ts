@@ -56,11 +56,13 @@ import {
   createDefaultCameraValues,
   deleteCamera,
   duplicateCamera,
+  generateIntroCameras,
   moveCamera,
   setChainOrder,
   setChainStart,
   type CameraChainKind,
   type CameraValues,
+  type IntroCameraShot,
 } from '../camera/cameraDocument';
 import type { CommonResourceArchive } from '../../lib/objflow';
 import { findArchiveData } from '../inspector/postEffectResources';
@@ -610,6 +612,18 @@ export function useKmpEditActions(context: KmpEditActionsContext) {
     }
   }
 
+  /** Generates all three intro shots in one undo step. */
+  function generateIntroCameraSet(shots: IntroCameraShot[]) {
+    if (!track?.kmp) return;
+    try {
+      const result = generateIntroCameras(track.kmp, shots);
+      applyEditorChange(replaceCourseKmp(track, result.bytes), result.selectedId, true, [result.selectedId!]);
+      setStatus('Generated the three intro shots from captured viewpoints.');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   /** Copies a camera, including where it hands over to. */
   function duplicateCameraEntry(index: number) {
     if (!track?.kmp) return;
@@ -718,6 +732,7 @@ export function useKmpEditActions(context: KmpEditActionsContext) {
     replaceSelectedObjectTypes,
     applyFillBetween,
     addCameraFromPose,
+    generateIntroCameraSet,
     duplicateCameraEntry,
     deleteCameraEntry,
     moveCameraEntry,

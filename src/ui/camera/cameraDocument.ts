@@ -32,6 +32,7 @@ import {
   type OpeningCameraStep,
 } from '../../lib/cameraPreview';
 import { toCameraPreviewDefs } from '../viewport/cameraOverlay';
+import { readKmpFile, writeKmpFile } from '../../lib/kmpFile';
 
 export { NO_CAMERA_LINK };
 
@@ -405,6 +406,82 @@ export interface CameraEditResult {
   bytes: Uint8Array;
   /** Which camera the editor should select afterwards, or `null` to clear the selection. */
   selectedId: string | null;
+}
+
+export interface IntroCameraShot {
+  points: { position: Vec3; target: Vec3; rotation: Vec3; fovDegrees: number }[];
+  time: number;
+}
+
+/** Reuses the first three opening cameras and gives each shot its captured movement path. */
+export function generateIntroCameras(document: KmpDocument, shots: IntroCameraShot[]): CameraEditResult {
+  const file = readKmpFile(document.original);
+  const order = getCameraChain(document, 'opening').order.slice(0, 3);
+  if (shots.length !== 3 || shots.some((shot) => shot.points.length === 0 || !Number.isFinite(shot.time) || shot.time <= 0)) {
+    throw new Error('Capture at least one viewpoint and set a positive duration for each of the three shots.');
+  }
+  while (order.length < 3) {
+    if (file.cameras.length >= NO_CAMERA_LINK) throw new Error('There is no room for another intro camera in this KMP.');
+    order.push(file.cameras.length);
+    file.cameras.push({
+      type: 5, nextIndex: NO_CAMERA_LINK, shake: 0, routeIndex: NO_CAMERA_LINK,
+      pointVelocity: 0, zoomVelocity: 0, viewVelocity: 0, start: 0, movie: 0,
+      position: ZERO_VEC3, rotation: ZERO_VEC3, zoomStart: 60, zoomEnd: 60,
+      viewStart: ZERO_VEC3, viewEnd: ZERO_VEC3, time: 120,
+    });
+  }
+  for (const [index, shot] of shots.entries()) {
+    const first = shot.points[0];
+    const last = shot.points[shot.points.length - 1];
+    const camera = file.cameras[order[index]];
+    const positions = shot.points.map((point) => point.position);
+    let length = 0;
+    for (let point = 1; point < positions.length; point++) {
+      const a = positions[point - 1];
+      const b = positions[point];
+      length += Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+    }
+    // Aim to reach the endpoint five frames after the cut, rounding down to keep moving.
+    const speed = Math.max(1, Math.floor(length / (shot.time + 5)));
+    // POTI speeds are whole units per frame. Match the pan to the actual route duration
+    // so it cannot keep turning after the camera has reached the final route point.
+    const travelFrames = length > 0 ? length / speed : shot.time;
+    const pointVelocity = length > 0 ? speed * 100 : 0;
+    const viewVelocity = Math.ceil(Math.hypot(last.target.x - first.target.x, last.target.y - first.target.y, last.target.z - first.target.z) * 100 / travelFrames);
+    const zoomVelocity = Math.ceil(Math.abs(last.fovDegrees - first.fovDegrees) * 100 / travelFrames);
+    if (pointVelocity > 0xffff || viewVelocity > 0xffff || zoomVelocity > 0xffff) {
+      throw new Error(`Shot ${index + 1} moves too far for its duration. Increase its duration or move the viewpoints closer together.`);
+    }
+    let routeIndex = NO_CAMERA_LINK;
+    if (shot.points.length > 1) {
+      routeIndex = camera.routeIndex;
+      // A camera path can also drive objects, areas, or other cameras; leave those paths intact.
+      if (routeIndex === NO_CAMERA_LINK || !file.routes[routeIndex]
+        || file.cameras.some((other, i) => i !== order[index] && other.routeIndex === routeIndex)
+        || file.objects.some((object) => object.routeIndex === routeIndex)
+        || file.areas.some((area) => area.routeIndex === routeIndex)) {
+        routeIndex = file.routes.length;
+      }
+      if (routeIndex >= NO_CAMERA_LINK) throw new Error('There is no room for another camera route in this KMP.');
+      file.routes[routeIndex] = {
+        smooth: 0, forwardBackward: 1,
+        // The game blends neighboring point speeds, so a zero at the end slows the eye
+        // while the look-at pan keeps moving. Keep the speed constant through the cut.
+        points: positions.map((position) => ({ position, setting1: speed, setting2: 0 })),
+      };
+    }
+    Object.assign(camera, {
+      type: 5,
+      nextIndex: order[index + 1] ?? NO_CAMERA_LINK,
+      shake: 0, start: 0, movie: 0,
+      routeIndex, pointVelocity, viewVelocity, zoomVelocity,
+      position: first.position, rotation: ZERO_VEC3,
+      viewStart: first.target, viewEnd: last.target,
+      zoomStart: first.fovDegrees, zoomEnd: last.fovDegrees, time: shot.time,
+    });
+  }
+  file.firstOpeningCamera = order[0];
+  return { bytes: writeKmpFile(file), selectedId: `CAME-${order[0]}` };
 }
 
 /** Appends a camera and fills it in. */

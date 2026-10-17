@@ -6,12 +6,14 @@ import type { FillBetweenSelection } from '../fillBetween';
 import { browserObjectTitle } from '../objects/objectCatalog';
 import type { TransformTool } from '../Noclip3DViewport';
 import type { EditorSelection } from './useSelection';
+import type { EditorModeStub } from './types';
 
 /**
  * Global editor keyboard shortcuts (undo/redo, clipboard, tools, fill between, delete, export,
  * refresh). `Ctrl+Alt+R` rather than `Ctrl+R` because the browser keeps that one for itself.
  */
 export function useEditorShortcuts({
+  editorMode,
   selection,
   selected,
   track,
@@ -30,6 +32,7 @@ export function useEditorShortcuts({
   refreshTrack,
   openTrackPicker,
 }: {
+  editorMode: EditorModeStub;
   selection: EditorSelection;
   selected: KmpEntity | null;
   track: TrackDocument | null;
@@ -65,6 +68,10 @@ export function useEditorShortcuts({
         return;
       }
       if (meta) {
+        if (editorMode === 'camera' && ['c', 'v', 'd', 'l'].includes(event.key.toLowerCase())) {
+          event.preventDefault();
+          return;
+        }
         if (event.key.toLowerCase() === 'z') {
           event.preventDefault();
           if (event.shiftKey) redoEdit();
@@ -137,5 +144,5 @@ export function useEditorShortcuts({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fillBetweenSelection, objFlow, selected, track]);
+  }, [editorMode, fillBetweenSelection, objFlow, selected, track]);
 }
