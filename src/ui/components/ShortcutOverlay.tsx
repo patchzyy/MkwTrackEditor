@@ -58,6 +58,22 @@ export const EDITOR_SHORTCUTS: ShortcutGroup[] = [
     ],
   },
   {
+    title: 'Blender viewport presets (Controls menu)',
+    entries: [
+      { keys: 'Right-click', description: 'Select in Blender 2.7; modern Blender uses left-click' },
+      { keys: 'MMB', description: 'Orbit around the view pivot' },
+      { keys: 'Shift+MMB', description: 'Pan the view' },
+      { keys: 'Ctrl+MMB', description: 'Zoom (or use the mouse wheel)' },
+      { keys: 'Numpad 1 / 3 / 7', description: 'Front / right / top view; Ctrl shows the opposite' },
+      { keys: 'Numpad 5', description: 'Toggle perspective / orthographic projection' },
+      { keys: 'Numpad 2 / 4 / 6 / 8', description: 'Orbit in 15° steps; Ctrl or Shift pans' },
+      { keys: 'Numpad 9', description: 'View from the opposite side' },
+      { keys: 'Numpad + / −', description: 'Zoom in / out' },
+      { keys: 'Numpad .', description: 'Frame the selection and set the orbit pivot' },
+      { keys: 'Home', description: 'Frame the whole track' },
+    ],
+  },
+  {
     title: 'Shader graph',
     entries: [
       { keys: 'Double-click', description: 'Open the add-node palette on empty space' },

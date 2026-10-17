@@ -408,6 +408,36 @@ the selection at the release point.
 
 ### Buttons
 
+The viewport toolbar's **Controls** selector remembers a local preference under
+`mkw.viewport.navigation`: **Editor** (the default mapping below), **Blender 2.7**,
+or **Blender Modern**. Both Blender presets use turntable navigation around a persistent
+view pivot, in the track's Y-up coordinate system. They support these controls:
+
+| Input | Blender presets |
+| --- | --- |
+| Selection click | Right in 2.7, left in Modern; Shift adds/removes |
+| MMB drag | Orbit around the pivot without camera roll |
+| Shift + MMB | Pan in screen space, moving the eye and pivot together |
+| Ctrl + MMB / wheel | Proportional zoom toward/away from the pivot |
+| Numpad 1 / 3 / 7 | Front / right / top orthographic views; Ctrl selects the opposite |
+| Numpad 5 | Toggle perspective / orthographic without changing the pivot's apparent scale |
+| Numpad 2 / 4 / 6 / 8 | Orbit by 15 degrees; Ctrl or Shift pans |
+| Numpad 9 | Opposite view |
+| Numpad + / − | Zoom in / out |
+| Numpad decimal / F | Frame selection and set the orbit pivot |
+| Home | Frame the whole track |
+
+Numpad navigation runs while the viewport is hovered or its canvas is focused, and ignores
+form fields, dialogs, camera playback, and playtests. Blender gestures use pointer capture
+without pointer lock. Empty-space selection drags do not turn the camera. Gizmos and the
+editor's track-authoring tools keep their existing actions; these presets cover viewport
+navigation and selection, rather than Blender's modeling commands or 3D cursor.
+
+`BlenderCameraController` extends `FPSCameraController` so the existing frame-selection and
+camera-pose API can reuse it. Its update ignores noclip movement keys and wheel state;
+the editor explicitly drives orbit, pan and zoom. Framing supplies the target as the pivot.
+Playback and playtest retain their own camera controllers and restore the saved controller.
+
 | Input | Perspective view modes (`normal`, `dev`) | Orthographic view modes (`ortho`, `topdown`) |
 | --- | --- | --- |
 | Left click | select what is under the cursor | same |

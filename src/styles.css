@@ -593,6 +593,7 @@ h4 {
 
 .viewportToolbar {
   display: flex;
+  flex-wrap: wrap;
   top: var(--space-4);
   left: var(--space-4);
   align-items: center;

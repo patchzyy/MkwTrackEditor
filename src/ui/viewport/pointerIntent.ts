@@ -51,7 +51,7 @@ export function isCollisionSnap(event: { ctrlKey: boolean; metaKey: boolean }): 
  * What a camera gesture does with its deltas. `look` rotates a first-person camera in place;
  * `orbit` swings an orthographic camera around its target; `pan` slides it sideways.
  */
-export type CameraGestureMode = 'look' | 'orbit' | 'pan';
+export type CameraGestureMode = 'look' | 'orbit' | 'pan' | 'zoom';
 
 /**
  * What a press turned out to mean.
@@ -116,12 +116,14 @@ export function shouldCommitOnEnd(reason: GestureEndReason): boolean {
   return reason !== 'escape';
 }
 
-/** A left press only selects when it was really a click and really ended on the mouse button. */
-export function shouldSelectOnRelease(gesture: ViewportGesture, reason: GestureEndReason): boolean {
-  return gesture.kind === 'select' && gesture.button === 'left' && !gesture.moved && reason === 'pointerup';
+/** The preset's selection button selects only on an unmoved, uninterrupted click. */
+export function shouldSelectOnRelease(gesture: ViewportGesture, reason: GestureEndReason, selectionButton: ViewportMouseButton = 'left'): boolean {
+  return gesture.kind === 'select' && gesture.button === selectionButton && !gesture.moved && reason === 'pointerup';
 }
 
 export interface CameraGestureOptions {
+  preset?: 'editor' | 'blender27' | 'blender';
+  modifiers?: PointerModifiers;
   /** Orthographic view modes orbit their target instead of turning in place. */
   orthographic: boolean;
   /** False while a camera preview or a playtest owns the camera. */
@@ -131,6 +133,12 @@ export interface CameraGestureOptions {
 /** Which camera gesture a button starts, or `null` when that button does not drive the camera. */
 export function cameraModeForButton(button: ViewportMouseButton, options: CameraGestureOptions): CameraGestureMode | null {
   if (!options.mouseLookAllowed) return null;
+  if (options.preset && options.preset !== 'editor') {
+    if (button !== 'middle') return null;
+    if (options.modifiers?.shiftKey) return 'pan';
+    if (options.modifiers?.ctrlKey) return 'zoom';
+    return 'orbit';
+  }
   if (button === 'middle') return options.orthographic ? 'pan' : 'look';
   if (button === 'right' || button === 'left') return options.orthographic ? 'orbit' : 'look';
   return null;

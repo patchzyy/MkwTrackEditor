@@ -113,6 +113,26 @@ describe('camera gestures', () => {
     expect(cameraModeForButton('other', perspective)).toBeNull();
   });
 
+  it.each(['blender27', 'blender'] as const)('%s reserves the middle button for navigation', (preset) => {
+    for (const orthographic of [true, false]) {
+      const options = { preset, orthographic, mouseLookAllowed: true, modifiers: noModifiers };
+      expect(cameraModeForButton('middle', options)).toBe('orbit');
+      expect(cameraModeForButton('left', options)).toBeNull();
+      expect(cameraModeForButton('right', options)).toBeNull();
+      expect(cameraModeForButton('middle', { ...options, modifiers: { ...noModifiers, shiftKey: true } })).toBe('pan');
+      expect(cameraModeForButton('middle', { ...options, modifiers: { ...noModifiers, ctrlKey: true } })).toBe('zoom');
+      expect(cameraModeForButton('middle', { ...options, mouseLookAllowed: false })).toBeNull();
+    }
+  });
+
+  it('accepts right-click selection only when the legacy selection button is requested', () => {
+    const rightClick = gesture({ button: 'right' });
+    expect(shouldSelectOnRelease(rightClick, 'pointerup')).toBe(false);
+    expect(shouldSelectOnRelease(rightClick, 'pointerup', 'right')).toBe(true);
+    expect(shouldSelectOnRelease({ ...rightClick, moved: true }, 'pointerup', 'right')).toBe(false);
+    expect(shouldSelectOnRelease(rightClick, 'escape', 'right')).toBe(false);
+  });
+
   it('locks the pointer only for the right-button first-person look', () => {
     expect(usesPointerLock(gesture({ kind: 'camera', button: 'right', camera: 'look' }))).toBe(true);
     // A left-drag look uses capture and a cursor change, so it can never eat the user's mouse.

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type MutableRefObject, type PointerEvent, type ReactNode } from 'react';
 import { CloudFog, Eye, EyeOff, Move3D, RotateCcw, Scale3D } from 'lucide-react';
 import { mat4, vec3, vec4 } from 'gl-matrix';
+import { BlenderCameraController, readNavigationPreset, saveNavigationPreset, type NavigationPreset } from './viewport/blenderNavigation';
 import ArrayBufferSlice from '../../vendor/noclip.website/src/ArrayBufferSlice';
 import { CameraUpdateResult, FPSCameraController, OrthoCameraController, type Camera, type CameraController } from '../../vendor/noclip.website/src/Camera';
 import { DataShare } from '../../vendor/noclip.website/src/DataShare';
@@ -818,6 +819,7 @@ function applyFPSCameraFrame(controller: FPSCameraController, frame: CameraFrame
   vec3.zero(camera.linearVelocity);
   camera.worldMatrixUpdated();
   controller.cameraUpdateForced();
+  if (controller instanceof BlenderCameraController) controller.setFrame(frame.eye, frame.target);
   controller.forceUpdate = true;
 }
 
@@ -900,6 +902,9 @@ export function Noclip3DViewport({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const uiContainerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<Viewer | null>(null);
+  const [navigationPreset, setNavigationPreset] = useState<NavigationPreset>(readNavigationPreset);
+  const navigationPresetRef = useRef(navigationPreset);
+  navigationPresetRef.current = navigationPreset;
   const sceneRef = useRef<SceneGfx | null>(null);
   const destroyablePoolRef = useRef<Destroyable[]>([]);
   const frameRef = useRef<number | null>(null);
@@ -1140,6 +1145,7 @@ export function Noclip3DViewport({
       const tick = (time: number) => {
         // A playtest owns the camera outright; the CAME preview is stopped while it runs.
         if (!stepPlaytest(time)) stepCameraPreview(time);
+        syncNavigationController(viewer);
         const restoreSuppressedKeys = withSuppressedCameraMovementKeys(viewer);
         viewer.update({ time, webXRContext: null });
         restoreSuppressedKeys();
@@ -1254,6 +1260,11 @@ export function Noclip3DViewport({
     const handleWheel = (event: WheelEvent) => {
       const viewer = viewerRef.current;
       if (!viewer || playtestSessionRef.current || cameraPreviewStateRef.current.active) return;
+      if (viewer.cameraController instanceof BlenderCameraController) {
+        event.preventDefault();
+        viewer.cameraController.zoom(Math.sign(event.deltaY));
+        return;
+      }
       if (!(viewer.cameraController instanceof FPSCameraController)) return;
       event.preventDefault();
       dollyFreeCamera(viewer, -Math.sign(event.deltaY), event.shiftKey);
@@ -1673,6 +1684,50 @@ export function Noclip3DViewport({
     syncSceneOverlay(trackRef.current, selectedIdRef.current);
   }, [meshSelections]);
 
+  useEffect(() => {
+    const handleBlenderKey = (event: KeyboardEvent) => {
+      if (navigationPresetRef.current === 'editor' || playtestSessionRef.current || cameraPreviewStateRef.current.active) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('input, textarea, select, button, [contenteditable="true"], [role="dialog"]')) return;
+      const viewport = viewportRef.current;
+      if (!viewport?.matches(':hover') && document.activeElement !== canvasRef.current) return;
+      const viewer = viewerRef.current;
+      if (!viewer || event.altKey || event.metaKey || pointerGestureRef.current) return;
+      syncNavigationController(viewer);
+      const controller = viewer.cameraController;
+      if (!(controller instanceof BlenderCameraController)) return;
+      const code = event.code;
+      if (!['Numpad1', 'Numpad3', 'Numpad7', 'Numpad5', 'Numpad9', 'Numpad2', 'Numpad4', 'Numpad6', 'Numpad8', 'NumpadAdd', 'NumpadSubtract', 'NumpadDecimal', 'Home'].includes(code)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (code === 'Numpad1') controller.axisView('front', event.ctrlKey);
+      else if (code === 'Numpad3') controller.axisView('right', event.ctrlKey);
+      else if (code === 'Numpad7') controller.axisView('top', event.ctrlKey);
+      else if (code === 'Numpad5') controller.orthographic = !controller.orthographic;
+      else if (code === 'Numpad9') { controller.yaw += Math.PI; controller.pitch = -controller.pitch; }
+      else if (code === 'NumpadAdd') controller.zoom(-1);
+      else if (code === 'NumpadSubtract') controller.zoom(1);
+      else if (code === 'NumpadDecimal') {
+        if (modeRef.current === 'model') frameMeshSelection();
+        else frameKmpEntity(null);
+      } else if (code === 'Home') {
+        const bounds = trackRef.current ? getTrackViewBounds(trackRef.current) : null;
+        if (bounds) {
+          vec3.copy(controller.pivot, bounds.center);
+          controller.distance = bounds.radius * 1.6;
+        }
+      } else {
+        const dx = code === 'Numpad4' ? -1 : code === 'Numpad6' ? 1 : 0;
+        const dy = code === 'Numpad8' ? 1 : code === 'Numpad2' ? -1 : 0;
+        if (event.ctrlKey || event.shiftKey) controller.pan(dx * 40, dy * 40, canvasRef.current?.clientHeight ?? 1);
+        else controller.orbit(dx * Math.PI / 12 * 200, dy * Math.PI / 12 * 200);
+      }
+      controller.update(viewer.inputManager, 0);
+    };
+    window.addEventListener('keydown', handleBlenderKey, true);
+    return () => window.removeEventListener('keydown', handleBlenderKey, true);
+  }, []);
+
   // KMP-mode keyboard: F frames the selection, H hides its layer, the numpad switches views.
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1694,7 +1749,7 @@ export function Noclip3DViewport({
         for (const key of layers) setLayerVisible(key, nextVisible);
         return;
       }
-      const numpadView = NUMPAD_VIEW_MODES[event.code];
+      const numpadView = navigationPresetRef.current === 'editor' ? NUMPAD_VIEW_MODES[event.code] : undefined;
       if (numpadView && onChangeViewMode) {
         event.preventDefault();
         onChangeViewMode(numpadView);
@@ -2040,6 +2095,54 @@ export function Noclip3DViewport({
     };
   }
 
+  function syncNavigationController(viewer: Viewer) {
+    if (playtestSessionRef.current || cameraPreviewStateRef.current.active) return;
+    const previous = viewer.cameraController;
+    if (navigationPresetRef.current === 'editor') {
+      if (previous instanceof BlenderCameraController) {
+        if (previous.orthographic) {
+          const controller = new OrthoCameraController();
+          vec3.copy(controller.translation, previous.pivot);
+          controller.x = controller.xTarget = -Math.PI / 2 - previous.yaw;
+          controller.y = controller.yTarget = Math.PI / 2 + previous.pitch;
+          controller.z = controller.zTarget = -previous.distance * Math.tan(Math.PI / 6) / 10;
+          viewer.setCameraController(controller);
+          controller.update(viewer.inputManager, 0);
+          // The scene supplies its own movement/orthographic scale multiplier.
+          // Match the rendered projection rather than assuming that multiplier is one.
+          const correction = previous.distance * Math.tan(Math.PI / 6) * Math.abs(viewer.camera.projectionMatrix[5]);
+          controller.z = controller.zTarget = controller.z * correction;
+          controller.forceUpdate = true;
+          controller.update(viewer.inputManager, 0);
+          return;
+        }
+        const controller = new FPSCameraController();
+        viewer.setCameraController(controller);
+        viewer.camera.setPerspective(Math.PI / 3, getViewerAspect(viewer), 4, 500000);
+        controller.cameraUpdateForced();
+      }
+      return;
+    }
+    if (previous instanceof BlenderCameraController) return;
+    if (!(previous instanceof FPSCameraController) && !(previous instanceof OrthoCameraController)) return;
+    const controller = new BlenderCameraController();
+    const matrix = mat4.clone(viewer.camera.worldMatrix);
+    const bounds = trackRef.current ? getTrackViewBounds(trackRef.current) : null;
+    controller.distance = bounds ? Math.max(100,
+      (matrix[12] - bounds.center[0]) * matrix[8] +
+      (matrix[13] - bounds.center[1]) * matrix[9] +
+      (matrix[14] - bounds.center[2]) * matrix[10],
+    ) : 1000;
+    viewer.setCameraController(controller);
+    mat4.copy(viewer.camera.worldMatrix, matrix);
+    controller.cameraUpdateForced();
+    if (previous instanceof OrthoCameraController) {
+      controller.orthographic = true;
+      controller.distance = Math.max(1, 1 / (Math.abs(viewer.camera.projectionMatrix[5]) * Math.tan(Math.PI / 6)));
+      vec3.copy(controller.pivot, previous.translation);
+    }
+  }
+
   function flushPendingInteractionCommit() {
     if (interactionCommitFrameRef.current !== null) {
       cancelAnimationFrame(interactionCommitFrameRef.current);
@@ -2190,9 +2293,11 @@ export function Noclip3DViewport({
    * the entity's own extent instead of a mesh bounding box.
    */
   function frameKmpEntity(entityId: string | null): boolean {
+    if (cameraPreviewStateRef.current.active || playtestSessionRef.current) return false;
     const viewer = viewerRef.current;
     const kmp = trackRef.current?.kmp;
     if (!viewer || !kmp) return false;
+    syncNavigationController(viewer);
     const ids = entityId ? [entityId] : selectedIdsRef.current;
     const entities = kmp.entities.filter((entity) => ids.includes(entity.id));
     if (entities.length === 0) return false;
@@ -2230,6 +2335,12 @@ export function Noclip3DViewport({
     const radius = Math.max(120, extent);
     const controller = viewer.cameraController instanceof FPSCameraController ? viewer.cameraController : new FPSCameraController();
     if (!(viewer.cameraController instanceof FPSCameraController)) viewer.setCameraController(controller);
+    if (controller instanceof BlenderCameraController) {
+      vec3.copy(controller.pivot, center);
+      controller.distance = radius * 2.8;
+      controller.update(viewer.inputManager, 0);
+      return true;
+    }
     applyFPSCameraFrame(controller, {
       eye: vec3.fromValues(center[0] + radius * 1.6, center[1] + radius * 1.2, center[2] + radius * 1.9),
       target: center,
@@ -2247,9 +2358,11 @@ export function Noclip3DViewport({
   // `endPointerGesture`. The rules themselves are in `src/ui/viewport/pointerIntent.ts`.
 
   /** Which camera gesture the current view mode and playback state allow. */
-  function cameraGestureOptions() {
+  function cameraGestureOptions(modifiers?: ReturnType<typeof readModifiers>) {
     const viewer = viewerRef.current;
     return {
+      preset: navigationPresetRef.current,
+      modifiers,
       orthographic: viewer ? viewer.cameraController instanceof OrthoCameraController : false,
       // A camera preview or a playtest is driving the camera; the mouse must not fight it.
       mouseLookAllowed: !cameraPreviewStateRef.current.active && !playtestStateRef.current.active,
@@ -2346,8 +2459,13 @@ export function Noclip3DViewport({
     // GrabManager used to focus the canvas for us; keyboard fly needs it focused.
     canvas.focus({ preventScroll: true });
 
+    const cameraMode = cameraModeForButton(button, cameraGestureOptions(readModifiers(event)));
+    if (navigationPresetRef.current === 'blender27' && button === 'right') {
+      beginPointerGesture(canvas, event, 'select');
+      return;
+    }
     if (button !== 'left') {
-      beginPointerGesture(canvas, event, 'camera', cameraModeForButton(button, cameraGestureOptions()));
+      if (cameraMode) beginPointerGesture(canvas, event, 'camera', cameraMode);
       return;
     }
     if (draggingEntityRef.current) return;
@@ -2470,7 +2588,7 @@ export function Noclip3DViewport({
         return;
       }
     }
-    if (entity) {
+    if (entity && navigationPresetRef.current !== 'blender27') {
       pendingEntityDragRef.current = { id: entity.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, additive: additiveSelection };
       dragRevertRef.current = () => revertEntityTransform(entity);
       beginPointerGesture(canvas, event, 'drag');
@@ -2585,7 +2703,14 @@ export function Noclip3DViewport({
     };
     if (!delta || !viewer) return;
     viewer.inputManager.buttons = event.buttons;
-    applyCameraGesture(viewer, cameraLook.mode, delta.dx, delta.dy);
+    const controller = viewer.cameraController;
+    if (controller instanceof BlenderCameraController) {
+      // Modifiers can change while MMB remains held, as in Blender.
+      const mode = cameraModeForButton('middle', cameraGestureOptions(readModifiers(event)));
+      if (mode === 'pan') controller.pan(delta.dx, delta.dy, canvas?.clientHeight ?? 1);
+      else if (mode === 'zoom') controller.zoom(delta.dy / 20);
+      else controller.orbit(delta.dx, delta.dy);
+    } else applyCameraGesture(viewer, cameraLook.mode, delta.dx, delta.dy);
   }
 
   /**
@@ -2609,7 +2734,7 @@ export function Noclip3DViewport({
     }
 
     finishActiveDrag(shouldCommitOnEnd(reason));
-    if (shouldSelectOnRelease(gesture, reason)) performSelectionClick(gesture, canvas);
+    if (shouldSelectOnRelease(gesture, reason, navigationPresetRef.current === 'blender27' ? 'right' : 'left')) performSelectionClick(gesture, canvas);
     updateCanvasCursor();
   }
 
@@ -3144,9 +3269,11 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
 
   /** Frames the free camera on the current mesh selection (F in model mode). */
   function frameMeshSelection(): boolean {
+    if (cameraPreviewStateRef.current.active || playtestSessionRef.current) return false;
     const viewer = viewerRef.current;
     const entry = meshSelectionsRef.current[meshSelectionsRef.current.length - 1];
     if (!viewer || !entry) return false;
+    syncNavigationController(viewer);
     const bounds = getMeshBounds(entry.target);
     if (!bounds) return false;
     const controller = viewer.cameraController instanceof FPSCameraController ? viewer.cameraController : new FPSCameraController();
@@ -3157,6 +3284,12 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
       bounds.center.y * MKW_RENDER_SCALE,
       bounds.center.z * MKW_RENDER_SCALE,
     );
+    if (controller instanceof BlenderCameraController) {
+      vec3.copy(controller.pivot, center);
+      controller.distance = radius * 2.8;
+      controller.update(viewer.inputManager, 0);
+      return true;
+    }
     applyFPSCameraFrame(controller, {
       eye: vec3.fromValues(center[0] + radius * 1.6, center[1] + radius * 1.1, center[2] + radius * 1.9),
       target: center,
@@ -3512,6 +3645,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
   }
 
   function getFreeCameraController(viewer: Viewer): FPSCameraController {
+    syncNavigationController(viewer);
     if (viewer.cameraController instanceof FPSCameraController) return viewer.cameraController;
     const controller = new FPSCameraController();
     viewer.setCameraController(controller);
@@ -3695,6 +3829,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
       const shouldResetCamera = resetFrame || !(viewer.cameraController instanceof FPSCameraController);
       const controller = viewer.cameraController instanceof FPSCameraController ? viewer.cameraController : new FPSCameraController();
       if (!(viewer.cameraController instanceof FPSCameraController)) viewer.setCameraController(controller);
+      if (controller instanceof BlenderCameraController) controller.orthographic = false;
       viewer.camera.setPerspective(Math.PI / 3, getViewerAspect(viewer), 4, 500000);
       if (shouldResetCamera) {
         applyFPSCameraFrame(controller, getInitialCameraFrame(nextTrack));
@@ -3786,6 +3921,23 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
             <option value="dev">Dev</option>
             <option value="topdown">Top</option>
             <option value="ortho">Ortho</option>
+          </select>
+        </label>
+        <label className="viewportModeSelect" title={navigationPreset === 'editor'
+          ? 'Editor: drag to look, hold right mouse + WASD to fly, wheel to dolly'
+          : `${navigationPreset === 'blender27' ? 'Right' : 'Left'} click: select · MMB: orbit · Shift+MMB: pan · Ctrl+MMB / wheel: zoom · Numpad 1/3/7: views (Ctrl: opposite) · Numpad 5: projection · Numpad 2/4/6/8: orbit · Numpad .: frame selection · Home: frame track`}>
+          <span>Controls</span>
+          <select aria-label="Viewport navigation controls" value={navigationPreset} onChange={(event) => {
+            endPointerGesture('blur');
+            const preset = event.currentTarget.value as NavigationPreset;
+            navigationPresetRef.current = preset;
+            setNavigationPreset(preset);
+            saveNavigationPreset(preset);
+            if (viewerRef.current) syncNavigationController(viewerRef.current);
+          }}>
+            <option value="editor">Editor</option>
+            <option value="blender27">Blender 2.7</option>
+            <option value="blender">Blender Modern</option>
           </select>
         </label>
         <button
