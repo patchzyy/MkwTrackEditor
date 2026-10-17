@@ -71,6 +71,20 @@ export function useKmpMode(ctx: EditorModeContext): ModeUi {
     [ctx.validation, file, objectName],
   );
 
+  useEffect(() => {
+    if (!active) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key.toLowerCase() !== 'a' || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+      if (document.documentElement.dataset.playtest === 'active' || document.documentElement.dataset.viewportCameraLook === 'active') return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
+      event.preventDefault();
+      selection.selectEntities(sections.find((section) => section.section === activeSection)!.entityIds);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [active, activeSection, sections, selection]);
+
   const context = useMemo(() => getKmpSelectionContext(file, selection.selectedId), [file, selection.selectedId]);
   // The tree is the single source of naming, so the inspector never says "checkpoint #0" for a
   // row the outliner calls "Group 1 · Checkpoint 1".
@@ -291,6 +305,8 @@ export function useKmpMode(ctx: EditorModeContext): ModeUi {
     ),
     topRightOverlay: (
       <KmpToolsOverlay
+        canCreateRespawns={!!file?.checkpoints.length && !!file?.enemyPoints.length}
+        onCreateRespawns={graph.createRespawnsFromEnemyRoute}
         linkSection={linkSection}
         onChangeLinkSection={(section) => {
           if (section) changeSection(sectionForEntityId(`${section}-0`)!.key);

@@ -1,6 +1,8 @@
 import type { PathLinkSection } from '../Noclip3DViewport';
 
 export interface KmpToolsOverlayProps {
+  canCreateRespawns: boolean;
+  onCreateRespawns: () => void;
   /** Non-null while the connect-groups gesture is armed for that path type. */
   linkSection: PathLinkSection | null;
   onChangeLinkSection: (section: PathLinkSection | null) => void;
@@ -24,6 +26,8 @@ const LINK_SECTIONS: Array<{ key: PathLinkSection; label: string }> = [
  * so it needs no mode.
  */
 export function KmpToolsOverlay({
+  canCreateRespawns,
+  onCreateRespawns,
   linkSection,
   onChangeLinkSection,
   drawingCheckpoints,
@@ -96,12 +100,22 @@ export function KmpToolsOverlay({
         </div>
       </div>
 
+      <button
+        type="button"
+        className="button"
+        disabled={!canCreateRespawns}
+        title="Create and assign a new respawn for every checkpoint at its nearest enemy route point, facing along the route"
+        onClick={onCreateRespawns}
+      >
+        Create checkpoint respawns from enemy routes
+      </button>
+
       <p className="viewportOverlayDetail">
         {drawingCheckpoints
           ? 'Drag across the track to lay down a checkpoint. Press Escape to stop drawing.'
           : linkSection
             ? 'Drag a group end handle onto another group to connect it. Drag onto a group it already leads to, to disconnect.'
-            : 'F frames the selection, H hides its layer, the numpad switches views.'}
+            : 'A selects the active section, F frames the selection, H hides its layer, the numpad switches views.'}
       </p>
     </div>
   );

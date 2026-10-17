@@ -29,6 +29,7 @@ export const EDITOR_SHORTCUTS: ShortcutGroup[] = [
   {
     title: 'Selection',
     entries: [
+      { keys: 'A', description: 'Select every point in the active KMP section' },
       { keys: 'Click', description: 'Select what is under the cursor' },
       { keys: 'Ctrl+Click', description: 'Add to or remove from the selection' },
       { keys: 'Drag', description: 'Marquee-select in the viewport' },

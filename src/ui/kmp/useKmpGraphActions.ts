@@ -11,6 +11,7 @@ import {
 } from '../../lib/kmpFile';
 import {
   addRespawnForCheckpoint,
+  MAX_PATH_POINTS,
   assignNearestRespawns,
   branchGroup,
   checkpointCenter,
@@ -379,6 +380,52 @@ export function useKmpGraphActions({
     });
   }
 
+  function createRespawnsFromEnemyRoute() {
+    run(() => {
+      const file = currentFile();
+      if (!file) return;
+      if (file.enemyPoints.length === 0) throw new Error('Add an enemy route before creating checkpoint respawns.');
+      if (file.respawnPoints.length + file.checkpoints.length > MAX_PATH_POINTS) {
+        throw new Error(`A track can only have ${MAX_PATH_POINTS} respawn points. Remove unused respawns before generating more.`);
+      }
+      const respawnPoints = [...file.respawnPoints];
+      const checkpoints = file.checkpoints.map((checkpoint) => {
+        const center = checkpointCenter(checkpoint);
+        let nearestIndex = 0;
+        let nearestDistance = Infinity;
+        file.enemyPoints.forEach((point, index) => {
+          const distance = (point.position.x - center.x) ** 2 + (point.position.z - center.z) ** 2;
+          if (distance < nearestDistance) {
+            nearestIndex = index;
+            nearestDistance = distance;
+          }
+        });
+        const position = file.enemyPoints[nearestIndex].position;
+        const group = file.enemyGroups.find((group) => nearestIndex >= group.start && nearestIndex < group.start + group.length);
+        const nextGroup = group?.next.map((index) => file.enemyGroups[index]).find((group) => group?.length);
+        const nextPosition = group && nearestIndex + 1 < group.start + group.length
+          ? file.enemyPoints[nearestIndex + 1]?.position
+          : nextGroup ? file.enemyPoints[nextGroup.start]?.position : undefined;
+        const previous = group && nearestIndex > group.start
+          ? file.enemyPoints[nearestIndex - 1]?.position
+          : undefined;
+        const dx = nextPosition ? nextPosition.x - position.x : previous ? position.x - previous.x : 0;
+        const dz = nextPosition ? nextPosition.z - position.z : previous ? position.z - previous.z : 0;
+        const respawnIndex = respawnPoints.length;
+        respawnPoints.push({
+          position: { ...position },
+          rotation: { x: 0, y: dx || dz ? Math.atan2(dx, dz) * 180 / Math.PI : checkpointHeadingDegrees(checkpoint), z: 0 },
+          id: respawnIndex,
+          extraUserData: -1,
+        });
+        return { ...checkpoint, respawnIndex };
+      });
+      commit({ ...file, checkpoints, respawnPoints }, {
+        status: `Created and assigned ${checkpoints.length} checkpoint respawns from enemy routes.`,
+      });
+    });
+  }
+
   /** Renumbers key checkpoints 1, 2, 3 … in the order drivers reach them. */
   function renumberKeyCheckpointsInOrder() {
     run(() => {
@@ -639,6 +686,7 @@ export function useKmpGraphActions({
     createRespawnFromCheckpoint,
     assignNearestRespawn,
     assignAllNearestRespawns,
+    createRespawnsFromEnemyRoute,
     renumberKeyCheckpointsInOrder,
     setCheckpointKind,
     updateStage,
