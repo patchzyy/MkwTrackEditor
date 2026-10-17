@@ -344,7 +344,7 @@ export function useTrackDocument({ setStatus }: { setStatus: Dispatch<SetStateAc
       const brresEntries = archive!.resourceEntries
         .filter((entry) => entry.type === 'file' && entry.data && entry.path.toLowerCase().endsWith('.brres'))
         .sort((a, b) => scoreCommonPreviewResource(b, referencedResources) - scoreCommonPreviewResource(a, referencedResources))
-        .slice(0, smokeMode ? 12 : 180);
+        .slice(0, smokeMode ? 12 : undefined);
       const summaries: Record<string, NoclipBrresSummary> = {};
       for (const entry of brresEntries) {
         if (cancelled || !entry.data) return;

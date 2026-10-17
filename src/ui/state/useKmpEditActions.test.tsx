@@ -66,6 +66,26 @@ beforeEach(() => {
 });
 
 describe('bulk KMP edits', () => {
+  it('generates all three intro shots as one undoable edit', () => {
+    const before = trackRef.current;
+    actions.generateIntroCameraSet([220, 257, 294].map((time, index) => ({
+      time,
+      points: [0, 1, 2].map((point) => ({
+        position: { x: index * 1000 + point * 220, y: 500, z: 0 },
+        target: { x: index * 1000, y: 0, z: 2000 },
+        rotation: { x: 0, y: 0, z: 0 }, fovDegrees: 60,
+      })),
+    })));
+    const generated = trackRef.current;
+    expect(generated!.kmpFile!.cameras).toHaveLength(3);
+    expect(generated!.kmpFile!.routes).toHaveLength(4);
+    expect(selection.selectedIdRef.current).toBe('CAME-0');
+    history.undoEdit();
+    expect(trackRef.current).toBe(before);
+    history.redoEdit();
+    expect(trackRef.current).toBe(generated);
+  });
+
   it('selects all matching object IDs and keeps the primary object', () => {
     actions.selectMatchingObjects();
     expect(selection.selectedIdsRef.current).toEqual(['GOBJ-0', 'GOBJ-1']);

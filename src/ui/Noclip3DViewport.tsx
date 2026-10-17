@@ -282,7 +282,7 @@ export interface CameraPreviewProgress {
 /** Free-camera and viewport-picking helpers the camera inspector needs. */
 export interface CameraViewportApi {
   /** The free camera's eye, a point 2000 units ahead of it, and the matching KMP rotation. */
-  getFreeCameraPose(): { position: Vec3; target: Vec3; rotation: Vec3 } | null;
+  getFreeCameraPose(): { position: Vec3; target: Vec3; rotation: Vec3; fovDegrees: number } | null;
   /** Puts the free camera at `position` looking at `target` (KMP units). */
   lookFrom(position: Vec3, target: Vec3): boolean;
   /** Pulls the free camera back so a camera marker and its sight line are both in view. */
@@ -1491,11 +1491,16 @@ export function Noclip3DViewport({
     const hoveredEntity = hoveredIdRef.current
       ? trackValue?.kmp?.entities.find((entity) => entity.id === hoveredIdRef.current) ?? null
       : null;
-    if (!hoveredEntity) return;
     const routeUsage = getPotiRouteUsage(trackValue?.kmp ?? null);
+    if (mode === 'camera') {
+      const editableIds = getVisibleEntitiesForRouteFilter(trackValue?.kmp?.entities ?? [], routeVisibility, trackValue?.kmp ?? null, routeUsage, undefined, true)
+        .filter((entity) => selectedIds.includes(entity.id)).map((entity) => entity.id);
+      if (editableIds.length !== selectedIds.length) onSelectMany?.(editableIds);
+    }
+    if (!hoveredEntity) return;
     const forcedVisibleObjectRoutes = getForcedVisibleObjectRoutes(trackValue?.kmp ?? null, selectedIdsRef.current, routeUsage);
     if (!isEntityVisibleForRouteFilter(hoveredEntity, routeVisibility, trackValue?.kmp ?? null, routeUsage, forcedVisibleObjectRoutes)) setHoveredId(null);
-  }, [routeVisibility, track?.kmp, selectedIds]);
+  }, [mode, routeVisibility, track?.kmp, selectedIds]);
 
   useEffect(() => {
     applyViewMode(track, false);
@@ -3025,6 +3030,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     const rawObjectId = event.dataTransfer.getData('application/mkw-object-id');
     const rawKmpSection = event.dataTransfer.getData('application/mkw-point-section') as AppendableKmpSection | '';
     const rawLibraryAsset = event.dataTransfer.getData(LIBRARY_ASSET_DRAG_TYPE);
+    if (modeRef.current === 'camera' && rawKmpSection !== 'CAME') return;
     if (!rawObjectId && !rawKmpSection && !rawLibraryAsset) return;
     const position = placeFromScreen(event.clientX, event.clientY, 0, isCollisionSnapModifier(event));
     if (!position) return;
@@ -3068,7 +3074,11 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     const scene = sceneRef.current as SceneGfx & {
       pickEditorPointsInRect?: (normalizedX0: number, normalizedY0: number, normalizedX1: number, normalizedY1: number) => string[];
     } | null;
-    const selectedIds = pickScenePointsInRect(scene, marquee, canvas);
+    let selectedIds = pickScenePointsInRect(scene, marquee, canvas);
+    if (modeRef.current === 'camera') {
+      selectedIds = getVisibleEntitiesForRouteFilter(trackRef.current?.kmp?.entities ?? [], routeVisibilityRef.current, trackRef.current?.kmp ?? null, undefined, undefined, true)
+        .filter((entity) => selectedIds.includes(entity.id)).map((entity) => entity.id);
+    }
     onSelectMany?.(selectedIds, { additive: marquee.additive });
   }
 
@@ -3098,7 +3108,9 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
 
   function pickEntityFromPick(pick: SceneOverlayPick | null): KmpEntity | null {
     if (!pick) return null;
-    return trackRef.current?.kmp?.entities.find((entity) => entity.id === pick.id) ?? null;
+    const kmp = trackRef.current?.kmp ?? null;
+    return getVisibleEntitiesForRouteFilter(kmp?.entities ?? [], routeVisibilityRef.current, kmp, undefined, undefined, modeRef.current === 'camera')
+      .find((entity) => entity.id === pick.id) ?? null;
   }
 
   function toEntityTransformSelection(entity: KmpEntity): ViewportTransformSelection {
@@ -3131,7 +3143,9 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     if (transformSelectionRef.current?.id === id) return { kind: 'external', selection: transformSelectionRef.current };
     const external = transformSelectionsRef.current.find((candidate) => candidate.id === id);
     if (external) return { kind: 'external', selection: external };
-    const entity = trackRef.current?.kmp?.entities.find((candidate) => candidate.id === id);
+    const kmp = trackRef.current?.kmp ?? null;
+    const entity = getVisibleEntitiesForRouteFilter(kmp?.entities ?? [], routeVisibilityRef.current, kmp, undefined, undefined, modeRef.current === 'camera')
+      .find((candidate) => candidate.id === id);
     if (!entity) return null;
     return { kind: 'kmp', entity, selection: toEntityTransformSelection(entity) };
   }
@@ -3144,7 +3158,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     if (!track?.kmp || !viewer || !canvas) return null;
     const routeUsage = getPotiRouteUsage(track.kmp);
     return pickEntityFromScreen(
-      getVisibleEntitiesForRouteFilter(track.kmp.entities, routeVisibilityRef.current, track.kmp, routeUsage),
+      getVisibleEntitiesForRouteFilter(track.kmp.entities, routeVisibilityRef.current, track.kmp, routeUsage, undefined, modeRef.current === 'camera'),
       clientX,
       clientY,
       canvas,
@@ -3675,6 +3689,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
         position,
         target: { x: position.x + unit.x * reach, y: position.y + unit.y * reach, z: position.z + unit.z * reach },
         rotation: eulerFromLookDirection(unit),
+        fovDegrees: viewerRef.current!.camera.fovY * 180 / Math.PI,
       };
     },
     lookFrom(position, target) {
@@ -3822,7 +3837,10 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     if (!track?.kmp || !canvas || !viewer) return null;
     const cursorPosition = placeFromScreen(clientX, clientY, 0, snapToFeatures);
     if (!cursorPosition) return null;
-    return getRouteInsertCandidate(track.kmp, selectedIdRef.current, cursorPosition, clientX, clientY, canvas, viewer);
+    const candidate = getRouteInsertCandidate(track.kmp, selectedIdRef.current, cursorPosition, clientX, clientY, canvas, viewer);
+    if (modeRef.current === 'camera' && candidate && (candidate.target.section !== 'POTI'
+      || getPotiRouteVisibilityKey(candidate.target.routeIndex, getPotiRouteUsage(track.kmp)) !== 'POTI_CAMERA')) return null;
+    return candidate;
   }
 
   function applyViewMode(nextTrack: TrackDocument | null, resetFrame: boolean) {
@@ -4928,14 +4946,18 @@ function isEntityVisibleForRouteFilter(
   return true;
 }
 
-function getVisibleEntitiesForRouteFilter(
+export function getVisibleEntitiesForRouteFilter(
   entities: readonly KmpEntity[],
   routeVisibility: Record<string, boolean>,
   kmp: KmpDocument | null,
   routeUsage?: PotiRouteUsage,
   forcedVisibleObjectRoutes?: ReadonlySet<number>,
+  cameraOnly = false,
 ): KmpEntity[] {
-  return entities.filter((entity) => isEntityVisibleForRouteFilter(entity, routeVisibility, kmp, routeUsage, forcedVisibleObjectRoutes));
+  const usage = routeUsage ?? getPotiRouteUsage(kmp);
+  return entities.filter((entity) => (!cameraOnly || entity.section === 'CAME'
+    || (entity.section === 'POTI' && entity.routePoint && getPotiRouteVisibilityKey(entity.routePoint.routeIndex, usage) === 'POTI_CAMERA'))
+    && isEntityVisibleForRouteFilter(entity, routeVisibility, kmp, usage, forcedVisibleObjectRoutes));
 }
 
 function getViewerAspect(viewer: Viewer): number {
@@ -4976,10 +4998,17 @@ function getPotiRouteUsage(kmp: KmpDocument | null): PotiRouteUsage {
   if (!kmp) return { objectRoutes, cameraRoutes, unusedRoutes };
   for (const route of kmp.routes) unusedRoutes.add(route.index);
   for (const entity of kmp.entities) {
+    if (entity.camera && entity.camera.routeIndex !== 0xff) {
+      cameraRoutes.add(entity.camera.routeIndex);
+      unusedRoutes.delete(entity.camera.routeIndex);
+    }
+    if (entity.area && entity.area.routeIndex !== 0xff) {
+      objectRoutes.add(entity.area.routeIndex);
+      unusedRoutes.delete(entity.area.routeIndex);
+    }
     if (entity.routeIndex === undefined || entity.routeIndex === 0xffff) continue;
     unusedRoutes.delete(entity.routeIndex);
-    if (entity.section === 'CAME') cameraRoutes.add(entity.routeIndex);
-    else if (entity.section === 'GOBJ') objectRoutes.add(entity.routeIndex);
+    if (entity.section === 'GOBJ') objectRoutes.add(entity.routeIndex);
   }
   return { objectRoutes, cameraRoutes, unusedRoutes };
 }

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { CommonResourceArchive, ObjFlowTable } from '../../lib/objflow';
+import { readFileSync } from 'node:fs';
+import { parseCommonResourceArchive, type CommonResourceArchive, type ObjFlowTable } from '../../lib/objflow';
 import type { TrackDocument } from '../../lib/track';
+import { isBrowsableObjectEntry } from '../objects/objectCatalog';
+import { browserEntryDrag, browserFolderEntries, OBJECT_DRAG_TYPE } from './browserEntries';
 import {
   browserGroups,
   browserItemSearchText,
@@ -40,6 +43,41 @@ function folderById(folders: BrowserFolder[], id: string): BrowserFolder {
 }
 
 describe('buildBrowserFolders', () => {
+  it('keeps every object searchable and draggable beyond the old catalog and category limits', () => {
+    const entries = ['kuribo', 'tree', 'lift', 'statue'].flatMap((name, category) =>
+      Array.from({ length: 80 }, (_, index) => ({ objectId: 0x8000 + category * 80 + index, name: `${name}_${index}`, resources: '' })),
+    );
+    const folders = buildBrowserFolders({
+      track: null,
+      objFlow: { entries, byId: new Map(entries.map((entry) => [entry.objectId, entry])) },
+      commonArchive: null,
+      courseAssetDb: null,
+    });
+
+    expect(folderById(folders, 'common').items).toHaveLength(320);
+    for (const id of ['enemies', 'nature', 'gameplay', 'props']) {
+      expect(folderById(folders, id).items).toHaveLength(80);
+    }
+    const results = browserFolderEntries(filterBrowserFolder(folderById(folders, 'common'), 'statue_79'), {
+      track: null, commonArchive: null, commonBrresSummaries: {},
+    });
+    expect(results).toHaveLength(1);
+    expect(browserEntryDrag(results[0])).toEqual({ type: OBJECT_DRAG_TYPE, value: String(entries.at(-1)!.objectId) });
+  });
+
+  it('offers every browsable type from the bundled game object table', () => {
+    const common = parseCommonResourceArchive(new Uint8Array(readFileSync('public/data/MarioKartWii/Race/Common.szs')));
+    const folders = buildBrowserFolders({ track: null, objFlow: common.objFlow, commonArchive: common, courseAssetDb: null });
+    const entries = browserFolderEntries(folderById(folders, 'common'), {
+      track: null, commonArchive: common, commonBrresSummaries: {},
+    });
+    expect(common.objFlow.entries.length).toBeGreaterThan(180);
+    expect(entries.map((entry) => entry.kind === 'object' ? entry.objectId : -1).sort((a, b) => a - b)).toEqual(
+      common.objFlow.entries.filter(isBrowsableObjectEntry).map((entry) => entry.objectId).sort((a, b) => a - b),
+    );
+    for (const entry of entries) expect(browserEntryDrag(entry)?.type).toBe(OBJECT_DRAG_TYPE);
+  });
+
   it('always offers the track-mesh folder, even with nothing loaded', () => {
     const folders = buildBrowserFolders({ track: null, objFlow: null, commonArchive: null, courseAssetDb: null });
     const trackFolder = folderById(folders, 'track');

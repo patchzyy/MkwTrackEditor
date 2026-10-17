@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp, Clapperboard, Copy, Film, Plus, Target, Trash2, Video } from 'lucide-react';
 import { getCameraTypeInfo } from '../../lib/cameraPreview';
 import { NO_CAMERA_LINK, filterCameraRows, type CameraRow } from './cameraDocument';
@@ -19,6 +19,7 @@ export interface CameraOutlinerProps {
   openingChain: ChainEditorProps;
   selectionChain: ChainEditorProps | null;
   canEdit: boolean;
+  introGenerator?: ReactNode;
   onSelect: (row: CameraRow) => void;
   onPreview: (row: CameraRow) => void;
   onAdd: () => void;
@@ -35,6 +36,7 @@ export function CameraOutliner({
   openingChain,
   selectionChain,
   canEdit,
+  introGenerator,
   onSelect,
   onPreview,
   onAdd,
@@ -63,6 +65,7 @@ export function CameraOutliner({
       </div>
 
       <div className="cameraPanelBody">
+        {introGenerator}
         <input
           className="browserSearchInput cameraFilter"
           type="search"

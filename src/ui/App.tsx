@@ -491,6 +491,7 @@ export function App() {
   }, [fillBetweenSelection]);
 
   useEditorShortcuts({
+    editorMode,
     selection,
     selected,
     track,
@@ -504,7 +505,9 @@ export function App() {
     copySelectedEntity: clipboard.copySelectedEntity,
     pasteClipboardEntity: clipboard.pasteClipboardEntity,
     duplicateSelectedEntity: clipboard.duplicateSelectedEntity,
-    deleteSelectedEntity: editActions.deleteSelectedEntity,
+    deleteSelectedEntity: editorMode === 'camera' && selected?.section === 'CAME'
+      ? () => editActions.deleteCameraEntry(selected.index)
+      : editActions.deleteSelectedEntity,
     downloadExport: exportTrackDocument,
     refreshTrack,
     openTrackPicker,

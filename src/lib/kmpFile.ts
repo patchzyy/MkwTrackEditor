@@ -224,7 +224,7 @@ export interface KmpCamera {
   zoomVelocity: number;
   /** How far the look-at point moves from viewStart towards viewEnd per 100/60 s. */
   viewVelocity: number;
-  /** Opening-chain start flag. */
+  /** Start flag; exact behavior unknown. The opening-chain start is in the CAME header. */
   start: number;
   /** "Movie"/route-mode flag. */
   movie: number;

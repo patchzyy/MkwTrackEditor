@@ -15,6 +15,7 @@ import {
   type CameraChainKind,
   type CameraRow,
   type CameraValues,
+  type IntroCameraShot,
 } from './cameraDocument';
 import './camera.css';
 
@@ -43,6 +44,15 @@ export function useCameraMode(ctx: EditorModeContext): ModeUi {
   const progressRef = useRef<CameraPreviewProgress | null>(null);
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [looping, setLooping] = useState(false);
+  const [introShots, setIntroShots] = useState<IntroCameraShot[]>([
+    { points: [], time: 220 }, { points: [], time: 257 }, { points: [], time: 294 },
+  ]);
+  const [capturingIntro, setCapturingIntro] = useState(false);
+
+  useEffect(() => {
+    setCapturingIntro(false);
+    setIntroShots([{ points: [], time: 220 }, { points: [], time: 257 }, { points: [], time: 294 }]);
+  }, [track?.sourceId, track?.fileName]);
 
   const rows = useMemo(() => listCameraRows(kmp), [kmp]);
   const openingChain = useMemo(() => getCameraChain(kmp, 'opening'), [kmp]);
@@ -86,7 +96,7 @@ export function useCameraMode(ctx: EditorModeContext): ModeUi {
     if (!preview) return 0;
     if (preview.sequence) return openingChain.totalFrames;
     const row = rows.find((candidate) => candidate.index === preview.cameraIndex);
-    return row ? Math.max(row.timeFrames, row.animatedFrames) : 0;
+    return row ? (row.timeFrames > 0 ? row.timeFrames : row.animatedFrames) : 0;
   }, [openingChain.totalFrames, preview, rows]);
 
   function startPreview(cameraIndex: number, options: { sequence?: boolean; time?: number } = {}) {
@@ -221,6 +231,68 @@ export function useCameraMode(ctx: EditorModeContext): ModeUi {
         openingChain={buildChainEditor('opening')}
         selectionChain={selectionChain.order.length > 0 || selectionChain.first !== NO_CAMERA_LINK ? buildChainEditor('selection') : null}
         canEdit={kmp !== null}
+        introGenerator={
+          <section className="cameraChain cameraIntroGenerator">
+            <header className="cameraChainHeader">
+              <div>
+                <strong>Create three intro shots</strong>
+                <p className="panelSubtle">Fly to each viewpoint, then capture it in the shot you want.</p>
+              </div>
+            </header>
+            {!capturingIntro ? (
+              <button type="button" className="button" disabled={!kmp || preview !== null} onClick={() => {
+                setIntroShots(introShots.map((shot, index) => ({ ...shot, time: openingChain.steps[index]?.durationFrames || shot.time })));
+                setCapturingIntro(true);
+              }}>Set up intro shots</button>
+            ) : (
+              <>
+                <p className="panelSubtle">The route connects your captured positions with straight lines. Look-at pans from the first capture to the last. One capture makes a stationary shot.</p>
+                {introShots.map((shot, index) => (
+                  <div key={index} className="cameraIntroShot">
+                    <strong>Shot {index + 1} · {shot.points.length} viewpoint{shot.points.length === 1 ? '' : 's'}</strong>
+                    <label>
+                      Duration (frames)
+                      <input type="number" className="input" min={1} step={1} value={shot.time} onChange={(event) => {
+                        const time = event.currentTarget.valueAsNumber;
+                        setIntroShots(introShots.map((current, i) => i === index ? { ...current, time } : current));
+                      }} />
+                    </label>
+                    <div className="cameraRowActions">
+                      <button type="button" className="button" disabled={!kmp || preview !== null} onClick={() => {
+                        const pose = viewportApiRef.current?.getFreeCameraPose();
+                        if (!pose) {
+                          setStatus('The viewport is not ready yet.');
+                          return;
+                        }
+                        setIntroShots(introShots.map((current, i) => i === index ? { ...current, points: [...current.points, pose] } : current));
+                        setStatus(`Captured viewpoint ${shot.points.length + 1} for intro shot ${index + 1}.`);
+                      }}>Capture viewpoint</button>
+                      <button type="button" className="button" disabled={shot.points.length === 0} onClick={() => {
+                        setIntroShots(introShots.map((current, i) => i === index ? { ...current, points: current.points.slice(0, -1) } : current));
+                      }}>Remove last</button>
+                    </div>
+                    <ol className="cameraIntroPoints">
+                      {shot.points.map((point, pointIndex) => (
+                        <li key={pointIndex}>
+                          <button type="button" className="inlineAction" disabled={preview !== null} onClick={() => viewportApiRef.current?.lookFrom(point.position, point.target)}>
+                            View {pointIndex + 1}: {Math.round(point.position.x)}, {Math.round(point.position.y)}, {Math.round(point.position.z)}
+                          </button>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                ))}
+                <p className="panelSubtle">Updates the first three opening cameras and creates missing ones. Other cameras stay available. New shots default to 220, 257 and 294 frames.</p>
+                <div className="cameraRowActions">
+                  <button type="button" className="button" disabled={!kmp || preview !== null || introShots.some((shot) => shot.points.length === 0 || !Number.isFinite(shot.time) || shot.time <= 0)} onClick={() => editActions.generateIntroCameraSet(introShots)}>
+                    Generate intro cameras
+                  </button>
+                  <button type="button" className="button" onClick={() => setCapturingIntro(false)}>Close setup</button>
+                </div>
+              </>
+            )}
+          </section>
+        }
         onSelect={(row) => selectCamera(row)}
         onPreview={(row) => {
           selectCamera(row, false);

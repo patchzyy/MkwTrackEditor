@@ -133,7 +133,6 @@ export function buildBrowserFolders({
         .filter((entry) => entry.name || entry.resources)
         .filter((entry) => isBrowsableObjectEntry(entry))
         .sort((a, b) => countAvailableResources(b, commonArchive) - countAvailableResources(a, commonArchive))
-        .slice(0, 180)
     : [];
   const objects: BrowserObject[] = (realObjectCatalog.length ? realObjectCatalog : objectCatalog).filter(
     (object, index, list) => index === list.findIndex((candidate) => catalogId(candidate) === catalogId(object)),
@@ -145,11 +144,11 @@ export function buildBrowserFolders({
     new Set(objects.map((object) => catalogId(object))),
   ).sort((a, b) => comparePlaceableCourseAssetPriority(a, b));
   const featured = objects.filter((object) => isFeaturedObject(object)).slice(0, 18);
-  const enemies = [...objects.filter((object) => classifyObjectFolder(object) === 'enemies'), ...placeableCourseAssets.filter((asset) => classifyObjectFolder(asset) === 'enemies')].slice(0, 72);
-  const nature = [...objects.filter((object) => classifyObjectFolder(object) === 'nature'), ...placeableCourseAssets.filter((asset) => classifyObjectFolder(asset) === 'nature')].slice(0, 72);
-  const gameplay = [...objects.filter((object) => classifyObjectFolder(object) === 'gameplay'), ...placeableCourseAssets.filter((asset) => classifyObjectFolder(asset) === 'gameplay')].slice(0, 72);
-  const props = [...objects.filter((object) => classifyObjectFolder(object) === 'props'), ...placeableCourseAssets.filter((asset) => classifyObjectFolder(asset) === 'props')].slice(0, 72);
-  const common = [...objects, ...placeableCourseAssets].slice(0, 240);
+  const enemies = [...objects.filter((object) => classifyObjectFolder(object) === 'enemies'), ...placeableCourseAssets.filter((asset) => classifyObjectFolder(asset) === 'enemies')];
+  const nature = [...objects.filter((object) => classifyObjectFolder(object) === 'nature'), ...placeableCourseAssets.filter((asset) => classifyObjectFolder(asset) === 'nature')];
+  const gameplay = [...objects.filter((object) => classifyObjectFolder(object) === 'gameplay'), ...placeableCourseAssets.filter((asset) => classifyObjectFolder(asset) === 'gameplay')];
+  const props = [...objects.filter((object) => classifyObjectFolder(object) === 'props'), ...placeableCourseAssets.filter((asset) => classifyObjectFolder(asset) === 'props')];
+  const common = [...objects, ...placeableCourseAssets];
   const trackAssets = track?.brresFiles.slice(0, 48) ?? [];
   const folders: BrowserFolder[] = [
     { id: 'featured', group: 'objects', label: 'Favourites', detail: `${featured.length} highlighted objects`, kind: 'object', items: featured },
