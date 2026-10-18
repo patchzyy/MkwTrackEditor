@@ -140,7 +140,7 @@ export function samplePolylineByDistance(points: readonly CameraRoutePoint[], di
 
 /**
  * Distance travelled along a route after `frames`, using the per-point speeds
- * (units per frame). Point `i`'s speed drives the segment from `i` to `i + 1`.
+ * (units per frame), blended between the two ends of each segment.
  * A speed of 0 falls back to `fallbackSpeed`.
  */
 export function getRouteDistanceAtFrame(points: readonly CameraRoutePoint[], frames: number, fallbackSpeed = 0): number {
@@ -151,8 +151,11 @@ export function getRouteDistanceAtFrame(points: readonly CameraRoutePoint[], fra
     const segment = distance(points[i].position, points[i + 1].position);
     const speed = points[i].speed > 0 ? points[i].speed : fallbackSpeed;
     if (speed <= 0) return travelled;
-    const segmentFrames = segment / speed;
-    if (remainingFrames <= segmentFrames) return travelled + remainingFrames * speed;
+    if (segment <= 1e-6) continue;
+    const endSpeed = points[i + 1].speed > 0 ? points[i + 1].speed : speed;
+    const change = endSpeed - speed;
+    const segmentFrames = change === 0 ? segment / speed : segment * Math.log(endSpeed / speed) / change;
+    if (remainingFrames <= segmentFrames) return travelled + (change === 0 ? remainingFrames * speed : segment * speed * Math.expm1(change * remainingFrames / segment) / change);
     remainingFrames -= segmentFrames;
     travelled += segment;
   }
@@ -166,7 +169,8 @@ export function getRouteTravelFrames(points: readonly CameraRoutePoint[], fallba
     const segment = distance(points[i].position, points[i + 1].position);
     const speed = points[i].speed > 0 ? points[i].speed : fallbackSpeed;
     if (speed <= 0) return Number.POSITIVE_INFINITY;
-    frames += segment / speed;
+    const endSpeed = points[i + 1].speed > 0 ? points[i + 1].speed : speed;
+    frames += endSpeed === speed ? segment / speed : segment * Math.log(endSpeed / speed) / (endSpeed - speed);
   }
   return frames;
 }

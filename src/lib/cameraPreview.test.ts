@@ -114,17 +114,16 @@ describe('route motion', () => {
     expect(samplePolylineByDistance(route, 9999)).toEqual({ x: 100, y: 0, z: 100 });
   });
 
-  it('uses per-point speeds in units per frame', () => {
-    // 100 units at 2 u/f = 50 frames for the first segment.
-    expect(getRouteDistanceAtFrame(route, 25)).toBeCloseTo(50, 6);
-    expect(getRouteDistanceAtFrame(route, 50)).toBeCloseTo(100, 6);
-    // Second segment runs at 4 u/f.
-    expect(getRouteDistanceAtFrame(route, 60)).toBeCloseTo(140, 6);
+  it('blends per-point speeds in units per frame', () => {
+    expect(getRouteDistanceAtFrame(route, 25)).toBeCloseTo(64.872127, 6);
+    const firstSegmentFrames = 50 * Math.log(2);
+    expect(getRouteDistanceAtFrame(route, firstSegmentFrames)).toBeCloseTo(100, 6);
+    expect(getRouteDistanceAtFrame(route, firstSegmentFrames + 10)).toBeCloseTo(140, 6);
   });
 
   it('drives the camera position for routed cameras', () => {
     const camera = makeCamera({ type: 6, routeIndex: 0, route });
-    expect(sampleCameraPosition(camera, 25)).toEqual({ x: 50, y: 0, z: 0 });
+    expect(sampleCameraPosition(camera, 25).x).toBeCloseTo(64.872127, 6);
   });
 
   it('keeps a routeless camera at its position', () => {
