@@ -467,11 +467,18 @@ Pointer lock is asked for by **one** gesture only: a right-button first-person l
 (`usesPointerLock`). A left click never asks for it. If the browser refuses — it does in the probe
 window, with `WrongDocumentError` — the look falls back to client-coordinate deltas and still works.
 
+Chromium clears any pointer capture the instant pointer lock engages, so that look receives a
+`lostpointercapture` while the right button is still down. That one capture loss is ignored
+(`endsOnLostPointerCapture`): the look keeps running under the lock, and losing the lock itself
+ends it through `pointerlockchange`. Ending the gesture on that capture loss is what made the
+lock last only a frame or two.
+
 Three independent nets make a stuck lock impossible:
 
 1. `endPointerGesture` always calls `releaseCameraLook`, which exits the lock, and it is reached
-   from `pointerup`, `pointercancel`, `lostpointercapture`, a `pointerup` anywhere on `window`,
-   `blur`, `visibilitychange`, `Escape` and unmount.
+   from `pointerup`, `pointercancel`, a `pointerup` anywhere on `window`, `blur`,
+   `visibilitychange`, `Escape` and unmount. A `lostpointercapture` also ends every gesture
+   except the locked look, whose capture is taken away by the lock itself.
 2. A `pointerlockchange` with no camera gesture running exits the lock unconditionally.
 3. Losing the lock mid-gesture ends the gesture rather than leaving it running with no way to move.
 

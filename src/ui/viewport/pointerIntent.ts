@@ -153,6 +153,20 @@ export function usesPointerLock(gesture: ViewportGesture): boolean {
   return gesture.kind === 'camera' && gesture.button === 'right' && gesture.camera === 'look';
 }
 
+/**
+ * Whether losing pointer capture really ends the gesture.
+ *
+ * Pointer lock implicitly releases any pointer capture the moment it engages (Pointer Events,
+ * "implicit release of pointer capture"). Chromium reports that as a `lostpointercapture` on the
+ * canvas while the right button is still down, so treating every capture loss as a release ended
+ * the first-person look a fraction of a second after the lock engaged — and the cleanup then
+ * exited the lock again. A locked look keeps going and is ended by `pointerlockchange` when the
+ * lock itself goes away; every other gesture is over as soon as its capture is gone.
+ */
+export function endsOnLostPointerCapture(gesture: ViewportGesture): boolean {
+  return !usesPointerLock(gesture);
+}
+
 /** The cursor the canvas should show for the gesture in progress. */
 export function cursorForGesture(gesture: ViewportGesture | null): 'default' | 'look' | 'drag' {
   if (!gesture) return 'default';

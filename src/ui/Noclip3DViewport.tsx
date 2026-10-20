@@ -109,6 +109,7 @@ import {
   cameraLookDelta,
   cameraModeForButton,
   cursorForGesture,
+  endsOnLostPointerCapture,
   isAdditiveSelection as isAdditiveSelectionModifier,
   isCollisionSnap as isCollisionSnapModifier,
   movedBeyondSlop,
@@ -3301,6 +3302,19 @@ export function Noclip3DViewport({
     updateCanvasCursor();
   }
 
+  /**
+   * Pointer capture went away. For a right-button look that is expected: pointer lock implicitly
+   * releases the capture when it engages (Chromium fires `lostpointercapture` right after
+   * `pointerlockchange`), and ending the gesture there killed the look a frame after it started
+   * and then exited the lock again. The lock itself ends the gesture if it is lost. Every other
+   * gesture really is over when its capture is.
+   */
+  function handleCanvasLostPointerCapture(event: PointerEvent<HTMLCanvasElement>) {
+    const gesture = pointerGestureRef.current;
+    if (gesture && !endsOnLostPointerCapture(gesture)) return;
+    endPointerGesture('lostcapture', event);
+  }
+
   /** Ends whatever the gesture was editing. `commit` is false only when the user pressed Escape. */
   function finishActiveDrag(commit: boolean) {
     const canvas = canvasRef.current;
@@ -4649,7 +4663,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
         onPointerLeave={handleCanvasPointerLeave}
         onPointerUp={(event) => endPointerGesture('pointerup', event)}
         onPointerCancel={(event) => endPointerGesture('pointercancel', event)}
-        onLostPointerCapture={(event) => endPointerGesture('lostcapture', event)}
+        onLostPointerCapture={handleCanvasLostPointerCapture}
       />
       {marqueeSelection && <div className="marqueeSelection" style={getMarqueeStyle(marqueeSelection, canvasRef.current)} />}
       {smokeMode && (

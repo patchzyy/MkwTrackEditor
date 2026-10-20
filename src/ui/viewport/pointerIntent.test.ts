@@ -6,6 +6,7 @@ import {
   cameraLookDelta,
   cameraModeForButton,
   cursorForGesture,
+  endsOnLostPointerCapture,
   isAdditiveSelection,
   isCollisionSnap,
   movedBeyondSlop,
@@ -140,6 +141,17 @@ describe('camera gestures', () => {
     expect(usesPointerLock(gesture({ kind: 'camera', button: 'right', camera: 'orbit' }))).toBe(false);
     expect(usesPointerLock(gesture({ kind: 'camera', button: 'middle', camera: 'look' }))).toBe(false);
     expect(usesPointerLock(gesture({ kind: 'drag', button: 'left' }))).toBe(false);
+  });
+
+  it('does not end a locked look when pointer lock takes the capture away', () => {
+    // Chromium releases pointer capture when the lock engages; that is not a button release.
+    expect(endsOnLostPointerCapture(gesture({ kind: 'camera', button: 'right', camera: 'look' }))).toBe(false);
+    // Every other gesture still ends when its capture disappears.
+    expect(endsOnLostPointerCapture(gesture())).toBe(true);
+    expect(endsOnLostPointerCapture(gesture({ kind: 'drag' }))).toBe(true);
+    expect(endsOnLostPointerCapture(gesture({ kind: 'camera', button: 'middle', camera: 'look' }))).toBe(true);
+    expect(endsOnLostPointerCapture(gesture({ kind: 'camera', button: 'right', camera: 'orbit' }))).toBe(true);
+    expect(endsOnLostPointerCapture(gesture({ kind: 'select', button: 'left', camera: 'look' }))).toBe(true);
   });
 
   it('drops junk deltas instead of throwing the camera across the track', () => {
