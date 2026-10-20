@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { appendKmpArea, appendKmpPotiRoute, parseKmp, patchKmpAreaField, type KmpDocument, type Vec3 } from '../../lib/kmp';
 import { readKmpFile, writeKmpFile } from '../../lib/kmpFile';
-import { getRouteTravelFrames, sampleCameraPose, samplePolylineByDistance } from '../../lib/cameraPreview';
+import { getRouteTravelFrames, sampleCameraPose } from '../../lib/cameraPreview';
 import { toCameraPreviewDefs } from '../viewport/cameraOverlay';
 import {
   NO_CAMERA_LINK,
@@ -104,119 +104,156 @@ describe('intro camera generation', () => {
   const shots: IntroCameraShot[] = [
     { time: 100, points: [
       { position: vec(0), target: vec(0, 0, 1000), rotation: vec(0), fovDegrees: 60 },
-      { position: vec(300), target: vec(300, 0, 1000), rotation: vec(0), fovDegrees: 50 },
       { position: vec(300, 400), target: vec(300, 400, 1000), rotation: vec(0), fovDegrees: 40 },
     ] },
     { time: 257, points: [{ position: vec(800), target: vec(800, 0, 1000), rotation: vec(0), fovDegrees: 55 }] },
     { time: 294, points: [{ position: vec(1200), target: vec(1200, 0, 1000), rotation: vec(0), fovDegrees: 70 }] },
   ];
 
-  it('creates three linked opening cameras and a route through every captured position', () => {
+  it('creates linked opening cameras with captured positions, targets and zoom', () => {
     const result = generateIntroCameras(createEmptyKmp(), shots);
     const document = parseKmp(result.bytes);
     expect(result.selectedId).toBe('CAME-0');
     expect(getCameraChain(document, 'opening').order).toEqual([0, 1, 2]);
     expect(nextCams(document)).toEqual([1, 2, NO_CAMERA_LINK]);
-    expect(document.routes).toHaveLength(1);
     const file = readKmpFile(result.bytes);
+    expect(file.routes).toHaveLength(1);
     expect(file.routes[0].smooth).toBe(0);
-    expect(file.routes[0].points.map((point) => point.position)).toEqual(shots[0].points.map((point) => point.position));
-    expect(file.routes[0].points.every((point) => point.setting1 === 6)).toBe(true);
-    expect(file.cameras[0].pointVelocity).toBe(600);
-    expect(file.cameras[1]).toMatchObject({ pointVelocity: 0, viewVelocity: 0, zoomVelocity: 0 });
+    expect(file.routes[0].points[0].position).toEqual(shots[0].points[0].position);
+    expect(file.routes[0].points.at(-1)!.position).toEqual(shots[0].points.at(-1)!.position);
+    expect(file.routes[0].points.at(-1)!.setting1).toBeLessThan(file.routes[0].points[0].setting1);
+    expect(file.cameras[0].pointVelocity).toBe(500);
     const defs = toCameraPreviewDefs(document);
     expect(defs.map((def) => def.type)).toEqual([5, 5, 5]);
     expect(sampleCameraPose(defs[0], 0)).toMatchObject({ position: vec(0), target: vec(0, 0, 1000), fovDegrees: 60 });
-    expect(sampleCameraPose(defs[0], 60).position).toEqual(vec(300, 60));
-    expect(sampleCameraPose(defs[0], 150)).toMatchObject({ target: vec(300, 400, 1000), fovDegrees: 40 });
-    expect(sampleCameraPose(defs[0], 150).position.y).toBeCloseTo(400);
+    expect(sampleCameraPose(defs[0], getRouteTravelFrames(defs[0].route!))).toMatchObject({ position: vec(300, 400), target: vec(300, 400, 1000), fovDegrees: 40 });
     expect(defs[1]).toMatchObject({ routeIndex: NO_CAMERA_LINK, time: 257, zoomStart: 55, zoomEnd: 55 });
+    expect(sampleCameraPose(defs[1], 257)).toMatchObject({ position: shots[1].points[0].position, target: shots[1].points[0].target });
   });
 
-  it('keeps moving toward the final route point at the cut without changing the captured angle', () => {
+  it('keeps each shot aimed at its own fixed focal target', () => {
+    const targets = [vec(500, 300, 2000), vec(-800, 600, 4000), vec(2000, 900, -500)];
+    const focusedShots = shots.map((shot, index) => ({
+      ...shot,
+      points: [0, 1, 2].map((point) => ({
+        position: vec(index * 1000 + point * 300, point * 200), target: targets[index], rotation: vec(0), fovDegrees: 60,
+      })),
+    }));
+    const result = generateIntroCameras(createEmptyKmp(), focusedShots);
+    const file = readKmpFile(result.bytes);
+    expect(file.cameras).toHaveLength(3);
+    const defs = toCameraPreviewDefs(parseKmp(result.bytes));
+    for (const [index, def] of defs.entries()) {
+      expect(def.vView).toBe(1);
+      for (const frame of [0, 50, 100, def.time]) {
+        expect(sampleCameraPose(def, frame).target).toEqual(targets[index]);
+      }
+    }
+  });
+
+  it('uses all captures to reduce angular error while keeping one camera per shot', () => {
     const shot: IntroCameraShot = {
       time: 220,
-      points: [0, 1001].map((x) => ({
-        position: vec(x), target: vec(x, 0, 2000), rotation: vec(0), fovDegrees: 60,
+      points: [0, 50, 500, 900, 1000].map((x, index) => ({
+        position: vec(x), target: vec(x, [0, 500, 700, 500, 0][index], 2000), rotation: vec(0), fovDegrees: 60,
       })),
     };
     const document = parseKmp(generateIntroCameras(createEmptyKmp(), [shot, shots[1], shots[2]]).bytes);
-    const def = toCameraPreviewDefs(document)[0];
-    for (const frame of [0, 180, 199, 200.2, 201, 219, 220]) {
+    const defs = toCameraPreviewDefs(document);
+    expect(getCameraChain(document, 'opening').order).toEqual([0, 1, 2]);
+    expect(defs.map((def) => def.time)).toEqual([220, 257, 294]);
+    expect(document.routes[0].points[0].position).toEqual(shot.points[0].position);
+    expect(document.routes[0].points.at(-1)!.position).toEqual(shot.points.at(-1)!.position);
+    const def = defs[0];
+    const travelFrames = getRouteTravelFrames(def.route!, def.vCam / 100);
+    const endpointsOnly = { ...def, viewStart: shot.points[0].target, viewEnd: shot.points.at(-1)!.target, vView: 400 };
+    let fittedError = 0;
+    let endpointsError = 0;
+    for (const point of shot.points) {
+      const frame = point.position.x / 1000 * travelFrames;
       const pose = sampleCameraPose(def, frame);
-      expect(pose.target.x - pose.position.x).toBeCloseTo(0, 1);
-      expect(pose.target.z - pose.position.z).toBeCloseTo(2000, 3);
+      const oldPose = sampleCameraPose(endpointsOnly, frame);
+      const capturedPitch = Math.atan2(point.target.y, 2000);
+      fittedError += (Math.atan2(pose.target.y - pose.position.y, pose.target.z - pose.position.z) - capturedPitch) ** 2;
+      endpointsError += (Math.atan2(oldPose.target.y - oldPose.position.y, oldPose.target.z - oldPose.position.z) - capturedPitch) ** 2;
     }
-    expect(sampleCameraPose(def, 219).position.x).toBeCloseTo(876);
-    expect(sampleCameraPose(def, 220).position.x).toBeCloseTo(880);
-    expect(sampleCameraPose(def, 220).position.x).toBeLessThan(1001);
-    expect(def.time).toBe(220);
-    expect(getCameraChain(document, 'opening').steps.map((step) => step.durationFrames)).toEqual([220, 257, 294]);
+    expect(fittedError).toBeLessThan(endpointsError / 2);
+    const regenerated = parseKmp(generateIntroCameras(document, [shot, shots[1], shots[2]]).bytes);
+    expect(regenerated.entities.filter((entity) => entity.section === 'CAME')).toHaveLength(3);
+    expect(regenerated.routes).toHaveLength(1);
   });
 
-  it('preserves the shot duration and synchronizes pan and zoom with the slower route', () => {
-    const shot: IntroCameraShot = { ...shots[0], time: 220 };
-    const document = parseKmp(generateIntroCameras(createEmptyKmp(), [shot, shots[1], shots[2]]).bytes);
-    const def = toCameraPreviewDefs(document)[0];
-    const routeFrames = getRouteTravelFrames(def.route!, def.vCam / 100);
-    expect(routeFrames).toBeGreaterThanOrEqual(shot.time + 5);
-    expect(def.time).toBe(shot.time);
-    expect(sampleCameraPose(def, shot.time).position).not.toEqual(shot.points.at(-1)!.position);
-    const end = sampleCameraPose(def, routeFrames);
-    expect(end.position.x).toBeCloseTo(shot.points.at(-1)!.position.x);
-    expect(end.position.y).toBeCloseTo(shot.points.at(-1)!.position.y);
-    expect(end.position.z).toBeCloseTo(shot.points.at(-1)!.position.z);
-    expect(end.target).toEqual(shot.points.at(-1)!.target);
-    expect(end.fovDegrees).toBe(shot.points.at(-1)!.fovDegrees);
-    expect(sampleCameraPose(def, routeFrames + 10).target).toEqual(end.target);
-  });
-
-  it('keeps the exported eye and deliberate pan synchronized when the game blends route point speeds', () => {
+  it('gently rounds route corners while preserving endpoints and a fixed focal target', () => {
+    const target = vec(500, 300, 2000);
     const shot: IntroCameraShot = {
       time: 220,
+      points: [vec(0), vec(1000), vec(1000, 1000)].map((position) => ({ position, target, rotation: vec(0), fovDegrees: 60 })),
+    };
+    const result = generateIntroCameras(createEmptyKmp(), [shot, shots[1], shots[2]]);
+    const file = readKmpFile(result.bytes);
+    const positions = file.routes[0].points.map((point) => point.position);
+    expect(file.cameras).toHaveLength(3);
+    expect(file.cameras[0]).toMatchObject({ viewVelocity: 1, viewStart: target, viewEnd: target, time: 220 });
+    expect(file.routes[0].smooth).toBe(0);
+    expect(positions).toEqual(expect.arrayContaining([vec(0), vec(900), vec(943.75, 6.25), vec(975, 25), vec(993.75, 56.25), vec(1000, 100), vec(1000, 1000)]));
+    const def = toCameraPreviewDefs(parseKmp(result.bytes))[0];
+    expect(getRouteTravelFrames(def.route!, def.vCam / 100)).toBeGreaterThan(shot.time);
+    expect(sampleCameraPose(def, 100).target).toEqual(target);
+  });
+
+  it('eases down toward the endpoint without changing shot duration or focal target', () => {
+    const shot: IntroCameraShot = {
+      time: 220,
+      points: [0, 1001].map((x) => ({ position: vec(x), target: vec(500, 300, 2000), rotation: vec(0), fovDegrees: 60 })),
+    };
+    const document = parseKmp(generateIntroCameras(createEmptyKmp(), [shot, shots[1], shots[2]]).bytes);
+    const def = toCameraPreviewDefs(document)[0];
+    expect(getRouteTravelFrames(def.route!, def.vCam / 100)).toBeGreaterThan(shot.time);
+    for (const frame of [0, 180, 199, 200.2, 201, 219, 220]) {
+      const pose = sampleCameraPose(def, frame);
+      expect(pose.target).toEqual(vec(500, 300, 2000));
+    }
+    expect(sampleCameraPose(def, 220).position.x).toBeGreaterThan(sampleCameraPose(def, 219).position.x);
+    expect(sampleCameraPose(def, 220).position.x).toBeLessThan(shot.points[1].position.x);
+    const earlySpeed = sampleCameraPose(def, 50).position.x - sampleCameraPose(def, 49).position.x;
+    const lateSpeed = sampleCameraPose(def, 220).position.x - sampleCameraPose(def, 219).position.x;
+    expect(lateSpeed).toBeLessThan(earlySpeed / 2);
+    expect(def.time).toBe(shot.time);
+  });
+
+  it('targets thirty frames of movement beyond each assigned shot duration', () => {
+    const movingShots = [220, 257, 294].map((time) => ({
+      time,
+      points: [0, 10000].map((x) => ({ position: vec(x), target: vec(500, 300, 2000), rotation: vec(0), fovDegrees: 60 })),
+    }));
+    const document = parseKmp(generateIntroCameras(createEmptyKmp(), movingShots).bytes);
+    const defs = toCameraPreviewDefs(document);
+    for (const [index, def] of defs.entries()) {
+      expect(def.time).toBe(movingShots[index].time);
+      const movementFrames = getRouteTravelFrames(def.route!, def.vCam / 100);
+      expect(Math.abs(movementFrames - def.time - 30)).toBeLessThan(5);
+      expect(sampleCameraPose(def, def.time).position.x).toBeLessThan(10000);
+      expect(sampleCameraPose(def, def.time).position.x).toBeGreaterThan(sampleCameraPose(def, def.time - 1).position.x);
+    }
+  });
+
+  it('fits intermediate viewing angles for a stationary pan without adding cameras', () => {
+    const shot: IntroCameraShot = {
+      time: 100,
       points: [
         { position: vec(0), target: vec(0, 0, 2000), rotation: vec(0), fovDegrees: 60 },
-        { position: vec(10000), target: vec(12000), rotation: vec(0), fovDegrees: 60 },
+        { position: vec(0), target: vec(2000), rotation: vec(0, 90), fovDegrees: 50 },
+        { position: vec(0), target: vec(0, 0, -2000), rotation: vec(0, 180), fovDegrees: 40 },
       ],
     };
     const document = parseKmp(generateIntroCameras(createEmptyKmp(), [shot, shots[1], shots[2]]).bytes);
-    const def = toCameraPreviewDefs(document)[0];
-    const points = def.route!;
-    let travelled = 0;
-    let segmentStart = 0;
-    let segment = 0;
-    let angle = 0;
-    // PAL 0x805adcb0 blends POTI speeds using the interpolator's segment progress.
-    for (let frame = 1; frame <= shot.time; frame++) {
-      let length = points[segment + 1].position.x - points[segment].position.x;
-      while (travelled >= segmentStart + length) {
-        segmentStart += length;
-        segment++;
-        length = points[segment + 1].position.x - points[segment].position.x;
-      }
-      const progress = (travelled - segmentStart) / length;
-      travelled += points[segment].speed + (points[segment + 1].speed - points[segment].speed) * progress;
-      const eye = samplePolylineByDistance(points, travelled);
-      const pose = sampleCameraPose(def, frame);
-      expect(eye.x).toBeCloseTo(pose.position.x, 5);
-      const nextAngle = Math.atan2(pose.target.x - eye.x, pose.target.z - eye.z) * 180 / Math.PI;
-      if (frame > 180) expect(Math.abs(nextAngle - angle)).toBeLessThan(1);
-      angle = nextAngle;
-    }
-    expect(segment).toBe(points.length - 2);
-    expect(travelled).toBeLessThan(shot.points.at(-1)!.position.x);
-    expect(angle).toBeGreaterThan(85);
-    expect(def.time).toBe(220);
-  });
-
-  it('keeps the minimum route speed and saved duration for routes too short to approach the endpoint until the cut', () => {
-    const shot: IntroCameraShot = {
-      time: 220,
-      points: [0, 2].map((x) => ({ position: vec(x), target: vec(x, 0, 1000), rotation: vec(0), fovDegrees: 60 })),
-    };
-    const file = readKmpFile(generateIntroCameras(createEmptyKmp(), [shot, shots[1], shots[2]]).bytes);
-    expect(file.cameras[0]).toMatchObject({ time: 220, pointVelocity: 100, viewVelocity: 100 });
-    expect(file.routes[0].points.slice(0, -1).every((point) => point.setting1 === 1)).toBe(true);
+    const defs = toCameraPreviewDefs(document);
+    expect(defs).toHaveLength(3);
+    const middle = sampleCameraPose(defs[0], 50);
+    expect(middle.position).toEqual(vec(0));
+    expect(middle.target.x).toBeGreaterThan(0);
+    expect(middle.target.z).toBeCloseTo(0);
+    expect(middle.fovDegrees).toBe(50);
   });
 
   it('updates existing cameras in chain order and reuses exclusive routes on repeated generation', () => {
@@ -236,17 +273,18 @@ describe('intro camera generation', () => {
     expect(file.cameras[3].time).toBe(100);
   });
 
-  it('clears inherited flags and rotation while aiming with captured look-at points', () => {
+  it('clears inherited flags and uses captured rotation and look-at points', () => {
     let document = withCameras(3, [{ shake: 4, start: 1, movie: 2, rotation: vec(10, 20, 30) }]);
     document = parseKmp(setChainOrder(document, 'opening', [0, 1, 2]));
     const shot = { ...shots[0], points: shots[0].points.map((point) => ({ ...point, rotation: vec(15, 45, 5) })) };
     const result = generateIntroCameras(document, [shot, shots[1], shots[2]]);
     const file = readKmpFile(result.bytes);
     for (const camera of file.cameras) {
-      expect(camera).toMatchObject({ type: 5, shake: 0, start: 0, movie: 0, rotation: vec(0) });
+      expect(camera).toMatchObject({ type: 5, shake: 0, start: 0, movie: 0 });
     }
     expect(file.cameras[0]).toMatchObject({ viewStart: shot.points[0].target, viewEnd: shot.points.at(-1)!.target });
-    expect(sampleCameraPose(toCameraPreviewDefs(parseKmp(result.bytes))[0], 0).roll).toBe(0);
+    expect(file.cameras[0].rotation).toEqual(vec(15, 45, 5));
+    expect(sampleCameraPose(toCameraPreviewDefs(parseKmp(result.bytes))[0], 0).roll).toBe(5);
   });
 
   it('preserves a shared route and its references when replacing an intro path', () => {
@@ -278,10 +316,10 @@ describe('intro camera generation', () => {
   });
 
   it('rejects camera speed and zoom speed overflow instead of clamping or wrapping the stored values', () => {
-    const shot = { time: 1, points: [0, 3930].map((x) => ({ position: vec(x), target: vec(0, 0, 1000), rotation: vec(0), fovDegrees: 60 })) };
+    const shot = { time: 1, points: [0, 2674].map((x) => ({ position: vec(x), target: vec(0, 0, 1000), rotation: vec(0), fovDegrees: 60 })) };
     const file = readKmpFile(generateIntroCameras(createEmptyKmp(), [shot, shots[1], shots[2]]).bytes);
-    expect(file.cameras[0].pointVelocity).toBe(65500);
-    expect(() => generateIntroCameras(createEmptyKmp(), [{ ...shot, time: 0.99 }, shots[1], shots[2]])).toThrow('Increase its duration');
+    expect(file.cameras[0].pointVelocity).toBeLessThanOrEqual(65535);
+    expect(() => generateIntroCameras(createEmptyKmp(), [{ ...shot, points: [shot.points[0], { ...shot.points[1], position: vec(20000) }] }, shots[1], shots[2]])).toThrow('Increase its duration');
     expect(() => generateIntroCameras(createEmptyKmp(), [{
       time: 0.01,
       points: [30, 100].map((fovDegrees) => ({ position: vec(0), target: vec(0, 0, 1000), rotation: vec(0), fovDegrees })),

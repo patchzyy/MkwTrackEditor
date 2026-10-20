@@ -26,6 +26,7 @@ import {
   NO_CAMERA_LINK,
   buildOpeningCameraChain,
   getCameraAnimationFrames,
+  getRouteTravelFrames,
   getCameraTypeInfo,
   isOpeningCameraType,
   type CameraTypeInfo,
@@ -413,13 +414,13 @@ export interface IntroCameraShot {
   time: number;
 }
 
-/** Reuses the first three opening cameras and gives each shot its captured movement path. */
+/** Reuses three opening cameras and fits each pan to all of its captured viewpoints. */
 export function generateIntroCameras(document: KmpDocument, shots: IntroCameraShot[]): CameraEditResult {
   const file = readKmpFile(document.original);
-  const order = getCameraChain(document, 'opening').order.slice(0, 3);
   if (shots.length !== 3 || shots.some((shot) => shot.points.length === 0 || !Number.isFinite(shot.time) || shot.time <= 0)) {
     throw new Error('Capture at least one viewpoint and set a positive duration for each of the three shots.');
   }
+  const order = getCameraChain(document, 'opening').order.slice(0, 3);
   while (order.length < 3) {
     if (file.cameras.length >= NO_CAMERA_LINK) throw new Error('There is no room for another intro camera in this KMP.');
     order.push(file.cameras.length);
@@ -434,20 +435,82 @@ export function generateIntroCameras(document: KmpDocument, shots: IntroCameraSh
     const first = shot.points[0];
     const last = shot.points[shot.points.length - 1];
     const camera = file.cameras[order[index]];
-    const positions = shot.points.map((point) => point.position);
+    const positions = shot.points.flatMap((point, i) => {
+      if (i === 0 || i === shot.points.length - 1) return [point.position];
+      // Round only the nearest tenth of each leg, keeping the rest of the path straight.
+      const before = shot.points[i - 1].position;
+      const after = shot.points[i + 1].position;
+      return [0, 0.25, 0.5, 0.75, 1].map((t) => ({
+        x: (1 - t) ** 2 * (point.position.x + (before.x - point.position.x) * 0.1) + 2 * (1 - t) * t * point.position.x + t ** 2 * (point.position.x + (after.x - point.position.x) * 0.1),
+        y: (1 - t) ** 2 * (point.position.y + (before.y - point.position.y) * 0.1) + 2 * (1 - t) * t * point.position.y + t ** 2 * (point.position.y + (after.y - point.position.y) * 0.1),
+        z: (1 - t) ** 2 * (point.position.z + (before.z - point.position.z) * 0.1) + 2 * (1 - t) * t * point.position.z + t ** 2 * (point.position.z + (after.z - point.position.z) * 0.1),
+      }));
+    });
+    const distances = [0];
+    for (let point = 1; point < shot.points.length; point++) {
+      const a = shot.points[point - 1].position;
+      const b = shot.points[point].position;
+      distances.push(distances[point - 1] + Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z));
+    }
     let length = 0;
     for (let point = 1; point < positions.length; point++) {
       const a = positions[point - 1];
       const b = positions[point];
       length += Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
     }
-    // Aim to reach the endpoint five frames after the cut, rounding down to keep moving.
-    const speed = Math.max(1, Math.floor(length / (shot.time + 5)));
-    // POTI speeds are whole units per frame. Match the pan to the actual route duration
-    // so it cannot keep turning after the camera has reached the final route point.
-    const travelFrames = length > 0 ? length / speed : shot.time;
+    let viewStart = first.target;
+    let viewEnd = last.target;
+    if (shot.points.length > 2) {
+      // CAME can only pan along one straight line. Fit all targets by route progress
+      // rather than discarding the intermediate captures. A stationary shot uses time.
+      const progress = distances.map((distance, point) => distances[distances.length - 1] > 0 ? distance / distances[distances.length - 1] : point / (shot.points.length - 1));
+      const mean = progress.reduce((sum, value) => sum + value, 0) / progress.length;
+      const variance = progress.reduce((sum, value) => sum + (value - mean) ** 2, 0);
+      viewStart = { ...first.target };
+      viewEnd = { ...last.target };
+      for (const axis of ['x', 'y', 'z'] as const) {
+        const targetMean = shot.points.reduce((sum, point) => sum + point.target[axis], 0) / shot.points.length;
+        const slope = shot.points.reduce((sum, point, i) => sum + (progress[i] - mean) * (point.target[axis] - targetMean), 0) / variance;
+        viewStart[axis] = targetMean - slope * mean;
+        viewEnd[axis] = viewStart[axis] + slope;
+      }
+    }
+    // Slow down over the last 30% of the path to a tenth of the cruising speed.
+    // The integral of this blended speed profile takes about 1.47 times as long.
+    let speed = Math.max(1, Math.floor(length * 1.47 / (shot.time + 30)));
+    let travelled = 0;
+    const routePoints = positions.flatMap((position, point) => {
+      const before = positions[point - 1];
+      const segment = point === 0 ? 0 : Math.hypot(position.x - before.x, position.y - before.y, position.z - before.z);
+      const points: { position: Vec3; speed: number }[] = [];
+      if (travelled < length * 0.7 && length * 0.7 < travelled + segment) {
+        const t = (length * 0.7 - travelled) / segment;
+        points.push({
+          position: { x: before.x + (position.x - before.x) * t, y: before.y + (position.y - before.y) * t, z: before.z + (position.z - before.z) * t },
+          speed: 1,
+        });
+      }
+      travelled += segment;
+      points.push({ position, speed: length > 0 ? Math.min(1, 0.1 + 3 * (1 - travelled / length)) : 1 });
+      return points;
+    });
+    // Choose the nearest whole-unit speed after endpoint easing and rounding, aiming
+    // for half a second of movement remaining when the assigned shot cuts.
+    let travelFrames = shot.time;
+    let timingError = Infinity;
+    for (const candidate of [Math.max(1, speed - 1), speed, speed + 1]) {
+      const frames = length > 0 ? getRouteTravelFrames(routePoints.map((point) => ({ ...point, speed: Math.max(1, Math.round(candidate * point.speed)) }))) : shot.time;
+      const error = Math.abs(frames - (shot.time + 30));
+      if (error < timingError) {
+        speed = candidate;
+        travelFrames = frames;
+        timingError = error;
+      }
+    }
+    for (const point of routePoints) point.speed = Math.max(1, Math.round(speed * point.speed));
     const pointVelocity = length > 0 ? speed * 100 : 0;
-    const viewVelocity = Math.ceil(Math.hypot(last.target.x - first.target.x, last.target.y - first.target.y, last.target.z - first.target.z) * 100 / travelFrames);
+    // PAL 0x805aa9fc skips applying the look-at target entirely when view speed is zero.
+    const viewVelocity = Math.max(1, Math.ceil(Math.hypot(viewEnd.x - viewStart.x, viewEnd.y - viewStart.y, viewEnd.z - viewStart.z) * 100 / travelFrames));
     const zoomVelocity = Math.ceil(Math.abs(last.fovDegrees - first.fovDegrees) * 100 / travelFrames);
     if (pointVelocity > 0xffff || viewVelocity > 0xffff || zoomVelocity > 0xffff) {
       throw new Error(`Shot ${index + 1} moves too far for its duration. Increase its duration or move the viewpoints closer together.`);
@@ -465,9 +528,7 @@ export function generateIntroCameras(document: KmpDocument, shots: IntroCameraSh
       if (routeIndex >= NO_CAMERA_LINK) throw new Error('There is no room for another camera route in this KMP.');
       file.routes[routeIndex] = {
         smooth: 0, forwardBackward: 1,
-        // The game blends neighboring point speeds, so a zero at the end slows the eye
-        // while the look-at pan keeps moving. Keep the speed constant through the cut.
-        points: positions.map((position) => ({ position, setting1: speed, setting2: 0 })),
+        points: routePoints.map((point) => ({ position: point.position, setting1: point.speed, setting2: 0 })),
       };
     }
     Object.assign(camera, {
@@ -475,8 +536,8 @@ export function generateIntroCameras(document: KmpDocument, shots: IntroCameraSh
       nextIndex: order[index + 1] ?? NO_CAMERA_LINK,
       shake: 0, start: 0, movie: 0,
       routeIndex, pointVelocity, viewVelocity, zoomVelocity,
-      position: first.position, rotation: ZERO_VEC3,
-      viewStart: first.target, viewEnd: last.target,
+      position: first.position, rotation: first.rotation,
+      viewStart, viewEnd,
       zoomStart: first.fovDegrees, zoomEnd: last.fovDegrees, time: shot.time,
     });
   }

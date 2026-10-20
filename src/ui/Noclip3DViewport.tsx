@@ -151,6 +151,8 @@ interface Noclip3DViewportProps {
   createView?: CreateViewProps | null;
   /** Drives the in-viewport CAME playback. `null` restores the free camera. */
   cameraPreview?: CameraPreviewRequest | null;
+  /** Keeps the free camera aimed at this point while positioning intro camera captures. */
+  cameraFocusTarget?: Vec3 | null;
   onCameraPreviewEnd?: () => void;
   /** Reports the playback clock every rendered frame. Written into a ref, never into state. */
   onCameraPreviewProgress?: (progress: CameraPreviewProgress) => void;
@@ -853,6 +855,7 @@ export function Noclip3DViewport({
   mode: modeProp = 'kmp',
   createView: createViewProp = null,
   cameraPreview = null,
+  cameraFocusTarget = null,
   onCameraPreviewEnd,
   onCameraPreviewProgress,
   onMoveCameraViewPoint,
@@ -1094,6 +1097,7 @@ export function Noclip3DViewport({
   const importedMeshInstancesRef = useRef<Map<string, { instanceId: string; signature: string }>>(new Map());
   const resolveImportedMeshSourceRef = useRef(resolveImportedMeshSource);
   const cameraPreviewRef = useRef<CameraPreviewRequest | null>(cameraPreview);
+  const cameraFocusTargetRef = useRef(cameraFocusTarget);
   /** Dev-hook override so `window.__mkwViewport.previewCamera` survives re-renders. */
   const devCameraPreviewRef = useRef<CameraPreviewRequest | null | undefined>(undefined);
   const cameraPreviewStateRef = useRef<{
@@ -1161,9 +1165,14 @@ export function Noclip3DViewport({
   meshGranularityRef.current = activeMeshGranularity;
   meshSelectionsRef.current = meshSelections;
   cameraPreviewRef.current = devCameraPreviewRef.current !== undefined ? devCameraPreviewRef.current : cameraPreview;
+  cameraFocusTargetRef.current = cameraFocusTarget;
   cameraPreviewDefsRef.current = track?.kmp ? toCameraPreviewDefs(track.kmp) : [];
   playtestSessionRef.current = playtestSession;
   const playtestActive = playtestSession !== null && playtestSession !== undefined;
+
+  useEffect(() => {
+    if (cameraFocusTarget) viewerRef.current?.cameraController?.cameraUpdateForced();
+  }, [cameraFocusTarget]);
 
   useEffect(() => {
     const canvas: HTMLCanvasElement | null = canvasRef.current;
@@ -1186,6 +1195,13 @@ export function Noclip3DViewport({
       // click into a camera turn. The viewport drives the camera controllers explicitly instead.
       viewer.inputManager.isMouseEnabled = false;
       viewerRef.current = viewer;
+      viewer.oncamerachanged = () => {
+        const target = cameraFocusTargetRef.current;
+        if (target && modeRef.current === 'camera' && !cameraPreviewStateRef.current.active && !playtestSessionRef.current) {
+          const pose = cameraViewportApi.getFreeCameraPose();
+          if (pose) cameraViewportApi.lookFrom(pose.position, target);
+        }
+      };
       setViewerReady(true);
       const resizeObserver = new ResizeObserver(() => resizeToDisplay());
       resizeObserver.observe(viewportElement);
