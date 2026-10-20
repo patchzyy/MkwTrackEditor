@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  Check,
   ChevronDown,
   ChevronUp,
   CircleHelp,
@@ -7,6 +8,7 @@ import {
   Maximize,
   Minimize,
   Redo2,
+  RefreshCw,
   RotateCcw,
   Scan,
   Undo2,
@@ -23,6 +25,9 @@ import type { MaterialDockTab } from './MaterialMode';
 import type { MaterialDocChange } from './MaterialInspector';
 import { describeShader } from './materialDoc';
 import { useArchiveTextures } from './useArchiveTextures';
+
+/** Whether the viewport shows what the editor holds: waiting for a pause, rebuilding, or in step. */
+export type PreviewPhase = 'idle' | 'pending' | 'rebuilding';
 
 export interface ShaderGraphDockProps {
   open: boolean;
@@ -65,6 +70,11 @@ export interface ShaderGraphDockProps {
   onSelectionChange?: (nodeIds: string[]) => void;
   /** When `key` changes, the graph selects `nodeIds` and frames them. */
   selectionRequest?: { nodeIds: string[]; key: number } | null;
+  /**
+   * The state of the viewport preview, shown in the header. Hosts that write straight to a scene
+   * of their own (the Model Studio) leave it out.
+   */
+  preview?: { phase: PreviewPhase; onUpdateNow?: () => void };
 }
 
 /**
@@ -107,6 +117,7 @@ export function ShaderGraphDock({
   onChangeDoc,
   onSelectionChange,
   selectionRequest,
+  preview,
 }: ShaderGraphDockProps) {
   const [fitRequest, setFitRequest] = useState(0);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -219,6 +230,7 @@ export function ShaderGraphDock({
         )}
 
         <div className="materialDockStatus">
+          {preview && materialRef && <PreviewIndicator phase={preview.phase} onUpdateNow={preview.onUpdateNow} />}
           {error && graphDrivesMaterial && <AlertTriangle size={13} className="materialDockStatusIcon" aria-hidden="true" />}
           <span className={error && graphDrivesMaterial ? 'materialDockStatusText error' : 'materialDockStatusText'} title={status}>{status}</span>
           {warningCount > 0 && <span className="materialTag">{warningCount} note{warningCount === 1 ? '' : 's'}</span>}
@@ -240,7 +252,7 @@ export function ShaderGraphDock({
             <EmptyState
               icon={<Wand2 size={22} />}
               title="No material selected"
-              description="Pick a material on the left and its shader graph appears here."
+              description="Click something in the viewport and its shader graph appears here."
             />
           ) : tab === 'stages' ? (
             <StagesTable stages={stages} />
@@ -273,6 +285,34 @@ export function ShaderGraphDock({
         </div>
       )}
     </section>
+  );
+}
+
+/** "Updating preview…" while the viewport is waiting for a pause, "Preview up to date" otherwise. */
+function PreviewIndicator({ phase, onUpdateNow }: { phase: PreviewPhase; onUpdateNow?: () => void }) {
+  if (phase === 'idle') {
+    return (
+      <span className="materialPreviewState is-idle" title="The viewport shows your latest changes.">
+        <Check size={12} aria-hidden="true" />
+        Preview up to date
+      </span>
+    );
+  }
+  const waiting = phase === 'pending';
+  return (
+    <span
+      className="materialPreviewState is-busy"
+      role="status"
+      title={waiting ? 'The viewport updates a moment after you stop changing things.' : 'Building the track again with your changes.'}
+    >
+      <RefreshCw size={12} className="materialPreviewSpin" aria-hidden="true" />
+      {waiting ? 'Updating preview…' : 'Rebuilding preview…'}
+      {waiting && onUpdateNow && (
+        <button type="button" className="materialPreviewNow" onClick={onUpdateNow}>
+          Now
+        </button>
+      )}
+    </span>
   );
 }
 

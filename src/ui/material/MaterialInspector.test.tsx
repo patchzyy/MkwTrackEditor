@@ -113,7 +113,7 @@ describe('MaterialInspector', () => {
 
   it('shows the five plain-language sections for a selected material', () => {
     const markup = renderInspector(docWithLayer());
-    for (const title of ['Textures (1)', 'Transparency', 'Lighting', 'Colours', 'Surface']) {
+    for (const title of ['Textures', 'Transparency', 'Lighting', 'Colours', 'Surface']) {
       expect(markup).toContain(title);
     }
   });
@@ -151,10 +151,11 @@ describe('MaterialInspector', () => {
     expect(markup).not.toContain('Colour 4');
   });
 
-  it('names the material, its model and how much of the course it draws', () => {
+  it('names the material and how much of the model it draws', () => {
     const markup = renderInspector(docWithLayer());
     expect(markup).toContain('road');
-    expect(markup).toContain('course');
+    // The model's own name is in the "On this ..." strip above, not repeated here.
+    expect(markup).not.toContain('course');
     expect(markup).toContain('4 meshes');
   });
 
@@ -171,7 +172,9 @@ describe('MaterialInspector', () => {
     const markup = renderSelected();
     expect(markup).toContain('detailsTextureRow');
     expect(markup).toContain('asphalt');
-    expect(markup).toContain('Click a node in the shader graph');
+    // Categories, not uppercase section headers.
+    expect(markup).toContain('detailsCategoryBar');
+    expect(markup).not.toContain('Click a node in the shader graph');
     // The per-texture settings are not dumped into the overview.
     expect(markup).not.toContain('Placement');
     expect(markup).not.toContain('Save PNG');
@@ -522,6 +525,8 @@ describe('MaterialOutliner', () => {
         tree={buildMaterialTree(listMaterialArchives(track), archives, query)}
         query={query}
         onChangeQuery={noop}
+        expandedGroups={['course']}
+        onChangeExpandedGroups={noop}
         expanded={['course_model.brres']}
         onChangeExpanded={noop}
         selected={null}
@@ -534,15 +539,47 @@ describe('MaterialOutliner', () => {
     );
   }
 
-  it('lists the track\'s archives by their friendly names', () => {
+  it('groups the models as Course and Sky instead of file names', () => {
     const markup = render();
-    expect(markup).toContain('Track model');
-    expect(markup).toContain('Skybox');
+    expect(markup).toContain('All materials');
+    expect(markup).toContain('Course');
+    expect(markup).toContain('Sky');
     expect(markup).not.toContain('vrcorn_model.brres');
   });
 
   it('shows an unopened archive as still loading', () => {
-    expect(render()).toContain('Reading course_model.brres');
+    expect(render()).toContain('Reading');
+  });
+
+  it('keeps the Objects folder closed until it is opened', () => {
+    const withObject = {
+      archiveEntries: [
+        { type: 'file' as const, path: 'course_model.brres', data: new Uint8Array(4) },
+        { type: 'file' as const, path: 'itembox.brres', data: new Uint8Array(4) },
+      ],
+    } as unknown as TrackDocument;
+    const tree = buildMaterialTree(listMaterialArchives(withObject, [], new Map([['itembox.brres', 'Item Box']])), new Map(), '');
+    const outliner = (groups: string[]) =>
+      renderToStaticMarkup(
+        <MaterialOutliner
+          tree={tree}
+          query=""
+          onChangeQuery={noop}
+          expandedGroups={groups}
+          onChangeExpandedGroups={noop}
+          expanded={[]}
+          onChangeExpanded={noop}
+          selected={null}
+          onSelect={noop}
+          onHover={noop}
+          loading={false}
+          error={null}
+          hasTrack
+        />,
+      );
+    expect(outliner([])).toContain('Objects');
+    expect(outliner([])).not.toContain('Item Box');
+    expect(outliner(['objects'])).toContain('Item Box');
   });
 
   it('offers a search box', () => {
@@ -555,6 +592,8 @@ describe('MaterialOutliner', () => {
         tree={[]}
         query=""
         onChangeQuery={noop}
+        expandedGroups={[]}
+        onChangeExpandedGroups={noop}
         expanded={[]}
         onChangeExpanded={noop}
         selected={null}

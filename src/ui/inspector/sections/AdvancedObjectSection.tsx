@@ -2,6 +2,7 @@ import type { KmpEntity } from '../../../lib/kmp';
 import type { ObjectOption } from '../../objects/objectCatalog';
 import { formatPresenceFlagsHex } from '../../objects/objectProfiles';
 import { ObjectIdSelect } from '../fields/ObjectIdSelect';
+import { PropertyRow } from '../PropertySheet';
 
 /**
  * The raw object record: the type picker over every id in the game, the eight setting slots as
@@ -25,11 +26,9 @@ export function AdvancedObjectSection({
   return (
     <div className="propertyGrid">
       {entity.objectId !== undefined && (
-        <label>
-          Object type
+        <PropertyRow label="Object type" help={`Object id ${entity.objectId} (0x${entity.objectId.toString(16).toUpperCase()})`}>
           <ObjectIdSelect value={entity.objectId} options={objectOptions} onChange={onChangeObjectId} />
-          <span>Object id {entity.objectId} (0x{entity.objectId.toString(16).toUpperCase()})</span>
-        </label>
+        </PropertyRow>
       )}
       {entity.objectSettings && (
         <label>
@@ -54,8 +53,7 @@ export function AdvancedObjectSection({
         </label>
       )}
       {entity.presenceFlags !== undefined && (
-        <label>
-          Presence flags
+        <PropertyRow label="Presence flags" help={`${formatPresenceFlagsHex(entity.presenceFlags)}. Only the bottom three bits matter in vanilla Mario Kart Wii.`}>
           <input
             className="routeInput"
             aria-label="Presence flags"
@@ -68,8 +66,7 @@ export function AdvancedObjectSection({
               if (Number.isFinite(value)) onChangePresenceFlags(Math.max(0, Math.min(0xffff, Math.trunc(value))));
             }}
           />
-          <span>{formatPresenceFlagsHex(entity.presenceFlags)}. Only the bottom three bits matter in vanilla Mario Kart Wii.</span>
-        </label>
+        </PropertyRow>
       )}
     </div>
   );

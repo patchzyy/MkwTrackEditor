@@ -142,37 +142,16 @@
 /* --- Inspector ---------------------------------------------------------- */
 
 .modelInspector {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-4) var(--space-4) var(--space-6);
-}
-
-.modelInspector h2 {
-  margin: 0;
-  font-size: var(--font-size-lg);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.modelInspectorSection {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  align-content: start;
   gap: var(--space-3);
-}
-
-.modelInspectorSection h3 {
-  margin: 0;
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  opacity: 0.62;
+  min-width: 0;
 }
 
 .modelGranularity {
   display: flex;
   gap: var(--space-1);
+  margin: var(--space-2) var(--space-3);
   padding: var(--space-1);
   border-radius: var(--radius-lg);
   /* Recessed track, like the shared `.uiSegmented` control. */
@@ -280,8 +259,12 @@
   font-variant-numeric: tabular-nums;
 }
 
-.modelInspector .propertyGrid label {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+.propValue {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }

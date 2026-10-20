@@ -1220,25 +1220,7 @@ varying vec4 v_Color1;
     }
 
     private generateFogFunc(base: string) {
-        const fogType = (this.material.ropInfo.fogType & 0x07);
-        if (fogType === GX.FogType.PERSP_LIN) {
-            return base;
-        } else if (fogType === GX.FogType.PERSP_EXP) {
-            return `1.0 - exp2(-8.0 * ${base});`;
-        } else if (fogType === GX.FogType.PERSP_EXP2) {
-            return `1.0 - exp2(-8.0 * ${base} * ${base});`;
-        } else if (fogType === GX.FogType.PERSP_REVEXP) {
-            // `fogType` is masked with 0x07 above, which folds each ORTHO_* type onto its PERSP_*
-            // twin (ORTHO_REVEXP 0x0E -> 0x06, ORTHO_REVEXP2 0x0F -> 0x07). These two branches
-            // therefore have to compare against the PERSP_* constants; comparing against the
-            // unmasked ORTHO_* ones made them unreachable, so every REVEXP fog threw instead of
-            // rendering. Mario Kart Wii's `posteffect.bfg` uses REVEXP more than any other type.
-            return `1.0 - exp2(-8.0 * (1.0 - ${base}));`;
-        } else if (fogType === GX.FogType.PERSP_REVEXP2) {
-            return `1.0 - exp2(-8.0 * (1.0 - ${base}) * (1.0 - ${base}));`;
-        } else {
-            throw "whoops";
-        }
+        return generateFogCurve(this.material.ropInfo.fogType, base);
     }
 
     private generateFog() {
@@ -1597,6 +1579,38 @@ export function lightSetDistAttn(light: Light, refDist: number, refBrightness: n
         vec3.set(light.DistAtten, 1.0, 0.0, (1.0 - refBrightness) / (refBrightness * refDist * refDist));
     else if (distFunc === GX.DistAttnFunction.OFF)
         vec3.set(light.DistAtten, 1.0, 0.0, 0.0);
+}
+
+/**
+ * GLSL for the GX fog curve: maps the normalised fog distance `base` (0 at startZ, 1 at endZ,
+ * already saturated) to a fog density in [0, 1]. Every curve is ~0 at startZ and 1 at endZ; the
+ * types only differ in how they ramp in between. These match Dolphin's `tevFogFuncsTable`.
+ *
+ * `fogType` is masked with 0x07, which folds each ORTHO_* type onto its PERSP_* twin
+ * (ORTHO_REVEXP 0x0E -> 0x06, ORTHO_REVEXP2 0x0F -> 0x07): the projection only changes how
+ * depth becomes `base`, not the curve. Mario Kart Wii's `posteffect.bfg` uses REVEXP more than
+ * any other type.
+ *
+ * REVEXP/REVEXP2 ("backwards" exponential) are `exp2(-8 (1 - z))` and `exp2(-8 (1 - z)^2)`: they
+ * stay near 0 through most of the band and rise sharply into endZ. Writing them as
+ * `1 - exp2(...)` flips the curve upside down, so everything nearer than startZ is fully fogged
+ * (a solid wall of fog colour in front of the camera) and only geometry past endZ is clear.
+ */
+export function generateFogCurve(fogType: GX.FogType, base: string): string {
+    switch (fogType & 0x07) {
+    case GX.FogType.PERSP_LIN:
+        return base;
+    case GX.FogType.PERSP_EXP:
+        return `(1.0 - exp2(-8.0 * ${base}))`;
+    case GX.FogType.PERSP_EXP2:
+        return `(1.0 - exp2(-8.0 * ${base} * ${base}))`;
+    case GX.FogType.PERSP_REVEXP:
+        return `exp2(-8.0 * (1.0 - ${base}))`;
+    case GX.FogType.PERSP_REVEXP2:
+        return `exp2(-8.0 * (1.0 - ${base}) * (1.0 - ${base}))`;
+    default:
+        throw "whoops";
+    }
 }
 
 export function fogBlockSet(fog: FogBlock, type: GX.FogType, startZ: number, endZ: number, nearZ: number, farZ: number): void {

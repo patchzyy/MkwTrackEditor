@@ -11,9 +11,9 @@ import {
   Repeat,
   Rocket,
   Route,
+  MousePointerClick,
   Settings2,
   Trash2,
-  TriangleAlert,
   Wand2,
 } from 'lucide-react';
 import type { KmpEntity } from '../../lib/kmp';
@@ -25,8 +25,10 @@ import { ObjectThumbnail } from '../contentBrowser/ObjectThumbnail';
 import type { ObjectOption } from '../objects/objectCatalog';
 import { ObjectIdSelect } from '../inspector/fields/ObjectIdSelect';
 import { InspectorActionsHost } from '../inspector/InspectorActionsContext';
-import { InspectorActionsMenu, InspectorHeader } from '../inspector/InspectorHeader';
+import { InspectorActionsMenu, InspectorHeader, type InspectorHeaderAction } from '../inspector/InspectorHeader';
+import { DetailsCategory, DetailsEmpty } from '../inspector/PropertySheet';
 import { describeKmpRecord } from '../inspector/recordSummary';
+import { TrackProblems } from '../inspector/TrackProblems';
 import '../inspector/inspector.css';
 import type { KmpSelectionContext } from './kmpSelectionContext';
 
@@ -98,72 +100,35 @@ export interface KmpInspectorProps {
  */
 export function KmpInspector(props: KmpInspectorProps) {
   const { entity, entities, context, issues, loadWarnings } = props;
-  const errorCount = issues.filter((issue) => issue.level === 'error').length;
-  const warningCount = issues.filter((issue) => issue.level === 'warning').length + loadWarnings.length;
 
   return (
     <div className="kmpInspector">
       <InspectorActionsHost
         render={(recordSections) => (
           <>
-            <SelectionHeader {...props} recordSections={recordSections} />
+            {entity && <SelectionHeader {...props} entity={entity} recordSections={recordSections} />}
             {entities.length > 1 && <BatchTools {...props} />}
             {context.path && <PathTools {...props} path={context.path} />}
             {context.checkpoint && <CheckpointTools {...props} checkpoint={context.checkpoint} />}
             {context.route && <RouteTools {...props} route={context.route} />}
             {entity ? (
-              <section className="kmpToolGroup">{props.selectedInspector}</section>
+              <div className="kmpProperties">{props.selectedInspector}</div>
             ) : (
-              <p className="muted">Pick something in the track list or the viewport to edit it.</p>
+              <DetailsEmpty icon={<MousePointerClick size={22} />}>Click something in the viewport to edit it</DetailsEmpty>
             )}
           </>
         )}
       />
 
-      <section className="kmpToolGroup kmpValidation">
-        <h3>Before you export</h3>
-        <div className="validationSummary">
-          <span className={`validationBadge${errorCount > 0 ? ' error' : ''}`}>{errorCount} errors</span>
-          <span className={`validationBadge${warningCount > 0 ? ' warning' : ''}`}>{warningCount} warnings</span>
-        </div>
-        <button type="button" className="inlineAction" disabled={!issues.some((issue) => props.quickFix(issue))} onClick={props.onFixAll}>
-          Fix all repairable issues
-        </button>
-        <p className="muted">Applies available fixes in one undo step. Missing files and layout issues need manual edits. Review any generated routes before exporting.</p>
-        <div className="validationList">
-          {issues.length === 0 && loadWarnings.length === 0 && <p className="muted">Nothing to fix — this track is ready to export.</p>}
-          {issues.map((issue, index) => {
-            const fix = props.quickFix(issue);
-            return (
-              <div className={`validationIssue ${issue.level}${issue.entityId ? ' isSelectable' : ''}`} key={`${issue.code}-${issue.entityId ?? ''}-${index}`}>
-                <TriangleAlert size={14} />
-                <div className="validationCopy">
-                  {issue.entityId ? (
-                    <button type="button" className="kmpIssueLink" onClick={() => props.onSelectEntity(issue.entityId!)}>
-                      {issue.message}
-                    </button>
-                  ) : (
-                    <strong>{issue.message}</strong>
-                  )}
-                  {fix && (
-                    <button type="button" className="inlineAction kmpIssueFix" onClick={fix.run}>
-                      {fix.label}
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-          {loadWarnings.map((warning, index) => (
-            <div className="validationIssue warning" key={`load-${index}`}>
-              <TriangleAlert size={14} />
-              <div className="validationCopy">
-                <strong>{warning}</strong>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+      <TrackProblems
+        name="Before you export"
+        defaultOpen={!entity}
+        issues={issues}
+        loadWarnings={loadWarnings}
+        quickFix={props.quickFix}
+        onFixAll={props.onFixAll}
+        onSelectEntity={props.onSelectEntity}
+      />
     </div>
   );
 }
@@ -206,7 +171,7 @@ function recordIcon(section: string) {
   }
 }
 
-/** Name, type and the single actions menu. `recordSections` comes from the property sheet. */
+/** Name, kind, the two icon actions and the "..." menu. `recordSections` comes from the property sheet. */
 function SelectionHeader({
   entity,
   entities,
@@ -219,14 +184,14 @@ function SelectionHeader({
   onDeleteSelection,
   onSelectMatchingObjects,
   recordSections,
-}: KmpInspectorProps & { recordSections: MenuSection[] }) {
+}: KmpInspectorProps & { entity: KmpEntity; recordSections: MenuSection[] }) {
   const multiple = entities.length > 1;
-  const summary = entity ? describeKmpRecord(entity) : null;
+  const summary = describeKmpRecord(entity);
   // A track has exactly one settings record; copying or deleting it makes no sense.
-  const unique = summary?.kind === 'stage';
-  const title = entity ? entityLabel(entity) : 'Nothing selected';
+  const unique = summary.kind === 'stage';
+  const title = capitalize(entityLabel(entity));
   const selectionItems: MenuItem[] = [];
-  if (entity && !unique) {
+  if (!unique) {
     selectionItems.push({
       id: 'snap',
       label: 'Drop onto the track surface',
@@ -236,31 +201,34 @@ function SelectionHeader({
       onSelect: onSnapToCollision,
     });
   }
-  const sections: MenuSection[] = [];
-  if (selectionItems.length > 0) sections.push({ id: 'selection', title: multiple ? `${entities.length} selected` : undefined, items: selectionItems });
-  sections.push(...recordSections);
-  if (entity && !unique && !recordSections.some((section) => section.items.some((item) => item.id === 'delete'))) {
-    sections.push({ id: 'kmp-danger', items: [{ id: 'delete', label: 'Delete', icon: <Trash2 size={14} />, danger: true, onSelect: onDeleteSelection }] });
+  if (entity.section === 'GOBJ') {
+    selectionItems.push({ id: 'select-same', label: 'Select every object of this type', icon: <Copy size={14} />, onSelect: onSelectMatchingObjects });
   }
+  const sections: MenuSection[] = [];
+  if (selectionItems.length > 0) sections.push({ id: 'selection', items: selectionItems });
+  // Delete is an icon in the header, so the property sheet's own copy of it would be a second one.
+  for (const section of recordSections) {
+    const items = section.items.filter((item) => item.id !== 'delete');
+    if (items.length > 0) sections.push({ ...section, items });
+  }
+  const actions: InspectorHeaderAction[] = unique
+    ? []
+    : [
+        { id: 'duplicate', label: multiple ? 'Duplicate selected' : 'Duplicate', icon: <Copy size={14} />, onClick: onDuplicateSelection },
+        { id: 'delete', label: multiple ? 'Delete selected' : 'Delete', icon: <Trash2 size={14} />, onClick: onDeleteSelection, danger: true },
+      ];
 
   return (
-    <section className="kmpToolGroup kmpSelectionHeader">
-      {multiple && <h3>{entities.length} selected</h3>}
+    <section className="kmpSelectionHeader">
       <InspectorHeader
         media={<SelectionMedia entity={entity} commonArchive={commonArchive} commonBrresSummaries={commonBrresSummaries} />}
         title={title}
-        typeName={summary && !title.toLowerCase().includes(summary.typeName.toLowerCase()) ? summary.typeName : undefined}
-        description={multiple ? `${entities.length} records selected. Position, rotation and size changes apply the same difference to each. Other property edits apply to selected records in the primary record's section.` : summary?.description}
-        primary={entity && !unique ? { label: 'Duplicate', icon: <Copy size={14} />, onClick: onDuplicateSelection } : undefined}
+        typeName={title.toLowerCase() === summary.typeName.toLowerCase() ? undefined : summary.typeName}
+        description={multiple ? `${entities.length} records selected. Position, rotation and size changes apply the same difference to each. Other property edits apply to selected records in the primary record's section.` : summary.description}
+        chips={[multiple ? `${entities.length} selected` : null]}
+        actions={actions}
         sections={sections}
       />
-      {entity?.section === 'GOBJ' && (
-        <div className="kmpButtonRow">
-          <button type="button" className="button" onClick={onSelectMatchingObjects}>
-            Select all with same object ID
-          </button>
-        </div>
-      )}
     </section>
   );
 }
@@ -269,24 +237,26 @@ function BatchTools({ entities, objectOptions, canBatchReplaceObjects, onReplace
   const [objectId, setObjectId] = useState<number | null>(null);
   const effectiveObjectId = objectId ?? entities.find((candidate) => candidate.objectId !== undefined)?.objectId ?? null;
   return (
-    <section className="kmpToolGroup">
-      <div className="kmpButtonRow">
-        <button type="button" className="button" onClick={onDuplicateSelection}>Duplicate selected</button>
-        <button type="button" className="button" onClick={onDeleteSelection}>Delete selected</button>
-        <button type="button" className="button" disabled={!hasCollision} onClick={onSnapToCollision}>Drop selected onto track</button>
+    <DetailsCategory name={`${entities.length} selected`} help="Position, rotation and size changes apply the same difference to each one.">
+      <div className="kmpToolGroup">
+        <div className="kmpButtonRow">
+          <button type="button" className="button" onClick={onDuplicateSelection}>Duplicate</button>
+          <button type="button" className="button" onClick={onDeleteSelection}>Delete</button>
+          <button type="button" className="button" disabled={!hasCollision} onClick={onSnapToCollision}>Drop onto track</button>
+        </div>
+        {canBatchReplaceObjects && effectiveObjectId !== null && (
+          <>
+            <span className="kmpToolLabel">Change them all to</span>
+            <ObjectIdSelect value={effectiveObjectId} options={objectOptions} onChange={setObjectId} />
+            <div className="kmpButtonRow">
+              <button type="button" className="button" onClick={() => onReplaceObjectTypes(effectiveObjectId)}>
+                Replace {entities.length} objects
+              </button>
+            </div>
+          </>
+        )}
       </div>
-      {canBatchReplaceObjects && effectiveObjectId !== null && (
-        <>
-          <h3>Change them all to</h3>
-          <ObjectIdSelect value={effectiveObjectId} options={objectOptions} onChange={setObjectId} />
-          <div className="kmpButtonRow">
-            <button type="button" className="button" onClick={() => onReplaceObjectTypes(effectiveObjectId)}>
-              Replace {entities.length} objects
-            </button>
-          </div>
-        </>
-      )}
-    </section>
+    </DetailsCategory>
   );
 }
 
@@ -307,55 +277,62 @@ function PathTools({
   onChangeGroupLinks,
 }: KmpInspectorProps & { path: NonNullable<KmpSelectionContext['path']> }) {
   return (
-    <section className="kmpToolGroup">
-      <h3>
-        {capitalize(path.pathLabel)} · group {path.groupIndex + 1} of {path.groupCount}
-      </h3>
-      <p className="kmpToolHint">
-        Point {path.localIndex + 1} of {path.groupSize}. New points are placed halfway to their neighbour and dropped onto the track.
-      </p>
-      <div className="kmpButtonRow">
-        <button type="button" className="button" onClick={onInsertPointBefore} title={`Add a ${path.pointLabel} before this one`}>
-          Insert before
-        </button>
-        <button type="button" className="button" onClick={onInsertPointAfter} title={`Add a ${path.pointLabel} after this one`}>
-          Insert after
-        </button>
-        <button type="button" className="button" onClick={onDeletePoint} title={`Delete this ${path.pointLabel}`}>
-          Delete point
-        </button>
-      </div>
-      <div className="kmpButtonRow">
-        <button
-          type="button"
-          className="button"
-          disabled={!path.canSplit}
-          title={path.canSplit ? 'Start a new group at this point' : 'Pick a point that is not the first one in its group'}
-          onClick={onSplitGroup}
-        >
-          Split here
-        </button>
-        <button
-          type="button"
-          className="button"
-          disabled={!path.canMerge}
-          title={path.canMerge ? 'Join this group with the one it leads into' : 'Only a group with exactly one plain continuation can be joined'}
-          onClick={onMergeGroup}
-        >
-          Join with next
-        </button>
-        <GroupOverflowMenu onReverseGroup={onReverseGroup} onReversePath={onReversePath} onDeleteGroup={onDeleteGroup} pathLabel={path.pathLabel} />
-      </div>
+    <>
+      <DetailsCategory
+        name={capitalize(path.pathLabel)}
+        badge={`group ${path.groupIndex + 1} of ${path.groupCount}`}
+        help={`Point ${path.localIndex + 1} of ${path.groupSize}. New points are placed halfway to their neighbour and dropped onto the track.`}
+      >
+        <div className="kmpToolGroup">
+          <div className="kmpButtonRow">
+            <button type="button" className="button" onClick={onInsertPointBefore} title={`Add a ${path.pointLabel} before this one`}>
+              Insert before
+            </button>
+            <button type="button" className="button" onClick={onInsertPointAfter} title={`Add a ${path.pointLabel} after this one`}>
+              Insert after
+            </button>
+            <button type="button" className="button" onClick={onDeletePoint} title={`Delete this ${path.pointLabel}`}>
+              Delete point
+            </button>
+          </div>
+          <div className="kmpButtonRow">
+            <button
+              type="button"
+              className="button"
+              disabled={!path.canSplit}
+              title={path.canSplit ? 'Start a new group at this point' : 'Pick a point that is not the first one in its group'}
+              onClick={onSplitGroup}
+            >
+              Split here
+            </button>
+            <button
+              type="button"
+              className="button"
+              disabled={!path.canMerge}
+              title={path.canMerge ? 'Join this group with the one it leads into' : 'Only a group with exactly one plain continuation can be joined'}
+              onClick={onMergeGroup}
+            >
+              Join with next
+            </button>
+            <GroupOverflowMenu onReverseGroup={onReverseGroup} onReversePath={onReversePath} onDeleteGroup={onDeleteGroup} pathLabel={path.pathLabel} />
+          </div>
+        </div>
+      </DetailsCategory>
 
-      <h3>Connections</h3>
-      <p className="kmpToolHint">
-        {path.canLink
-          ? 'Up to six groups can follow this one. Drag a group end handle onto another group in the viewport to connect or disconnect them.'
-          : 'This group already has the maximum of six outgoing connections.'}
-      </p>
-      <LinkEditor label="Comes from" links={path.prevGroups} groupCount={path.groupCount} onChange={(links) => onChangeGroupLinks('prev', links)} />
-      <LinkEditor label="Leads to" links={path.nextGroups} groupCount={path.groupCount} onChange={(links) => onChangeGroupLinks('next', links)} />
-    </section>
+      <DetailsCategory
+        name="Connections"
+        help={
+          path.canLink
+            ? 'Up to six groups can follow this one. Drag a group end handle onto another group in the viewport to connect or disconnect them.'
+            : 'This group already has the maximum of six outgoing connections.'
+        }
+      >
+        <div className="kmpToolGroup">
+          <LinkEditor label="Comes from" links={path.prevGroups} groupCount={path.groupCount} onChange={(links) => onChangeGroupLinks('prev', links)} />
+          <LinkEditor label="Leads to" links={path.nextGroups} groupCount={path.groupCount} onChange={(links) => onChangeGroupLinks('next', links)} />
+        </div>
+      </DetailsCategory>
+    </>
   );
 }
 
@@ -454,102 +431,111 @@ function CheckpointTools({
   onSelectEntity,
 }: KmpInspectorProps & { checkpoint: NonNullable<KmpSelectionContext['checkpoint']> }) {
   return (
-    <section className="kmpToolGroup">
-      <h3>Lap counting</h3>
-      <p className="kmpToolHint">
-        {checkpoint.kind === 'lap'
-          ? 'This is the finish line. Exactly one checkpoint may be the lap counter.'
-          : checkpoint.kind === 'key'
-            ? `Key checkpoint ${checkpoint.keyNumber}. Drivers must cross the key checkpoints in order for a lap to count.`
-            : 'An ordinary checkpoint: it tracks race position but does not gate the lap.'}
-      </p>
-      <div className="kmpButtonRow">
-        {(['lap', 'key', 'normal'] as const).map((kind) => (
-          <button
-            key={kind}
-            type="button"
-            className={`button${checkpoint.kind === kind ? ' isActive' : ''}`}
-            aria-pressed={checkpoint.kind === kind}
-            onClick={() => onSetCheckpointKind(kind)}
-          >
-            {kind === 'lap' ? 'Finish line' : kind === 'key' ? 'Key' : 'Ordinary'}
-          </button>
-        ))}
-        <InlineMenuButton
-          label="More lap actions"
-          sections={[
-            {
-              id: 'laps',
-              items: [
+    <>
+      <DetailsCategory
+        name="Lap counting"
+        help={
+          checkpoint.kind === 'lap'
+            ? 'This is the finish line. Exactly one checkpoint may be the lap counter.'
+            : checkpoint.kind === 'key'
+              ? `Key checkpoint ${checkpoint.keyNumber}. Drivers must cross the key checkpoints in order for a lap to count.`
+              : 'An ordinary checkpoint: it tracks race position but does not gate the lap.'
+        }
+      >
+        <div className="kmpToolGroup">
+          <div className="kmpButtonRow">
+            {(['lap', 'key', 'normal'] as const).map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                className={`button${checkpoint.kind === kind ? ' isActive' : ''}`}
+                aria-pressed={checkpoint.kind === kind}
+                onClick={() => onSetCheckpointKind(kind)}
+              >
+                {kind === 'lap' ? 'Finish line' : kind === 'key' ? 'Key' : 'Ordinary'}
+              </button>
+            ))}
+            <InlineMenuButton
+              label="More lap actions"
+              sections={[
                 {
-                  id: 'renumber',
-                  label: 'Renumber the key checkpoints',
-                  icon: <ListOrdered size={14} />,
-                  onSelect: onRenumberKeyCheckpoints,
+                  id: 'laps',
+                  items: [
+                    {
+                      id: 'renumber',
+                      label: 'Renumber the key checkpoints',
+                      icon: <ListOrdered size={14} />,
+                      onSelect: onRenumberKeyCheckpoints,
+                    },
+                  ],
                 },
-              ],
-            },
-          ]}
-        />
-      </div>
+              ]}
+            />
+          </div>
+        </div>
+      </DetailsCategory>
 
-      <h3>Respawn</h3>
-      <p className="kmpToolHint">
-        {checkpoint.respawnIndex === null
-          ? 'No respawn point: drivers who fall here are sent to the first one in the track.'
-          : `Drivers who fall here come back at respawn point ${checkpoint.respawnIndex + 1}.`}
-      </p>
-      <div className="kmpButtonRow">
-        <button type="button" className="button" disabled={checkpoint.respawnCount === 0} onClick={onAssignNearestRespawn}>
-          Use nearest respawn
-        </button>
-        <button type="button" className="button" onClick={onCreateRespawnHere}>
-          New respawn here
-        </button>
-        {checkpoint.respawnIndex !== null && (
-          <button type="button" className="button" onClick={() => onSelectEntity(`JGPT-${checkpoint.respawnIndex}`)}>
-            Show respawn
-          </button>
-        )}
-        <InlineMenuButton
-          label="More respawn actions"
-          sections={[
-            {
-              id: 'respawns',
-              items: [
+      <DetailsCategory
+        name="Respawn"
+        help={
+          checkpoint.respawnIndex === null
+            ? 'No respawn point: drivers who fall here are sent to the first one in the track.'
+            : `Drivers who fall here come back at respawn point ${checkpoint.respawnIndex + 1}.`
+        }
+      >
+        <div className="kmpToolGroup">
+          <div className="kmpButtonRow">
+            <button type="button" className="button" disabled={checkpoint.respawnCount === 0} onClick={onAssignNearestRespawn}>
+              Use nearest respawn
+            </button>
+            <button type="button" className="button" onClick={onCreateRespawnHere}>
+              New respawn here
+            </button>
+            {checkpoint.respawnIndex !== null && (
+              <button type="button" className="button" onClick={() => onSelectEntity(`JGPT-${checkpoint.respawnIndex}`)}>
+                Show respawn
+              </button>
+            )}
+            <InlineMenuButton
+              label="More respawn actions"
+              sections={[
                 {
-                  id: 'fill',
-                  label: 'Fill in every missing respawn',
-                  icon: <Wand2 size={14} />,
-                  disabled: checkpoint.respawnCount === 0,
-                  disabledReason: 'This track has no respawn points yet',
-                  onSelect: onAssignAllRespawns,
+                  id: 'respawns',
+                  items: [
+                    {
+                      id: 'fill',
+                      label: 'Fill in every missing respawn',
+                      icon: <Wand2 size={14} />,
+                      disabled: checkpoint.respawnCount === 0,
+                      disabledReason: 'This track has no respawn points yet',
+                      onSelect: onAssignAllRespawns,
+                    },
+                  ],
                 },
-              ],
-            },
-          ]}
-        />
-      </div>
-    </section>
+              ]}
+            />
+          </div>
+        </div>
+      </DetailsCategory>
+    </>
   );
 }
 
 function RouteTools({ route, onAppendRoutePoint, onReverseRoute }: KmpInspectorProps & { route: NonNullable<KmpSelectionContext['route']> }) {
   return (
-    <section className="kmpToolGroup">
-      <h3>
-        Path {route.routeIndex + 1} · point {route.pointIndex + 1} of {route.pointCount}
-      </h3>
-      <div className="kmpButtonRow">
-        <button type="button" className="button" onClick={onAppendRoutePoint}>
-          Add point at end
-        </button>
-        <InlineMenuButton
-          label="More path actions"
-          sections={[{ id: 'route', items: [{ id: 'reverse', label: 'Reverse this path', icon: <Repeat size={14} />, onSelect: onReverseRoute }] }]}
-        />
+    <DetailsCategory name={`Path ${route.routeIndex + 1}`} badge={`point ${route.pointIndex + 1} of ${route.pointCount}`}>
+      <div className="kmpToolGroup">
+        <div className="kmpButtonRow">
+          <button type="button" className="button" onClick={onAppendRoutePoint}>
+            Add point at end
+          </button>
+          <InlineMenuButton
+            label="More path actions"
+            sections={[{ id: 'route', items: [{ id: 'reverse', label: 'Reverse this path', icon: <Repeat size={14} />, onSelect: onReverseRoute }] }]}
+          />
+        </div>
       </div>
-    </section>
+    </DetailsCategory>
   );
 }
 

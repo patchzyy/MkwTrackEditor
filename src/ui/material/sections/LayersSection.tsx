@@ -2,7 +2,8 @@ import { ArrowDown, ArrowUp, ChevronRight, Download, Plus, Trash2, Upload } from
 import { useCallback, useRef, useState } from 'react';
 import type { GxMaterialDoc } from '../../../lib/gxMaterial';
 import { calcTex0DataSize, encodeTex0Data, floorPowerOfTwo, maxMipCount } from '../../../lib/tex0Codec';
-import { Button, EmptyState, Field, FieldGroup, IconButton, NumberInput, SegmentedControl, Select, Toggle, useToast } from '../../components';
+import { Button, Field, FieldGroup, IconButton, NumberInput, SegmentedControl, Select, Toggle, useToast } from '../../components';
+import { DetailsCategory } from '../../inspector/PropertySheet';
 import { TexturePreview } from '../../visual/TexturePreview';
 import { exportTextureAsPng, readImageFile } from '../../visual/textureReplace';
 import type { VisualTextureInfo } from '../../visual/visualArchive';
@@ -83,11 +84,9 @@ export function TextureList({ doc, textures, archivePath, archiveBytes, onChange
   return (
     <div className="detailsTextureList">
       {doc.samplers.length === 0 ? (
-        <EmptyState
-          size="sm"
-          title="No textures"
-          description="This material samples no textures. Add one to give it a surface."
-        />
+        <p className="detailsNote" title="This material samples no textures. Add one to give it a surface.">
+          No textures
+        </p>
       ) : (
         <ul className="detailsTextureRows" aria-label="Textures this material uses">
           {doc.samplers.map((sampler, index) => {
@@ -104,9 +103,10 @@ export function TextureList({ doc, textures, archivePath, archiveBytes, onChange
                     <TexturePreview archivePath={archivePath} archiveBytes={archiveBytes} texture={texture} revision={0} />
                   </span>
                   <span className="detailsTextureText">
-                    <span className="detailsTextureSlot">Texture {index + 1}</span>
-                    <strong className="detailsTextureName">{sampler.texture || 'None'}</strong>
-                    <span className="detailsTextureFacts">{texture ? textureFacts(texture) : 'Not in this archive'}</span>
+                    <strong className="detailsTextureName" title={sampler.texture || undefined}>{sampler.texture || 'None'}</strong>
+                    <span className="detailsTextureFacts">
+                      Texture {index + 1} · {texture ? textureFacts(texture) : 'not in this archive'}
+                    </span>
                   </span>
                   <ChevronRight size={14} className="detailsTextureChevron" aria-hidden="true" />
                 </button>
@@ -260,153 +260,159 @@ export function TextureLayerDetails({ index, doc, textures, archivePath, archive
         void importFile(event.dataTransfer.files[0]);
       }}
     >
-      <div className="detailsTexturePreview">
-        <TexturePreview archivePath={archivePath} archiveBytes={archiveBytes} texture={texture} revision={0} size="large" />
-        <span className="detailsTextureDropHint" aria-hidden="true">
-          <Upload size={14} /> Drop an image to replace this texture
-        </span>
-      </div>
-
-      <div className="detailsTextureIdentity">
-        <Select
-          label={`Texture ${index + 1} image`}
-          value={sampler.texture}
-          options={textureOptions.length > 0 ? textureOptions : [{ value: sampler.texture, label: sampler.texture || 'None' }]}
-          onChange={(value) => onChange(patchSampler(doc, index, { texture: value }), { status: `Texture ${index + 1} is now ${value}.` })}
-        />
-        <p className="detailsTextureFactsLine">{texture ? textureFacts(texture) : 'This texture is not in the archive.'}</p>
-        <div className="detailsTextureButtons">
-          <Button
-            size="sm"
-            icon={<Upload size={13} />}
-            disabled={busy}
-            disabledReason="Still encoding the last image."
-            tooltip="Pick a PNG or JPEG; it is encoded with the settings under Advanced › Import encoding"
-            onClick={() => fileRef.current?.click()}
-          >
-            {busy ? 'Encoding…' : 'Replace…'}
-          </Button>
-          <Button
-            size="sm"
-            icon={<Download size={13} />}
-            disabled={!texture || !archiveBytes}
-            disabledReason="This texture is not in the archive."
-            tooltip="Download this texture as a PNG"
-            onClick={() => {
-              if (!texture || !archiveBytes) return;
-              void exportTextureAsPng(archiveBytes, texture).catch((error: unknown) =>
-                toast.showToast({ tone: 'error', title: 'Could not export the texture', detail: error instanceof Error ? error.message : String(error) }),
-              );
-            }}
-          >
-            Save PNG
-          </Button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            className="materialFileInput"
-            aria-label={`Import an image for texture ${index + 1}`}
-            onChange={(event) => {
-              const file = event.currentTarget.files?.[0];
-              event.currentTarget.value = '';
-              if (file) void importFile(file);
-            }}
-          />
+      <DetailsCategory name="Texture">
+        <div className="detailsTexturePreview">
+          <TexturePreview archivePath={archivePath} archiveBytes={archiveBytes} texture={texture} revision={0} size="large" />
+          <span className="detailsTextureDropHint" aria-hidden="true">
+            <Upload size={14} /> Drop an image to replace this texture
+          </span>
         </div>
-      </div>
 
-      <FieldGroup>
-        <Field label="Tiling" asGroup help={wrap === null ? `Across: ${wrapChoiceLabel(wrapChoiceOf(sampler.wrapS))} · down: ${wrapChoiceLabel(wrapChoiceOf(sampler.wrapT))}. Pick one to use it on both.` : undefined}>
-          <SegmentedControl
-            label={`Texture ${index + 1} tiling`}
-            size="sm"
-            value={wrap ?? ('' as WrapChoice)}
-            options={WRAP_CHOICES}
-            onChange={(value) => onChange(setLayerWrap(doc, index, value), { status: `Texture ${index + 1} tiling: ${wrapChoiceLabel(value)}.` })}
+        <div className="detailsTextureIdentity">
+          <Select
+            label={`Texture ${index + 1} image`}
+            value={sampler.texture}
+            options={textureOptions.length > 0 ? textureOptions : [{ value: sampler.texture, label: sampler.texture || 'None' }]}
+            onChange={(value) => onChange(patchSampler(doc, index, { texture: value }), { status: `Texture ${index + 1} is now ${value}.` })}
           />
-        </Field>
+          <p className="detailsTextureFactsLine">{texture ? textureFacts(texture) : 'This texture is not in the archive.'}</p>
+          <div className="detailsTextureButtons">
+            <Button
+              size="sm"
+              icon={<Upload size={13} />}
+              disabled={busy}
+              disabledReason="Still encoding the last image."
+              tooltip="Pick a PNG or JPEG; it is encoded with the settings under Advanced › Import encoding"
+              onClick={() => fileRef.current?.click()}
+            >
+              {busy ? 'Encoding…' : 'Replace…'}
+            </Button>
+            <Button
+              size="sm"
+              icon={<Download size={13} />}
+              disabled={!texture || !archiveBytes}
+              disabledReason="This texture is not in the archive."
+              tooltip="Download this texture as a PNG"
+              onClick={() => {
+                if (!texture || !archiveBytes) return;
+                void exportTextureAsPng(archiveBytes, texture).catch((error: unknown) =>
+                  toast.showToast({ tone: 'error', title: 'Could not export the texture', detail: error instanceof Error ? error.message : String(error) }),
+                );
+              }}
+            >
+              Save PNG
+            </Button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              className="materialFileInput"
+              aria-label={`Import an image for texture ${index + 1}`}
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = '';
+                if (file) void importFile(file);
+              }}
+            />
+          </div>
+        </div>
+      </DetailsCategory>
 
-        <Field label="Sampling" asGroup>
-          <SegmentedControl
-            label={`Texture ${index + 1} filtering`}
-            size="sm"
-            value={filter}
-            options={FILTER_CHOICES}
-            onChange={(value) => onChange(setLayerFilter(doc, index, value), { status: `Texture ${index + 1} is ${value === 'smooth' ? 'smoothed' : 'pixelated'}.` })}
-          />
-        </Field>
-
-        <Field
-          label="Environment map"
-          help={envMapped ? `Coordinates come from ${mapModeLabel(sampler.mapMode).toLowerCase()}, so the texture slides over the surface like a reflection.` : undefined}
-        >
-          <Toggle
-            label={envMapped ? mapModeLabel(sampler.mapMode) : 'Off'}
-            checked={envMapped}
-            onChange={(checked) => onChange(setEnvironmentMapped(doc, index, checked), { status: `Texture ${index + 1} ${checked ? 'reflects the camera' : "uses the mesh's UVs"}.` })}
-          />
-        </Field>
-      </FieldGroup>
-
-      {srt && (
-        <FieldGroup title="Placement">
-          <Field label="Scale" asGroup hint="tiles">
-            <span className="materialPairRow">
-              <NumberInput
-                label={`Texture ${index + 1} scale across`}
-                axis="U"
-                value={srt.scaleS}
-                step={0.01}
-                precision={4}
-                onChange={(value) => onChange(patchTexSrt(doc, index, { scaleS: value }), { transient: true })}
-                onCommit={(value) => onChange(patchTexSrt(doc, index, { scaleS: value }), { status: `Texture ${index + 1} scale changed.` })}
-              />
-              <NumberInput
-                label={`Texture ${index + 1} scale down`}
-                axis="V"
-                value={srt.scaleT}
-                step={0.01}
-                precision={4}
-                onChange={(value) => onChange(patchTexSrt(doc, index, { scaleT: value }), { transient: true })}
-                onCommit={(value) => onChange(patchTexSrt(doc, index, { scaleT: value }), { status: `Texture ${index + 1} scale changed.` })}
-              />
-            </span>
+      <DetailsCategory name="Sampling">
+        <FieldGroup>
+          <Field label="Tiling" asGroup help={wrap === null ? `Across: ${wrapChoiceLabel(wrapChoiceOf(sampler.wrapS))} · down: ${wrapChoiceLabel(wrapChoiceOf(sampler.wrapT))}. Pick one to use it on both.` : undefined}>
+            <SegmentedControl
+              label={`Texture ${index + 1} tiling`}
+              size="sm"
+              value={wrap ?? ('' as WrapChoice)}
+              options={WRAP_CHOICES}
+              onChange={(value) => onChange(setLayerWrap(doc, index, value), { status: `Texture ${index + 1} tiling: ${wrapChoiceLabel(value)}.` })}
+            />
           </Field>
-          <Field label="Offset" asGroup>
-            <span className="materialPairRow">
-              <NumberInput
-                label={`Texture ${index + 1} offset across`}
-                axis="U"
-                value={srt.translateS}
-                step={0.01}
-                precision={4}
-                onChange={(value) => onChange(patchTexSrt(doc, index, { translateS: value }), { transient: true })}
-                onCommit={(value) => onChange(patchTexSrt(doc, index, { translateS: value }), { status: `Texture ${index + 1} moved.` })}
-              />
-              <NumberInput
-                label={`Texture ${index + 1} offset down`}
-                axis="V"
-                value={srt.translateT}
-                step={0.01}
-                precision={4}
-                onChange={(value) => onChange(patchTexSrt(doc, index, { translateT: value }), { transient: true })}
-                onCommit={(value) => onChange(patchTexSrt(doc, index, { translateT: value }), { status: `Texture ${index + 1} moved.` })}
-              />
-            </span>
+
+          <Field label="Sampling" asGroup>
+            <SegmentedControl
+              label={`Texture ${index + 1} filtering`}
+              size="sm"
+              value={filter}
+              options={FILTER_CHOICES}
+              onChange={(value) => onChange(setLayerFilter(doc, index, value), { status: `Texture ${index + 1} is ${value === 'smooth' ? 'smoothed' : 'pixelated'}.` })}
+            />
           </Field>
-          <Field label="Rotation" hint="degrees">
-            <NumberInput
-              label={`Texture ${index + 1} rotation`}
-              value={srt.rotation}
-              step={1}
-              precision={2}
-              unit="°"
-              onChange={(value) => onChange(patchTexSrt(doc, index, { rotation: value }), { transient: true })}
-              onCommit={(value) => onChange(patchTexSrt(doc, index, { rotation: value }), { status: `Texture ${index + 1} rotated to ${value.toFixed(1)}°.` })}
+
+          <Field
+            label="Environment map"
+            help={envMapped ? `Coordinates come from ${mapModeLabel(sampler.mapMode).toLowerCase()}, so the texture slides over the surface like a reflection.` : undefined}
+          >
+            <Toggle
+              label={envMapped ? mapModeLabel(sampler.mapMode) : 'Off'}
+              checked={envMapped}
+              onChange={(checked) => onChange(setEnvironmentMapped(doc, index, checked), { status: `Texture ${index + 1} ${checked ? 'reflects the camera' : "uses the mesh's UVs"}.` })}
             />
           </Field>
         </FieldGroup>
+      </DetailsCategory>
+
+      {srt && (
+        <DetailsCategory name="Placement">
+          <FieldGroup>
+            <Field label="Scale" asGroup hint="tiles">
+              <span className="materialPairRow">
+                <NumberInput
+                  label={`Texture ${index + 1} scale across`}
+                  axis="U"
+                  value={srt.scaleS}
+                  step={0.01}
+                  precision={4}
+                  onChange={(value) => onChange(patchTexSrt(doc, index, { scaleS: value }), { transient: true })}
+                  onCommit={(value) => onChange(patchTexSrt(doc, index, { scaleS: value }), { status: `Texture ${index + 1} scale changed.` })}
+                />
+                <NumberInput
+                  label={`Texture ${index + 1} scale down`}
+                  axis="V"
+                  value={srt.scaleT}
+                  step={0.01}
+                  precision={4}
+                  onChange={(value) => onChange(patchTexSrt(doc, index, { scaleT: value }), { transient: true })}
+                  onCommit={(value) => onChange(patchTexSrt(doc, index, { scaleT: value }), { status: `Texture ${index + 1} scale changed.` })}
+                />
+              </span>
+            </Field>
+            <Field label="Offset" asGroup>
+              <span className="materialPairRow">
+                <NumberInput
+                  label={`Texture ${index + 1} offset across`}
+                  axis="U"
+                  value={srt.translateS}
+                  step={0.01}
+                  precision={4}
+                  onChange={(value) => onChange(patchTexSrt(doc, index, { translateS: value }), { transient: true })}
+                  onCommit={(value) => onChange(patchTexSrt(doc, index, { translateS: value }), { status: `Texture ${index + 1} moved.` })}
+                />
+                <NumberInput
+                  label={`Texture ${index + 1} offset down`}
+                  axis="V"
+                  value={srt.translateT}
+                  step={0.01}
+                  precision={4}
+                  onChange={(value) => onChange(patchTexSrt(doc, index, { translateT: value }), { transient: true })}
+                  onCommit={(value) => onChange(patchTexSrt(doc, index, { translateT: value }), { status: `Texture ${index + 1} moved.` })}
+                />
+              </span>
+            </Field>
+            <Field label="Rotation" hint="degrees">
+              <NumberInput
+                label={`Texture ${index + 1} rotation`}
+                value={srt.rotation}
+                step={1}
+                precision={2}
+                unit="°"
+                onChange={(value) => onChange(patchTexSrt(doc, index, { rotation: value }), { transient: true })}
+                onCommit={(value) => onChange(patchTexSrt(doc, index, { rotation: value }), { status: `Texture ${index + 1} rotated to ${value.toFixed(1)}°.` })}
+              />
+            </Field>
+          </FieldGroup>
+        </DetailsCategory>
       )}
 
       <AdvancedBlock

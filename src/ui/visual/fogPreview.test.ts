@@ -54,7 +54,9 @@ async function loadVendorFog() {
 /** The scene scale the Mario Kart Wii renderer draws the course at. */
 const SCENE_SCALE = 0.1;
 
-describe('BFG fog, editor side to renderer side', () => {
+// The first test pays for loading the vendored renderer modules, which can take seconds under a
+// fully parallel run.
+describe('BFG fog, editor side to renderer side', { timeout: 60_000 }, () => {
   it('the renderer reads back exactly what the post-effects panel writes', async () => {
     const { PostEffect, wrap } = await loadVendorFog();
     const written = writeBfgFogEntries(createDefaultBfg(), [
@@ -129,7 +131,7 @@ describe('BFG fog, editor side to renderer side', () => {
   });
 });
 
-describe('GX fog shader generation', () => {
+describe('GX fog shader generation', { timeout: 60_000 }, () => {
   /**
    * Every fog type the panel can select has to produce a shader. Before this feature the
    * generator compared the 0x07-masked type against the *unmasked* `ORTHO_REVEXP` constants, so

@@ -7,5 +7,4 @@ export interface EditorSnapshot {
   selectedIds: string[];
 }
 
-export type InspectorSection = 'object' | 'track';
 export type EditorModeStub = 'create' | 'model' | 'visual' | 'material' | 'kmp' | 'camera';

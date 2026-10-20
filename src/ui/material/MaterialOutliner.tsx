@@ -1,8 +1,15 @@
 import { Box, ChevronDown, ChevronRight, Globe, Layers, Map as MapIcon, Package, Search, X } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import type { GxMaterialRef } from '../../lib/gxMaterial';
 import { EmptyState, IconButton, Tooltip } from '../components';
-import { materialRefEquals, type MaterialArchiveRole, type MaterialTreeArchive } from './materialOutlinerModel';
+import {
+  MATERIAL_GROUPS,
+  materialRefEquals,
+  materialRefKey,
+  type MaterialArchiveRole,
+  type MaterialGroupId,
+  type MaterialTreeArchive,
+} from './materialOutlinerModel';
 
 const ROLE_ICON: Record<MaterialArchiveRole, ReactNode> = {
   course: <Layers size={13} />,
@@ -15,6 +22,10 @@ export interface MaterialOutlinerProps {
   tree: MaterialTreeArchive[];
   query: string;
   onChangeQuery: (value: string) => void;
+  /** Folders (Course, Sky, Objects) that are open. */
+  expandedGroups: string[];
+  onChangeExpandedGroups: (groups: string[]) => void;
+  /** Models (archives) that are open. */
   expanded: string[];
   onChangeExpanded: (paths: string[]) => void;
   selected: GxMaterialRef | null;
@@ -26,16 +37,20 @@ export interface MaterialOutlinerProps {
 }
 
 /**
- * Left rail for Material mode: the track's BRRES archives, their models and their materials, with
- * the layer textures as the caption and a badge on materials that share a TEV shader block with
- * another one (editing those needs a decision, so it has to be visible before the edit).
+ * Left rail for Material mode, the secondary way in: every model the viewport can show, grouped as
+ * Course, Sky and Objects with friendly names, and the materials each one draws with. Clicking
+ * something in the viewport is the quick way; this list is for what is not on screen, for
+ * searching by texture, and for seeing the whole picture. Selection works both ways: a click in
+ * the viewport opens the folder and scrolls to the row.
  *
- * An archive is only listed once it is expanded, because listing walks the whole BRRES.
+ * A model is only read once it is opened, because listing walks the whole BRRES.
  */
 export function MaterialOutliner({
   tree,
   query,
   onChangeQuery,
+  expandedGroups,
+  onChangeExpandedGroups,
   expanded,
   onChangeExpanded,
   selected,
@@ -45,29 +60,105 @@ export function MaterialOutliner({
   error,
   hasTrack,
 }: MaterialOutlinerProps) {
-  const totalMaterials = tree.reduce((sum, archive) => sum + archive.materialCount, 0);
-  const isExpanded = (path: string) => expanded.includes(path) || query.trim().length > 0;
-  const toggle = (path: string) =>
+  const searching = query.trim().length > 0;
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const selectedKey = selected ? materialRefKey(selected) : '';
+  const loadedSignature = tree.map((archive) => (archive.loaded ? '1' : '0')).join('');
+
+  // A click in the viewport lands here: bring the row into view once its folder is open and read.
+  useEffect(() => {
+    if (!selectedKey) return;
+    const handle = window.requestAnimationFrame(() => {
+      bodyRef.current?.querySelector('.materialRow.selected')?.scrollIntoView({ block: 'nearest' });
+    });
+    return () => window.cancelAnimationFrame(handle);
+  }, [selectedKey, loadedSignature, expanded.length, expandedGroups.length]);
+
+  const toggleArchive = (path: string) =>
     onChangeExpanded(expanded.includes(path) ? expanded.filter((entry) => entry !== path) : [...expanded, path]);
+  const toggleGroup = (id: string) =>
+    onChangeExpandedGroups(expandedGroups.includes(id) ? expandedGroups.filter((entry) => entry !== id) : [...expandedGroups, id]);
+
+  const renderArchive = (archive: MaterialTreeArchive, headerLabel?: string, flat = false) => {
+    const open = expanded.includes(archive.path) || searching;
+    return (
+      <section className={flat ? 'materialArchive materialArchive--flat' : 'materialArchive'} key={archive.path}>
+        <button
+          type="button"
+          className={flat ? 'materialArchiveHeader materialGroupHeader' : 'materialArchiveHeader'}
+          aria-expanded={open}
+          onClick={() => toggleArchive(archive.path)}
+        >
+          {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          {ROLE_ICON[archive.role]}
+          <span className="materialArchiveName">{headerLabel ?? archive.label}</span>
+          <span className="materialArchiveCount">{archive.loaded ? archive.materialCount : ''}</span>
+        </button>
+        {open && !archive.loaded && <p className="materialEmpty">Reading…</p>}
+        {open && archive.loaded && archive.models.length === 0 && (
+          <p className="materialEmpty">{searching ? 'Nothing matches.' : 'This model has no materials.'}</p>
+        )}
+        {open &&
+          archive.models.map((model) => (
+            <div className="materialModel" key={model.id}>
+              {archive.models.length > 1 && (
+                <div className="materialModelHeader">
+                  <Box size={12} aria-hidden="true" />
+                  <span>{model.modelName}</span>
+                </div>
+              )}
+              {model.materials.length === 0 && <p className="materialEmpty">No materials match the search.</p>}
+              {model.materials.map((material) => {
+                const isSelected = materialRefEquals(material.ref, selected);
+                const meshCount = material.summary.meshes.length;
+                return (
+                  <button
+                    key={material.id}
+                    type="button"
+                    className={isSelected ? 'materialRow selected' : 'materialRow'}
+                    onClick={() => onSelect(material.ref)}
+                    onPointerEnter={() => onHover(material.ref)}
+                    onPointerLeave={() => onHover(null)}
+                    onFocus={() => onHover(material.ref)}
+                    onBlur={() => onHover(null)}
+                  >
+                    <span className="materialRowMain">
+                      <strong>{material.summary.materialName}</strong>
+                      <span className="materialRowMeta">{material.caption}</span>
+                    </span>
+                    <span className="materialRowTags">
+                      {material.summary.translucent && (
+                        <Tooltip label="Drawn with transparency" side="left">
+                          <span className="materialTag">Blend</span>
+                        </Tooltip>
+                      )}
+                      {meshCount > 1 && (
+                        <Tooltip label={`Paints ${meshCount} meshes: ${material.summary.meshes.slice(0, 8).join(', ')}${meshCount > 8 ? '…' : ''}`} side="left">
+                          <span className="materialTag meshes">×{meshCount}</span>
+                        </Tooltip>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+      </section>
+    );
+  };
 
   return (
-    <aside className="placeAssetsPanel materialPanel" aria-label="Materials">
+    <aside className="placeAssetsPanel materialPanel" aria-label="All materials">
       <div className="panelHeader placeAssetsHeader">
         <div>
-          <h2>Materials</h2>
-          <p className="panelSubtle">
-            {error
-              ? 'The material library could not be loaded.'
-              : loading
-                ? 'Loading the material library...'
-                : totalMaterials > 0
-                  ? `${totalMaterials} material${totalMaterials === 1 ? '' : 's'} in ${tree.length} archive${tree.length === 1 ? '' : 's'}`
-                  : 'Shaders, layers, colours and blending.'}
-          </p>
+          <h2>All materials</h2>
+          {(error || loading) && (
+            <p className="panelSubtle">{error ? 'The material library could not be loaded.' : 'Loading the material library...'}</p>
+          )}
         </div>
       </div>
 
-      <div className="materialPanelBody">
+      <div className="materialPanelBody" ref={bodyRef}>
         <div className="materialSearch">
           <Search size={13} aria-hidden="true" />
           <input
@@ -100,75 +191,28 @@ export function MaterialOutliner({
           />
         )}
 
-        {tree.map((archive) => {
-          const open = isExpanded(archive.path);
+        {MATERIAL_GROUPS.map((group) => {
+          const archives = tree.filter((archive) => archive.group === group.id);
+          if (archives.length === 0) return null;
+          // A folder with one model in it is just that model: no second level to open.
+          if (archives.length === 1 && group.id !== 'objects' && group.id !== 'other') {
+            return renderArchive(archives[0], group.label, true);
+          }
+          const open = expandedGroups.includes(group.id) || searching;
+          const visibleArchives = searching ? archives.filter((archive) => !archive.loaded || archive.materialCount > 0) : archives;
           return (
-            <section className="materialArchive" key={archive.path}>
+            <section className="materialGroup" key={group.id}>
               <button
                 type="button"
-                className="materialArchiveHeader"
+                className="materialArchiveHeader materialGroupHeader"
                 aria-expanded={open}
-                onClick={() => toggle(archive.path)}
+                onClick={() => toggleGroup(group.id as MaterialGroupId)}
               >
                 {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                {ROLE_ICON[archive.role]}
-                <span className="materialArchiveName">{archive.label}</span>
-                <span className="materialArchiveCount">{archive.loaded ? archive.materialCount : '…'}</span>
+                <span className="materialArchiveName">{group.label}</span>
+                <span className="materialArchiveCount">{archives.length}</span>
               </button>
-              {open && !archive.loaded && <p className="materialEmpty">Reading {archive.path}...</p>}
-              {open && archive.loaded && archive.models.length === 0 && (
-                <p className="materialEmpty">This archive has no MDL0 models.</p>
-              )}
-              {open &&
-                archive.models.map((model) => (
-                  <div className="materialModel" key={model.id}>
-                    <div className="materialModelHeader">
-                      <Box size={12} aria-hidden="true" />
-                      <span>{model.modelName}</span>
-                    </div>
-                    {model.materials.length === 0 && <p className="materialEmpty">No materials match the search.</p>}
-                    {model.materials.map((material) => {
-                      const isSelected = materialRefEquals(material.ref, selected);
-                      return (
-                        <button
-                          key={material.id}
-                          type="button"
-                          className={isSelected ? 'materialRow selected' : 'materialRow'}
-                          onClick={() => onSelect(material.ref)}
-                          onPointerEnter={() => onHover(material.ref)}
-                          onPointerLeave={() => onHover(null)}
-                          onFocus={() => onHover(material.ref)}
-                          onBlur={() => onHover(null)}
-                        >
-                          <span className="materialRowMain">
-                            <strong>{material.summary.materialName}</strong>
-                            <span className="materialRowMeta">{material.caption}</span>
-                          </span>
-                          <span className="materialRowTags">
-                            {material.summary.translucent && (
-                              <Tooltip label="Drawn in the translucent pass" side="left">
-                                <span className="materialTag">Blend</span>
-                              </Tooltip>
-                            )}
-                            {material.sharedBadge && (
-                              <Tooltip label={`This material's shader block is shared with ${material.summary.sharedShaderWith.join(', ')}. Editing the shader copies it first.`} side="left">
-                                <span className="materialTag shared">Shared</span>
-                              </Tooltip>
-                            )}
-                            {material.summary.meshes.length > 0 && (
-                              <Tooltip label={`Drawn by ${material.summary.meshes.length} mesh${material.summary.meshes.length === 1 ? '' : 'es'}: ${material.summary.meshes.slice(0, 8).join(', ')}`} side="left">
-                                <span className="materialTag meshes">{material.summary.meshes.length}</span>
-                              </Tooltip>
-                            )}
-                            <Tooltip label={`${material.summary.stageCount} TEV stage${material.summary.stageCount === 1 ? '' : 's'}`} side="left">
-                              <span className="materialTag stages">{material.summary.stageCount}</span>
-                            </Tooltip>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ))}
+              {open && visibleArchives.map((archive) => renderArchive(archive))}
             </section>
           );
         })}

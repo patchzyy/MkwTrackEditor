@@ -6,6 +6,7 @@ import { toCameraPreviewDefs } from '../viewport/cameraOverlay';
 import {
   NO_CAMERA_LINK,
   addCamera,
+  addCameraToChain,
   applyCameraValues,
   buildCameraDeleteRemap,
   buildCameraMoveRemap,
@@ -16,11 +17,13 @@ import {
   findCameraEntity,
   getCameraChain,
   getCameraChainStarts,
+  insertIntoChainOrder,
   generateIntroCameras,
   listCameraRows,
   moveCamera,
   readCameraValues,
   remapCameraIndex,
+  removeFromChainOrder,
   reorderChain,
   setChainOrder,
   setChainStart,
@@ -474,6 +477,69 @@ describe('camera chains', () => {
     expect(reorderChain([3, 1, 2], 0, 2)).toEqual([1, 2, 3]);
     expect(reorderChain([3, 1, 2], 2, 0)).toEqual([2, 3, 1]);
     expect(reorderChain([3, 1, 2], 5, 0)).toEqual([3, 1, 2]);
+  });
+});
+
+describe('timeline chain editing', () => {
+  it('inserts a camera at a slot, counting among the other cameras', () => {
+    expect(insertIntoChainOrder([0, 1, 2], 5, 1)).toEqual([0, 5, 1, 2]);
+    expect(insertIntoChainOrder([0, 1, 2], 5, 99)).toEqual([0, 1, 2, 5]);
+    expect(insertIntoChainOrder([0, 1, 2], 5, -3)).toEqual([5, 0, 1, 2]);
+  });
+
+  it('moves a camera that is already in the order instead of duplicating it', () => {
+    expect(insertIntoChainOrder([0, 1, 2], 0, 2)).toEqual([1, 2, 0]);
+    expect(insertIntoChainOrder([0, 1, 2], 2, 0)).toEqual([2, 0, 1]);
+    expect(insertIntoChainOrder([0, 1, 2], 1, 1)).toEqual([0, 1, 2]);
+  });
+
+  it('takes a camera out of an order', () => {
+    expect(removeFromChainOrder([0, 1, 2], 1)).toEqual([0, 2]);
+    expect(removeFromChainOrder([0, 1, 2], 9)).toEqual([0, 1, 2]);
+  });
+
+  it('rewires hand-overs and the header when the first clip changes', () => {
+    let document = withCameras(3);
+    document = parseKmp(setChainOrder(document, 'opening', [0, 1, 2]));
+    document = parseKmp(setChainOrder(document, 'opening', insertIntoChainOrder([0, 1, 2], 2, 0)));
+    expect(getCameraChainStarts(document).opening).toBe(2);
+    expect(nextCams(document)).toEqual([1, NO_CAMERA_LINK, 0]);
+    expect(getCameraChain(document, 'opening').order).toEqual([2, 0, 1]);
+  });
+
+  it('splices an outside camera into the middle of the chain', () => {
+    let document = withCameras(4);
+    document = parseKmp(setChainOrder(document, 'opening', [0, 1, 2]));
+    document = parseKmp(setChainOrder(document, 'opening', insertIntoChainOrder([0, 1, 2], 3, 1)));
+    expect(getCameraChain(document, 'opening').order).toEqual([0, 3, 1, 2]);
+    expect(nextCams(document)).toEqual([3, 2, NO_CAMERA_LINK, 1]);
+  });
+
+  it('appends a new shot to the end of the chain in one edit', () => {
+    let document = withCameras(2);
+    document = parseKmp(setChainOrder(document, 'opening', [0, 1]));
+    const result = addCameraToChain(document, 'opening', cameraValues({ position: vec(900) }));
+    expect(result.selectedId).toBe('CAME-2');
+    const next = parseKmp(result.bytes);
+    expect(getCameraChain(next, 'opening').order).toEqual([0, 1, 2]);
+    expect(nextCams(next)).toEqual([1, 2, NO_CAMERA_LINK]);
+  });
+
+  it('starts a chain with the new shot when none exists yet', () => {
+    const result = addCameraToChain(createEmptyKmp(), 'selection', cameraValues());
+    const next = parseKmp(result.bytes);
+    expect(getCameraChainStarts(next).selection).toBe(0);
+    expect(getCameraChain(next, 'selection').order).toEqual([0]);
+  });
+
+  it('ends a chain that used to loop when a shot is appended', () => {
+    let document = withCameras(2);
+    document = parseKmp(setChainOrder(document, 'opening', [0, 1]));
+    document = parseKmp(applyCameraValues(document, 'CAME-1', { nextCam: 0 }));
+    const next = parseKmp(addCameraToChain(document, 'opening', cameraValues()).bytes);
+    const chain = getCameraChain(next, 'opening');
+    expect(chain.order).toEqual([0, 1, 2]);
+    expect(chain.loopsAt).toBeNull();
   });
 });
 

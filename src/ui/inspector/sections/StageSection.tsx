@@ -1,6 +1,7 @@
 import type { KmpEntity, KmpStageField } from '../../../lib/kmp';
 import { RgbaColorField } from '../fields/RgbaColorField';
 import type { InspectorScope } from './scope';
+import { PropertyRow } from '../PropertySheet';
 
 /** One row per STGI field, in the order a track author cares about them. */
 const STAGE_FIELDS: Array<{
@@ -84,12 +85,10 @@ export function StageSection({
       {fields.map((meta) => {
         const value = stage[meta.field];
         return (
-          <label key={meta.field}>
-            {meta.label}
+          <PropertyRow key={meta.field} label={meta.label} help={meta.field === 'speedMod' && value === 0 ? `${meta.help} Currently the normal 1x speed.` : meta.help}>
             {meta.options ? (
               <select
                 aria-label={meta.label}
-                title={meta.help}
                 value={String(meta.options.some((option) => option.value === value) ? value : meta.options[0].value)}
                 onChange={(event) => onChangeStageField(meta.field, Number(event.currentTarget.value))}
               >
@@ -102,7 +101,6 @@ export function StageSection({
             ) : (
               <input
                 aria-label={meta.label}
-                title={meta.help}
                 type="number"
                 min={meta.min}
                 max={meta.max}
@@ -115,13 +113,11 @@ export function StageSection({
                 }}
               />
             )}
-            <span>{meta.field === 'speedMod' && value === 0 ? 'Currently the normal 1x speed.' : meta.help}</span>
-          </label>
+          </PropertyRow>
         );
       })}
       {scope === 'essentials' && (
-        <label>
-          Sun flare colour
+        <PropertyRow label="Sun flare colour" help="The colour and strength of the sun flare drawn over the track.">
           <RgbaColorField
             value={[stage.flareColor[0] ?? 0, stage.flareColor[1] ?? 0, stage.flareColor[2] ?? 0, stage.flareColor[3] ?? 0]}
             onChange={(next) => {
@@ -130,8 +126,7 @@ export function StageSection({
               }
             }}
           />
-          <span>The colour and strength of the sun flare drawn over the track.</span>
-        </label>
+        </PropertyRow>
       )}
     </div>
   );

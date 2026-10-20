@@ -1,11 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { replaceArchiveFile, type TrackDocument } from '../../lib/track';
+import { listArchiveMaterialsBrief, listModelSlots } from '../../lib/materialSlots';
+import type { SurfaceHighlight, SurfacePick, SurfacePickingOptions } from '../../lib/surfacePick';
+import {
+  ensureTrackLocalArchive,
+  findTrackArchiveEntry,
+  replaceArchiveFile,
+  resolveArchiveBytes,
+  type TrackDocument,
+} from '../../lib/track';
 import type { CompiledShader, GxArchiveMaterials, GxMaterialDoc, GxMaterialRef } from '../../lib/gxMaterial';
-import { REFRESH_TRACK_SHORTCUT, RefreshTrackButton, useToast } from '../components';
+import { useToast } from '../components';
+import { getKnownObjectName, humanizeObjectName } from '../labels';
 import type { EditorModeContext, ModeUi } from '../modes/types';
 import { MaterialInspector } from './MaterialInspector';
 import { MaterialOutliner } from './MaterialOutliner';
-import { MaterialViewOverlay } from './MaterialViewOverlay';
+import { ModelMaterialsStrip } from './ModelMaterialsStrip';
 import { ShaderGraphDock } from './ShaderGraphDock';
 import {
   autoLayout,
@@ -15,80 +24,100 @@ import {
   type EditorShaderGraph,
 } from './graphModel';
 import { loadStoredGraph, saveStoredGraph, sessionGraphKey } from './graphStore';
+import {
+  buildModelMaterialRows,
+  contextFromPick,
+  contextTitle,
+  friendlyFileName,
+  type MaterialContext,
+} from './materialContext';
 import { ensureLayerCount, materialDocEquals, withChannelLighting } from './materialDoc';
 import { loadMaterialLibrary, type GxMaterialLibrary } from './materialLibrary';
 import {
+  archiveKey,
   buildMaterialTree,
   findArchiveBytes,
   listMaterialArchives,
   materialRefEquals,
   materialRefKey,
+  type ExtraMaterialArchive,
+  type MaterialArchiveEntry,
 } from './materialOutlinerModel';
 import {
   findMaterialMeshes,
-  highlightMaterialMeshes,
   soloMaterialMeshes,
+  toSceneArchivePath,
   type MaterialRendererScene,
   type SceneMeshEntry,
 } from './materialScene';
+import { useIdleCommit } from './useIdleCommit';
 import './material.css';
 
 /** How long after the last graph edit the compiler runs. Short enough to feel immediate. */
 const COMPILE_DEBOUNCE_MS = 50;
 /** Undo steps kept per material's graph. */
 const GRAPH_HISTORY_LIMIT = 64;
-/**
- * What the status line says when an edit is saved into the track but the running viewport could
- * not be updated in place — the model is not one the scene draws, or the archive changed too much
- * to patch. The edit is not lost; the picture just needs a rebuild.
- */
-const HOT_SWAP_FAILED_HINT = `The viewport cannot show this one live, so press Refresh (${REFRESH_TRACK_SHORTCUT}) to rebuild it.`;
 
-/** The file name of an archive, for a sentence that should not read like a path. */
-function archiveFileName(path: string): string {
-  return path.split('/').pop() ?? path;
+/** A material whose edits are in the editor but not yet in the track or the viewport. */
+interface DirtyMaterial {
+  ref: GxMaterialRef;
+  doc: GxMaterialDoc;
+  /** What to call the model in status lines ("Item Box"). */
+  label: string;
 }
 
 export type MaterialDockTab = 'graph' | 'stages';
 
 /**
- * Material mode: authoring one BRRES material — its layers, lighting channels, colours, blend and
- * depth state, and the TEV shader as a node graph.
+ * Material mode: click a surface in the viewport and edit the material it is painted with — its
+ * layers, lighting channels, colours, blend and depth state, and the TEV shader as a node graph.
  *
  * The split is the one `src/lib/gxMaterial/types.ts` describes: this half never touches MDL0
  * bytes and never implements TEV semantics. It decodes a material into a `GxMaterialDoc`, edits
- * that document, asks the library to lower the graph to stages and to write the document back,
- * and pushes the rewritten archive at the renderer's `reloadEditorMaterial` so the viewport
- * updates without a scene rebuild.
+ * that document, asks the library to lower the graph to stages and to write the document back.
+ *
+ * Edits are **held until the author pauses** (`IDLE_COMMIT_MS`): every change updates the working
+ * document at once (the inspector and graph never lag) and restarts a countdown; when it runs out,
+ * the dirty materials are written into the track as one undo step and hot-swapped into the
+ * viewport, falling back to a scene rebuild when the swap cannot apply. Undo, Export, the top bar,
+ * switching material and leaving the mode all flush the countdown first.
  */
 export function useMaterialMode(ctx: EditorModeContext): ModeUi {
   const active = ctx.editorMode === 'material';
-  const { track, history, selection, setStatus, refreshScene, sceneRefreshing } = ctx;
+  const { track, history, selection, setStatus, sceneRefreshing, commonArchive } = ctx;
   const toast = useToast();
+
+  // Everything the commit needs is read through this, so a timer that fires later never sees a
+  // stale track, history or common archive.
+  const ctxRef = useRef(ctx);
+  ctxRef.current = ctx;
 
   const sceneRef = useRef<MaterialRendererScene | null>(null);
   const [sceneVersion, setSceneVersion] = useState(0);
 
   const [library, setLibrary] = useState<GxMaterialLibrary | null>(null);
   const [libraryError, setLibraryError] = useState<string | null>(null);
+  const libraryRef = useRef(library);
+  libraryRef.current = library;
 
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState<string[]>([]);
+  const [expandedGroups, setExpandedGroups] = useState<string[]>(['course']);
   const [selectedRef, setSelectedRef] = useState<GxMaterialRef | null>(null);
+  const [context, setContext] = useState<MaterialContext | null>(null);
   const [hoveredRef, setHoveredRef] = useState<GxMaterialRef | null>(null);
   const [dockTab, setDockTab] = useState<MaterialDockTab>('graph');
   const [solo, setSolo] = useState(false);
 
   /**
-   * The archives that have been listed, and the exact bytes they were listed from. Listing walks
-   * the whole BRRES, so it runs once per archive and is *not* redone after an edit: the decoded
-   * documents below are the source of truth from then on, and the only summary field an edit can
-   * change (the material's name) is patched in place.
+   * The archives that have been listed (keyed by `archiveKey`), and the exact bytes they were
+   * listed from. Listing walks the whole BRRES, so it runs once per archive and is *not* redone
+   * after an edit: the decoded documents below are the source of truth from then on.
    */
   const [archives, setArchives] = useState<Record<string, GxArchiveMaterials>>({});
   const pinnedBytesRef = useRef(new Map<string, Uint8Array>());
 
-  /** Working documents, keyed by material. Committing an edit updates the entry here too. */
+  /** Working documents, keyed by material. An edit updates the entry here at once. */
   const [docs, setDocs] = useState<Record<string, GxMaterialDoc>>({});
   /**
    * The documents that go with each version of the track. Undo and redo swap the whole
@@ -115,12 +144,60 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
    */
   const pendingGraphStatusRef = useRef<string | null>(null);
 
-  const archiveEntries = useMemo(() => listMaterialArchives(track), [track]);
+  // ------------------------------------------------------------------ the models the viewport can show
+
+  const onVisualSceneChange = useCallback((scene: MaterialRendererScene | null) => {
+    sceneRef.current = scene;
+    setSceneVersion((version) => version + 1);
+  }, []);
+
+  /**
+   * Object models the viewport draws but the track archive does not carry (they come from
+   * Common.szs), with the names the author knows them by. The outliner lists these too, so the
+   * item box is in the list even though no `itembox.brres` ships with the track.
+   */
+  const sceneModels = useMemo(() => {
+    const extras: ExtraMaterialArchive[] = [];
+    const labels = new Map<string, string>();
+    if (!active) return { extras, labels };
+    const instances = sceneRef.current?.collectEditorSurfaceInstances?.() ?? [];
+    for (const instance of instances) {
+      if (instance.kind !== 'object' || !instance.archivePath) continue;
+      const key = archiveKey(instance.archivePath);
+      if (labels.has(key)) continue;
+      const label =
+        getKnownObjectName(instance.objectId ?? undefined) ??
+        (instance.objectName ? humanizeObjectName(instance.objectName) : friendlyFileName(instance.archivePath));
+      labels.set(key, label);
+      extras.push({ path: instance.archivePath, label });
+    }
+    return { extras, labels };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, sceneVersion, track?.fileName]);
+
+  const archiveEntries = useMemo(
+    () => listMaterialArchives(track, sceneModels.extras, sceneModels.labels),
+    [track, sceneModels],
+  );
+  const archiveEntriesRef = useRef<MaterialArchiveEntry[]>(archiveEntries);
+  archiveEntriesRef.current = archiveEntries;
+
+  /** Track copy first, then the game's shared files — the order the game and the viewport load in. */
+  const bytesFor = useCallback(
+    (path: string): Uint8Array | null => {
+      const pinned = pinnedBytesRef.current.get(archiveKey(path));
+      if (pinned) return pinned;
+      if (!track) return null;
+      return resolveArchiveBytes(track, commonArchive, path)?.bytes ?? null;
+    },
+    [commonArchive, track],
+  );
+
   const selectedKey = selectedRef ? materialRefKey(selectedRef) : null;
   const doc = selectedKey ? (docs[selectedKey] ?? null) : null;
   const graph = selectedRef ? (graphs[sessionGraphKey(selectedRef)] ?? null) : null;
 
-  // ------------------------------------------------------------------ library and archives
+  // ------------------------------------------------------------------ library
 
   useEffect(() => {
     if (!active || library !== null || libraryError !== null) return;
@@ -132,8 +209,193 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
     return () => { cancelled = true; };
   }, [active, library, libraryError]);
 
+  // ------------------------------------------------------------------ the idle commit
+
+  const dirtyRef = useRef(new Map<string, DirtyMaterial>());
+  /** The documents as they were when the current burst of edits began (what undo goes back to). */
+  const baselineDocsRef = useRef<Record<string, GxMaterialDoc>>({});
+  /** `docs`, but already holding an edit made a moment ago that React has not rendered yet. */
+  const docsRef = useRef(docs);
+  docsRef.current = docs;
+  const refsByKeyRef = useRef(new Map<string, GxMaterialRef>());
+  /** A scene rebuild is wanted as soon as none is running (a hot swap failed). */
+  const refreshWantedRef = useRef(false);
+
+  const surfaceWarnings = useCallback(
+    (warnings: readonly string[]) => {
+      for (const message of warnings) {
+        if (warnedRef.current.has(message)) continue;
+        warnedRef.current.add(message);
+        toast.showToast({ tone: 'warning', title: 'Material editor', detail: message });
+      }
+    },
+    [toast],
+  );
+
+  const pushToRenderer = useCallback((ref: GxMaterialRef, bytes: Uint8Array): boolean => {
+    return sceneRef.current?.reloadEditorMaterial?.(toSceneArchivePath(ref.archivePath), ref.modelName, ref.materialName, bytes) ?? false;
+  }, []);
+
+  /** Rebuilds the viewport from the track; waits its turn when a rebuild is already running. */
+  const requestRefresh = useCallback(() => {
+    refreshWantedRef.current = true;
+    if (ctxRef.current.sceneRefreshing || !ctxRef.current.trackRef.current) return;
+    refreshWantedRef.current = false;
+    ctxRef.current.refreshScene();
+  }, []);
+
+  useEffect(() => {
+    if (!sceneRefreshing && refreshWantedRef.current && active) requestRefresh();
+  }, [active, requestRefresh, sceneRefreshing]);
+
+  /**
+   * Writes every dirty material into the track (one undo step for the whole burst) and puts the
+   * result in the viewport. When a Common.szs model is edited for the first time the track gets
+   * its own copy of it first, silently, with one line in the status bar.
+   */
+  const commitPending = () => {
+    const lib = libraryRef.current;
+    const { trackRef, commonArchive: common, history: historyApi, selection: selectionApi } = ctxRef.current;
+    const entries = [...dirtyRef.current.values()];
+    dirtyRef.current.clear();
+    const base = trackRef.current;
+    if (entries.length === 0 || !lib || !base) {
+      if (refreshWantedRef.current) requestRefresh();
+      return;
+    }
+
+    let nextTrack: TrackDocument = base;
+    const swaps: Array<{ ref: GxMaterialRef; bytes: Uint8Array }> = [];
+    const copied: string[] = [];
+    const renames: Array<{ from: GxMaterialRef; to: GxMaterialRef }> = [];
+    let workingDocs = docsRef.current;
+    const baseline = baselineDocsRef.current;
+
+    for (const entry of entries) {
+      const key = materialRefKey(entry.ref);
+      try {
+        const local = ensureTrackLocalArchive(nextTrack, common, entry.ref.archivePath);
+        const file = findTrackArchiveEntry(local.track, local.path);
+        if (!file?.data) throw new Error(`The track has no ${entry.ref.archivePath} to write into.`);
+        const result = lib.applyMaterial(file.data, entry.ref.modelName, entry.ref.materialName, entry.doc);
+        nextTrack = replaceArchiveFile(local.track, local.path, result.brres);
+        if (local.copied) copied.push(entry.label);
+        const renamed = entry.doc.name !== entry.ref.materialName;
+        const written: GxMaterialRef = {
+          archivePath: local.path,
+          modelName: entry.ref.modelName,
+          materialName: renamed ? entry.doc.name : entry.ref.materialName,
+        };
+        swaps.push({ ref: written, bytes: result.brres });
+        refsByKeyRef.current.set(materialRefKey(written), written);
+        if (renamed) renames.push({ from: entry.ref, to: written });
+        surfaceWarnings(result.warnings);
+      } catch (error) {
+        // The edit could not be written, so the working copy goes back to what the track holds
+        // rather than showing something the viewport and an export will never have.
+        if (baseline[key]) workingDocs = { ...workingDocs, [key]: baseline[key] };
+        setStatus(`${entry.ref.materialName} could not be saved into the track, so nothing was changed.`);
+        toast.showToast({
+          tone: 'error',
+          title: `${entry.ref.materialName} could not be saved`,
+          detail: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // A rename moves the material's key; the working documents follow it.
+    for (const { from, to } of renames) {
+      const fromKey = materialRefKey(from);
+      const toKey = materialRefKey(to);
+      if (fromKey === toKey || !workingDocs[fromKey]) continue;
+      const { [fromKey]: moved, ...rest } = workingDocs;
+      workingDocs = { ...rest, [toKey]: moved };
+    }
+
+    if (workingDocs !== docsRef.current) {
+      docsRef.current = workingDocs;
+      setDocs(workingDocs);
+    }
+    if (renames.length > 0) {
+      setSelectedRef((current) => {
+        const hit = current && renames.find((rename) => materialRefEquals(rename.from, current));
+        return hit ? hit.to : current;
+      });
+      setGraphs((current) =>
+        Object.fromEntries(Object.entries(current).filter(([key]) => !renames.some((rename) => sessionGraphKey(rename.from) === key))),
+      );
+      setArchives((current) => {
+        const next = { ...current };
+        for (const { from, to } of renames) {
+          const listing = next[archiveKey(from.archivePath)];
+          if (!listing) continue;
+          next[archiveKey(from.archivePath)] = {
+            ...listing,
+            models: listing.models.map((model) => ({
+              ...model,
+              materials: model.materials.map((material) =>
+                model.modelName === from.modelName && material.materialName === from.materialName
+                  ? { ...material, materialName: to.materialName }
+                  : material),
+            })),
+          };
+        }
+        return next;
+      });
+    }
+
+    if (nextTrack !== base) {
+      // Both versions of the track remember the documents that go with them, so undo and redo
+      // put the inspector back where it was without re-decoding anything.
+      docsByTrackRef.current.set(base, baseline);
+      docsByTrackRef.current.set(nextTrack, workingDocs);
+      historyApi.applyEditorChange(nextTrack, selectionApi.selectedIdRef.current, true, selectionApi.selectedIdsRef.current);
+    }
+
+    let swapFailed = false;
+    for (const swap of swaps) if (!pushToRenderer(swap.ref, swap.bytes)) swapFailed = true;
+    if (copied.length > 0) {
+      setStatus(`${copied[0]} now uses a track copy of its model${copied.length > 1 ? ` (and ${copied.length - 1} more)` : ''}.`);
+    }
+    // The model is one the scene cannot patch in place: rebuild it, keeping camera and selection.
+    if (swapFailed) refreshWantedRef.current = true;
+    if (refreshWantedRef.current) requestRefresh();
+  };
+
+  const idle = useIdleCommit(commitPending);
+  const flushPending = idle.flush;
+  const cancelPending = idle.cancel;
+  const touchPending = idle.touch;
+
+  // Anything that is about to read or change the track commits first, so it sees (or undoes) the
+  // author's latest edit: Ctrl+Z / Ctrl+S / Ctrl+O and a press anywhere on the top bar (Undo,
+  // Redo, Export, Refresh, the file menu).
+  useEffect(() => {
+    if (!active) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey) flushPending();
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if ((event.target as Element | null)?.closest?.('.topBar')) flushPending();
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('pointerdown', onPointerDown, true);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('pointerdown', onPointerDown, true);
+    };
+  }, [active, flushPending]);
+
+  // Leaving the mode must not strand an edit that never reached the track.
+  useEffect(() => {
+    if (!active) flushPending();
+  }, [active, flushPending]);
+
   // A new track invalidates everything that was read out of the old one.
   useEffect(() => {
+    cancelPending();
+    dirtyRef.current.clear();
+    refreshWantedRef.current = false;
     pinnedBytesRef.current = new Map();
     warnedRef.current = new Set();
     graphHistoryRef.current = new Map();
@@ -141,52 +403,67 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
     setDocs({});
     setGraphs({});
     setSelectedRef(null);
+    setContext(null);
+    setExpanded([]);
+    setExpandedGroups(['course']);
     setCompiled(null);
-  }, [track?.fileName]);
+  }, [cancelPending, track?.fileName]);
 
-  // The first archive (the course model) is opened on entering the mode; anything else waits for
-  // the user to expand it, because listing an archive parses the whole BRRES.
+  // ------------------------------------------------------------------ archives
+
+  // The course model is opened on entering the mode; everything else waits for the user (or a
+  // click in the viewport), because listing an archive parses the whole BRRES.
+  const openedInitialRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!active || expanded.length > 0 || archiveEntries.length === 0) return;
-    setExpanded([archiveEntries[0].path]);
-  }, [active, archiveEntries, expanded.length]);
+    if (!active || archiveEntries.length === 0 || !track) return;
+    if (openedInitialRef.current === track.fileName) return;
+    openedInitialRef.current = track.fileName;
+    const course = archiveEntries.find((entry) => entry.role === 'course') ?? archiveEntries[0];
+    setExpanded([course.path]);
+  }, [active, archiveEntries, track]);
 
   useEffect(() => {
     if (!active || !library || !track) return;
-    const missing = expanded.filter((path) => archives[path] === undefined);
-    if (missing.length === 0) return;
+    const wanted = new Set<string>(expanded);
+    // A search has to look in every model, not only the ones that happen to be open.
+    if (query.trim()) for (const entry of archiveEntries) wanted.add(entry.path);
+    if (selectedRef) wanted.add(selectedRef.archivePath);
+    if (context && !context.placed) wanted.add(context.archivePath);
     const next: Record<string, GxArchiveMaterials> = {};
-    for (const path of missing) {
-      const bytes = findArchiveBytes(track, path);
+    for (const path of wanted) {
+      const key = archiveKey(path);
+      if (archives[key] !== undefined || next[key] !== undefined) continue;
+      const bytes = bytesFor(path);
       if (!bytes) continue;
       try {
-        next[path] = library.listArchiveMaterials(path, bytes);
-        pinnedBytesRef.current.set(path, bytes);
+        next[key] = library.listArchiveMaterials(path, bytes);
+        pinnedBytesRef.current.set(key, bytes);
       } catch (error) {
-        setStatus(`The ${archiveFileName(path)} archive could not be read, so its materials are not listed.`);
+        const name = path.split('/').pop() ?? path;
+        setStatus(`The ${name} archive could not be read, so its materials are not listed.`);
         toast.showToast({
           tone: 'warning',
-          title: `${archiveFileName(path)} could not be read`,
+          title: `${name} could not be read`,
           detail: error instanceof Error ? error.message : String(error),
         });
-        next[path] = { archivePath: path, models: [], textures: [] };
+        next[key] = { archivePath: path, models: [], textures: [] };
       }
     }
     if (Object.keys(next).length > 0) setArchives((current) => ({ ...current, ...next }));
-  }, [active, archives, expanded, library, setStatus, toast, track]);
+  }, [active, archiveEntries, archives, bytesFor, context, expanded, library, query, selectedRef, setStatus, toast, track]);
 
   const tree = useMemo(
     () => buildMaterialTree(archiveEntries, new Map(Object.entries(archives)), query),
     [archiveEntries, archives, query],
   );
-  const selectedArchive = selectedRef ? (archives[selectedRef.archivePath] ?? null) : null;
+  const selectedArchive = selectedRef ? (archives[archiveKey(selectedRef.archivePath)] ?? null) : null;
 
   // ------------------------------------------------------------------ decode on selection
 
   const decodeSelected = useCallback(
     (ref: GxMaterialRef): GxMaterialDoc | null => {
       if (!library) return null;
-      const bytes = pinnedBytesRef.current.get(ref.archivePath) ?? findArchiveBytes(track, ref.archivePath);
+      const bytes = bytesFor(ref.archivePath);
       if (!bytes) return null;
       try {
         return library.decodeMaterial(bytes, ref.modelName, ref.materialName);
@@ -195,7 +472,7 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
         return null;
       }
     },
-    [library, setStatus, track],
+    [bytesFor, library, setStatus],
   );
 
   useEffect(() => {
@@ -213,13 +490,23 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
 
   /**
    * Undo and redo restore an older `TrackDocument`; the working documents have to follow, or the
-   * inspector keeps showing the edit that was just undone.
+   * inspector keeps showing the edit that was just undone. A material with an edit still waiting
+   * for its commit keeps that edit.
    */
   useEffect(() => {
     if (!active || !track) return;
     const stored = docsByTrackRef.current.get(track);
     if (!stored) return;
-    setDocs((current) => (current === stored ? current : { ...current, ...stored }));
+    setDocs((current) => {
+      let changed = false;
+      const merged = { ...current };
+      for (const [key, value] of Object.entries(stored)) {
+        if (dirtyRef.current.has(key) || merged[key] === value) continue;
+        merged[key] = value;
+        changed = true;
+      }
+      return changed ? merged : current;
+    });
   }, [active, track]);
 
   /**
@@ -242,18 +529,17 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
     }
     if (stalePaths.length === 0) return;
 
-    const staleKeys = new Set(stalePaths.map((path) => `${path.replace(/^\.\//, '').toLowerCase()}|`));
+    const staleKeys = new Set(stalePaths.map((path) => `${archiveKey(path)}|`));
     const isStale = (key: string) => [...staleKeys].some((prefix) => key.startsWith(prefix));
     for (const path of stalePaths) pinnedBytesRef.current.delete(path);
     setArchives((current) => {
       const next = { ...current };
-      for (const path of stalePaths) delete next[path];
+      for (const path of stalePaths) delete next[archiveKey(path)];
       return next;
     });
     setDocs((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !isStale(key))));
     setGraphs((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !isStale(key))));
   }, [track]);
-
 
   // A material's graph starts as the decompiled stages, unless an authored one was stored for
   // exactly these stages in a previous session.
@@ -288,31 +574,13 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
     return () => window.clearTimeout(timer);
   }, [active, doc, graph, library]);
 
-  // ------------------------------------------------------------------ committing edits
-
-  const surfaceWarnings = useCallback(
-    (warnings: readonly string[]) => {
-      for (const message of warnings) {
-        if (warnedRef.current.has(message)) continue;
-        warnedRef.current.add(message);
-        toast.showToast({ tone: 'warning', title: 'Material editor', detail: message });
-      }
-    },
-    [toast],
-  );
-
-  const pushToRenderer = useCallback((ref: GxMaterialRef, bytes: Uint8Array): boolean => {
-    return sceneRef.current?.reloadEditorMaterial?.(`./${ref.archivePath.replace(/^\.\//, '')}`, ref.modelName, ref.materialName, bytes) ?? false;
-  }, []);
+  // ------------------------------------------------------------------ the viewport follows undo and redo
 
   /**
    * The viewport has to follow too: every material whose document differs between the version
    * that was showing and the version just restored gets its restored bytes hot-swapped, so an
    * undone edit disappears from the track and a redone one comes back.
    */
-  const docsRef = useRef(docs);
-  docsRef.current = docs;
-  const refsByKeyRef = useRef(new Map<string, GxMaterialRef>());
   useEffect(() => {
     if (!track) return;
     const stored = docsByTrackRef.current.get(track);
@@ -320,7 +588,7 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
     const showing = docsRef.current;
     const stale: GxMaterialRef[] = [];
     for (const key of new Set([...Object.keys(showing), ...Object.keys(stored)])) {
-      if (showing[key] === stored[key]) continue;
+      if (showing[key] === stored[key] || dirtyRef.current.has(key)) continue;
       const ref = refsByKeyRef.current.get(key);
       if (ref) stale.push(ref);
     }
@@ -336,19 +604,21 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
       }
       setGraphs((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !staleGraphs.includes(key))));
     }
-    let failed = 0;
+    let failed = false;
     for (const ref of stale) {
-      const bytes = findArchiveBytes(track, ref.archivePath);
-      if (!bytes || !pushToRenderer(ref, bytes)) failed++;
+      const bytes = resolveArchiveBytes(track, ctxRef.current.commonArchive, ref.archivePath)?.bytes;
+      if (!bytes || !pushToRenderer(ref, bytes)) failed = true;
     }
-    if (failed > 0) setStatus(`${failed === stale.length ? 'The restored material' : 'One restored material'} ${HOT_SWAP_FAILED_HINT}`);
-  }, [pushToRenderer, setStatus, track]);
+    if (failed) requestRefresh();
+  }, [pushToRenderer, requestRefresh, track]);
+
+  // ------------------------------------------------------------------ editing
 
   /**
-   * One committed edit: write the document into the archive, put the new bytes in the track
-   * document (which is what undo and export both read), and hot-swap the material in the viewport.
-   * `transient` edits — a slider mid-drag — only update the working document, so a whole drag
-   * coalesces into the single history entry its release produces.
+   * One edit: the working document changes at once (so the inspector, the graph and the compiler
+   * all see it), the material is marked dirty and the countdown restarts. Nothing is written to
+   * the track or the viewport until the author pauses — `commitPending` does that, once, for the
+   * whole burst. That is what keeps a slider drag or a long graph session free of lag spikes.
    */
   const updateDoc = useCallback(
     (next: GxMaterialDoc, options: { transient?: boolean; status?: string } = {}) => {
@@ -356,38 +626,16 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
       if (!ref) return;
       const key = materialRefKey(ref);
       refsByKeyRef.current.set(key, ref);
-      const nextDocs = { ...docs, [key]: next };
+      if (dirtyRef.current.size === 0) baselineDocsRef.current = docsRef.current;
+      const nextDocs = { ...docsRef.current, [key]: next };
+      docsRef.current = nextDocs;
       setDocs(nextDocs);
-      if (options.transient || !library || !track) return;
-
-      const bytes = findArchiveBytes(track, ref.archivePath);
-      if (!bytes) return;
-      try {
-        const result = library.applyMaterial(bytes, ref.modelName, ref.materialName, next);
-        const nextTrack = replaceArchiveFile(track, ref.archivePath, result.brres);
-        // Both versions of the track remember the documents that go with them, so undo and redo
-        // put the inspector back where it was without re-decoding anything.
-        docsByTrackRef.current.set(track, docs);
-        docsByTrackRef.current.set(nextTrack, nextDocs);
-        history.applyEditorChange(
-          nextTrack,
-          selection.selectedIdRef.current,
-          true,
-          selection.selectedIdsRef.current,
-        );
-        surfaceWarnings(result.warnings);
-        const live = pushToRenderer(ref, result.brres);
-        if (options.status) setStatus(live ? options.status : `${options.status} ${HOT_SWAP_FAILED_HINT}`);
-      } catch (error) {
-        setStatus(`${ref.materialName} could not be saved into the track, so nothing was changed.`);
-        toast.showToast({
-          tone: 'error',
-          title: `${ref.materialName} could not be saved`,
-          detail: error instanceof Error ? error.message : String(error),
-        });
-      }
+      if (options.status) setStatus(options.status);
+      if (!library || !track) return;
+      dirtyRef.current.set(key, { ref, doc: next, label: context?.title ?? friendlyFileName(ref.archivePath) });
+      touchPending();
     },
-    [docs, history, library, pushToRenderer, selectedRef, selection, setStatus, surfaceWarnings, track],
+    [context?.title, library, selectedRef, setStatus, touchPending, track],
   );
 
   // ------------------------------------------------------------------ graph editing
@@ -445,7 +693,7 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
     return { undo: entry?.undo.length ?? 0, redo: entry?.redo.length ?? 0 };
   }, [graphs, selectedRef]);
 
-  /** A compiled graph becomes the material's stages, as one history entry. */
+  /** A compiled graph becomes the material's stages. */
   const applyCompiled = useCallback(() => {
     if (!doc || !compiled || !compiled.ok) return;
     const next = { ...doc, tevStages: compiled.tevStages.map((stage) => ({ ...stage })) };
@@ -570,116 +818,238 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
     [graph, setGraph],
   );
 
-  // ------------------------------------------------------------------ viewport
+  // ------------------------------------------------------------------ picking
 
-  const onVisualSceneChange = useCallback((scene: MaterialRendererScene | null) => {
-    sceneRef.current = scene;
-    setSceneVersion((version) => version + 1);
+  /** What the Details panel lists when a row of the outliner is clicked instead of the viewport. */
+  const contextForRef = useCallback((ref: GxMaterialRef): MaterialContext => {
+    const entry = archiveEntriesRef.current.find((candidate) => archiveKey(candidate.path) === archiveKey(ref.archivePath));
+    const kind = entry?.role === 'course' ? 'course' : entry?.role === 'skybox' ? 'skybox' : 'object';
+    return {
+      archivePath: ref.archivePath,
+      modelName: ref.modelName,
+      kind,
+      title: contextTitle(kind, entry?.label, friendlyFileName(ref.archivePath)),
+      source: entry?.source ?? 'track',
+    };
   }, []);
+
+  const selectMaterial = useCallback(
+    (ref: GxMaterialRef | null, nextContext?: MaterialContext | null) => {
+      // The edit being made on the previous material is written (and shown) before moving on.
+      flushPending();
+      setSelectedRef(ref);
+      setSolo(false);
+      if (ref) {
+        setContext((current) =>
+          nextContext ??
+          (current && archiveKey(current.archivePath) === archiveKey(ref.archivePath) && current.modelName === ref.modelName ? current : contextForRef(ref)),
+        );
+      } else {
+        setContext(nextContext ?? null);
+      }
+    },
+    [contextForRef, flushPending],
+  );
+
+  const onPick = useCallback(
+    (pick: SurfacePick | null) => {
+      if (!pick) {
+        selectMaterial(null, null);
+        return;
+      }
+      const currentTrack = ctxRef.current.trackRef.current;
+      // Use the path the track itself spells, so the same material is never two different keys.
+      const archivePath = (currentTrack && findTrackArchiveEntry(currentTrack, pick.archivePath)?.path) || pick.archivePath;
+      const nextContext = contextFromPick(pick, archivePath);
+      if (nextContext.placed) {
+        selectMaterial(null, nextContext);
+        return;
+      }
+      selectMaterial({ archivePath, modelName: pick.modelName, materialName: pick.materialName }, nextContext);
+    },
+    [selectMaterial],
+  );
+
+  // Visual mode's "Edit this material" hands over the surface it was showing.
+  const pendingPick = ctx.pendingMaterialPick;
+  useEffect(() => {
+    if (!active || !pendingPick) return;
+    ctxRef.current.consumePendingMaterialPick();
+    onPick(pendingPick);
+  }, [active, onPick, pendingPick]);
+
+  // Selecting something, from either side, opens its folder in the outliner.
+  useEffect(() => {
+    if (!selectedRef) return;
+    const entry = archiveEntriesRef.current.find((candidate) => archiveKey(candidate.path) === archiveKey(selectedRef.archivePath));
+    if (!entry) return;
+    setExpanded((current) => (current.includes(entry.path) ? current : [...current, entry.path]));
+    setExpandedGroups((current) => (current.includes(entry.group) ? current : [...current, entry.group]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedKey]);
+
+  // ------------------------------------------------------------------ viewport
 
   const selectedMeshes = useMemo<SceneMeshEntry[]>(
     () => (active && selectedRef ? findMaterialMeshes(sceneRef.current, selectedRef.archivePath, selectedRef.modelName, selectedRef.materialName) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [active, selectedRef, sceneVersion],
   );
-  const hoveredMeshes = useMemo<SceneMeshEntry[]>(
-    () => (active && hoveredRef && !materialRefEquals(hoveredRef, selectedRef)
-      ? findMaterialMeshes(sceneRef.current, hoveredRef.archivePath, hoveredRef.modelName, hoveredRef.materialName)
-      : []),
-    [active, hoveredRef, selectedRef, sceneVersion],
-  );
 
-  useEffect(() => {
-    if (!active) return;
-    const scene = sceneRef.current;
-    if (!scene) return;
-    scene.setEditorMeshHighlight?.([
-      ...selectedMeshes.map((mesh) => ({ target: mesh, selected: true })),
-      ...hoveredMeshes.map((mesh) => ({ target: mesh, selected: false })),
-    ]);
-  }, [active, hoveredMeshes, selectedMeshes]);
+  const highlight = useMemo<SurfaceHighlight[]>(() => {
+    const list: SurfaceHighlight[] = [];
+    if (hoveredRef && !materialRefEquals(hoveredRef, selectedRef)) {
+      list.push({
+        kind: 'material',
+        archivePath: toSceneArchivePath(hoveredRef.archivePath),
+        modelName: hoveredRef.modelName,
+        materialName: hoveredRef.materialName,
+        style: 'hover',
+      });
+    }
+    if (selectedRef) {
+      list.push({
+        kind: 'material',
+        archivePath: toSceneArchivePath(selectedRef.archivePath),
+        modelName: selectedRef.modelName,
+        materialName: selectedRef.materialName,
+        style: 'selected',
+      });
+    }
+    return list;
+  }, [hoveredRef, selectedRef]);
+
+  const surfacePicking = useMemo<SurfacePickingOptions>(
+    () => ({ onPick, highlight, hoverHighlight: true, includeSkybox: true }),
+    [highlight, onPick],
+  );
 
   useEffect(() => {
     if (!active) return;
     soloMaterialMeshes(sceneRef.current, solo ? selectedMeshes : []);
   }, [active, selectedMeshes, solo]);
 
-  // Leaving the mode must not leave the viewport soloed or wearing a highlight.
+  // Leaving the mode must not leave the viewport soloed.
   useEffect(() => {
     if (active) return;
-    highlightMaterialMeshes(sceneRef.current, [], false);
     soloMaterialMeshes(sceneRef.current, []);
     setSolo(false);
   }, [active]);
-
-  const frameSelection = useCallback(() => {
-    if (selectedMeshes.length === 0) {
-      setStatus('The viewport is not drawing this material, so there is nothing to frame.');
-      return;
-    }
-    setStatus(`${selectedMeshes.length} mesh${selectedMeshes.length === 1 ? '' : 'es'} use this material.`);
-  }, [selectedMeshes.length, setStatus]);
-
-  const selectMaterial = useCallback(
-    (ref: GxMaterialRef | null) => {
-      setSelectedRef(ref);
-      if (ref) setStatus(`Selected ${ref.materialName}.`);
-    },
-    [setStatus],
-  );
 
   // ------------------------------------------------------------------ textures
 
   const importTexture = useCallback(
     (options: { name: string; format: number; width: number; height: number; mipCount: number; data: Uint8Array }): boolean => {
       const ref = selectedRef;
-      if (!ref || !library || !track) return false;
-      const bytes = findArchiveBytes(track, ref.archivePath);
-      if (!bytes) return false;
-      const next = library.addTexture(bytes, {
-        name: options.name,
-        format: options.format as never,
-        width: options.width,
-        height: options.height,
-        mipCount: options.mipCount,
-        data: options.data,
-      });
-      history.applyEditorChange(
-        replaceArchiveFile(track, ref.archivePath, next),
-        selection.selectedIdRef.current,
-        true,
-        selection.selectedIdsRef.current,
-      );
-      const live = sceneRef.current?.addEditorTexture?.(options.name, options) ?? false;
-      if (next === bytes) {
-        surfaceWarnings(['The texture writer is not wired up yet, so an imported texture previews in the viewport but is not stored in the archive.']);
+      const lib = libraryRef.current;
+      if (!ref || !lib) return false;
+      // The archive is about to change shape; whatever was waiting goes in first.
+      flushPending();
+      const { trackRef, commonArchive: common } = ctxRef.current;
+      const base = trackRef.current;
+      if (!base) return false;
+      try {
+        const local = ensureTrackLocalArchive(base, common, ref.archivePath);
+        const file = findTrackArchiveEntry(local.track, local.path);
+        if (!file?.data) return false;
+        const next = lib.addTexture(file.data, {
+          name: options.name,
+          format: options.format as never,
+          width: options.width,
+          height: options.height,
+          mipCount: options.mipCount,
+          data: options.data,
+        });
+        const nextTrack = replaceArchiveFile(local.track, local.path, next);
+        // This is this mode's own write, so the documents carry over and the archive is simply
+        // listed again to pick up the new texture.
+        docsByTrackRef.current.set(base, docsRef.current);
+        docsByTrackRef.current.set(nextTrack, docsRef.current);
+        const listKey = archiveKey(local.path);
+        pinnedBytesRef.current.delete(listKey);
+        setArchives((current) => {
+          const { [listKey]: _removed, ...rest } = current;
+          return rest;
+        });
+        history.applyEditorChange(nextTrack, selection.selectedIdRef.current, true, selection.selectedIdsRef.current);
+        const live = sceneRef.current?.addEditorTexture?.(options.name, options) ?? false;
+        if (next === file.data) {
+          surfaceWarnings(['The texture writer is not wired up yet, so an imported texture previews in the viewport but is not stored in the archive.']);
+        }
+        setStatus(`Imported ${options.name}.${local.copied ? ` ${context?.title ?? 'This model'} now uses a track copy of its model.` : ''}`);
+        if (!live) {
+          // The scene could not take the texture in place; a rebuild once the author pauses shows it.
+          refreshWantedRef.current = true;
+          touchPending();
+        }
+        return true;
+      } catch (error) {
+        setStatus(`${options.name} could not be imported.`);
+        toast.showToast({ tone: 'error', title: 'Texture import failed', detail: error instanceof Error ? error.message : String(error) });
+        return false;
       }
-      setStatus(live ? `Imported ${options.name}.` : `Imported ${options.name}. ${HOT_SWAP_FAILED_HINT}`);
-      return true;
     },
-    [history, library, selectedRef, selection, setStatus, surfaceWarnings, track],
+    [context?.title, flushPending, history, selectedRef, selection, setStatus, surfaceWarnings, toast, touchPending],
   );
+
+  // ------------------------------------------------------------------ the Details strip
+
+  const contextBytes = useMemo(() => {
+    if (!active || !context || context.placed || !track) return null;
+    return resolveArchiveBytes(track, commonArchive, context.archivePath)?.bytes ?? null;
+  }, [active, commonArchive, context, track]);
+
+  const contextRows = useMemo(() => {
+    if (!context || !contextBytes) return [];
+    try {
+      return buildModelMaterialRows(
+        context.archivePath,
+        context.modelName,
+        listModelSlots(contextBytes, context.modelName),
+        listArchiveMaterialsBrief(contextBytes),
+      );
+    } catch {
+      return [];
+    }
+  }, [context, contextBytes]);
 
   if (!active) return {};
 
   const archiveTextures = selectedArchive?.textures ?? [];
   const materialIssues = library && doc ? library.collectMaterialIssues(doc) : [];
-  const archiveBytes = selectedRef ? (pinnedBytesRef.current.get(selectedRef.archivePath) ?? findArchiveBytes(track, selectedRef.archivePath)) : null;
+  const archiveBytes = selectedRef ? bytesFor(selectedRef.archivePath) : null;
+  const selectedSummary =
+    selectedArchive?.models
+      .find((model) => model.modelName === selectedRef?.modelName)
+      ?.materials.find((material) => material.materialName === selectedRef?.materialName) ?? null;
+  // Once the track holds its own copy of a shared model, it is no longer "shared".
+  const stripContext: MaterialContext | null =
+    context && context.source === 'common' && track && findTrackArchiveEntry(track, context.archivePath)
+      ? { ...context, source: 'track' }
+      : context;
+  const previewPhase = sceneRefreshing ? 'rebuilding' : idle.pending ? 'pending' : 'idle';
 
   return {
     viewportProps: {
       mode: 'visual',
       showKmpEditorOverlay: false,
       onVisualSceneChange,
+      surfacePicking,
+    },
+    prepareExport: () => {
+      flushPending();
     },
     leftPanel: (
       <MaterialOutliner
         tree={tree}
         query={query}
         onChangeQuery={setQuery}
+        expandedGroups={expandedGroups}
+        onChangeExpandedGroups={setExpandedGroups}
         expanded={expanded}
         onChangeExpanded={setExpanded}
         selected={selectedRef}
-        onSelect={selectMaterial}
+        onSelect={(ref) => selectMaterial(ref)}
         onHover={setHoveredRef}
         loading={library === null && libraryError === null}
         error={libraryError}
@@ -687,47 +1057,42 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
       />
     ),
     inspector: (
-      <MaterialInspector
-        materialRef={selectedRef}
-        doc={doc}
-        issues={materialIssues}
-        textures={archiveTextures}
-        archivePath={selectedRef?.archivePath ?? ''}
-        archiveBytes={archiveBytes}
-        meshCount={selectedMeshes.length}
-        summary={selectedArchive?.models.find((model) => model.modelName === selectedRef?.modelName)?.materials.find((material) => material.materialName === selectedRef?.materialName) ?? null}
-        onChange={updateDoc}
-        onImportTexture={importTexture}
-        hasTrack={track !== null}
-        graph={graph}
-        selectedNodeIds={selectedNodeIds}
-        onSelectNodes={requestNodeSelection}
-        onChangeNode={changeNode}
-      />
-    ),
-    topRightOverlay: (
-      <>
-        <MaterialViewOverlay
-          materialRef={selectedRef}
-          meshCount={selectedMeshes.length}
-          solo={solo}
-          onToggleSolo={() => setSolo((value) => !value)}
-          onFrame={frameSelection}
-          onOpenInStudio={
-            ctx.openModelStudio && selectedRef
-              ? () => ctx.openModelStudio?.({ trackArchivePath: selectedRef.archivePath })
-              : undefined
-          }
-        />
-        <div className="viewportOverlayPanel viewportRefreshPanel">
-          <RefreshTrackButton onRefresh={refreshScene} refreshing={sceneRefreshing} hasTrack={track !== null} />
-          <p className="viewportOverlayHint">
-            {sceneRefreshing
-              ? 'Building the track again with your edits...'
-              : 'Rebuilds the track so every edited material and texture is on screen.'}
-          </p>
-        </div>
-      </>
+      <div className="materialDetailsColumn">
+        {stripContext && (
+          <ModelMaterialsStrip
+            context={stripContext}
+            rows={contextRows}
+            selected={selectedRef}
+            onSelect={(ref) => selectMaterial(ref, stripContext)}
+            archiveBytes={contextBytes}
+            textures={archives[archiveKey(stripContext.archivePath)]?.textures ?? []}
+            solo={solo}
+            onToggleSolo={() => setSolo((value) => !value)}
+            soloDisabled={selectedMeshes.length === 0}
+            onOpenInStudio={ctx.openModelStudio ? () => ctx.openModelStudio?.({ trackArchivePath: stripContext.archivePath }) : undefined}
+            onOpenModelMode={() => ctx.setEditorMode('model')}
+          />
+        )}
+        {(!context || !context.placed) && (
+          <MaterialInspector
+            materialRef={selectedRef}
+            doc={doc}
+            issues={materialIssues}
+            textures={archiveTextures}
+            archivePath={selectedRef?.archivePath ?? ''}
+            archiveBytes={archiveBytes}
+            meshCount={selectedSummary?.meshes.length ?? 0}
+            summary={selectedSummary}
+            onChange={updateDoc}
+            onImportTexture={importTexture}
+            hasTrack={track !== null}
+            graph={graph}
+            selectedNodeIds={selectedNodeIds}
+            onSelectNodes={requestNodeSelection}
+            onChangeNode={changeNode}
+          />
+        )}
+      </div>
     ),
     bottomDock: (dock) => (
       <ShaderGraphDock
@@ -755,6 +1120,7 @@ export function useMaterialMode(ctx: EditorModeContext): ModeUi {
         onChangeDoc={updateDoc}
         onSelectionChange={setSelectedNodeIds}
         selectionRequest={selectionRequest}
+        preview={{ phase: previewPhase, onUpdateNow: flushPending }}
       />
     ),
   };

@@ -28,9 +28,11 @@ import {
   duplicateNodes,
   edgesTouching,
   fitView,
+  fitViewReadable,
   graphBounds,
   marqueeRect,
   moveNodes,
+  nodeRect,
   nodeSpec,
   nodeTypeTitle,
   nodesInMarquee,
@@ -203,10 +205,17 @@ export function GraphEditor({
   // ------------------------------------------------------------------ framing
 
   /** Frames `ids`, or the whole graph. Never zooms past 100%: one small node should not fill the screen. */
-  const frame = useCallback((ids?: readonly string[]) => {
+  const frame = useCallback((ids?: readonly string[], readable = false) => {
     const rect = surfaceRef.current?.getBoundingClientRect();
     if (!rect || rect.width === 0 || rect.height === 0) return;
     const bounds = graphBounds(graphRef.current, ids && ids.length > 0 ? ids : undefined);
+    if (readable) {
+      // Opening a material: a big graph stays at a zoom the labels can be read at, centred on the
+      // node the material ends in, instead of shrinking to a 25% overview nobody can use.
+      const output = graphRef.current.nodes.find((node) => node.type === 'output');
+      setView(fitViewReadable(bounds, output ? nodeRect(output) : null, rect.width, rect.height, 48, 1));
+      return;
+    }
     setView(fitView(bounds, rect.width, rect.height, 48, 1));
   }, []);
 
@@ -226,7 +235,7 @@ export function GraphEditor({
   }, [contextKey]);
   const graphIdentity = `${contextKey}#${graph.nodes[0]?.id ?? ''}`;
   useEffect(() => {
-    const timer = window.setTimeout(() => frame(), 30);
+    const timer = window.setTimeout(() => frame(undefined, true), 30);
     return () => window.clearTimeout(timer);
   }, [frame, graphIdentity]);
 

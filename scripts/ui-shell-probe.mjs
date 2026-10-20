@@ -29,7 +29,7 @@ const child = spawn(edge, [
   `--remote-debugging-port=${port}`,
   `--window-size=${width},${height}`,
   '--window-position=-2400,-2400',
-  `--user-data-dir=${resolve(root, '.probe-profile/ui-shell')}`,
+  `--user-data-dir=${resolve(root, `.probe-profile/${process.env.PROBE_PROFILE ?? 'ui-shell'}`)}`,
   '--no-first-run',
   '--no-default-browser-check',
   '--disable-background-timer-throttling',

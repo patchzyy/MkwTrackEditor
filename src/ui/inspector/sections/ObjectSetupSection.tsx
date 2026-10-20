@@ -21,6 +21,7 @@ export function ObjectSetupSection({
   onChangeObjectId,
   onChangePresenceFlags,
   onChangeObjectSetting,
+  part = 'settings',
 }: {
   entity: KmpEntity;
   objectProfile: ObjectInspectorProfile | null;
@@ -28,11 +29,32 @@ export function ObjectSetupSection({
   onChangeObjectId: (objectId: number) => void;
   onChangePresenceFlags: (value: number) => void;
   onChangeObjectSetting: (settingIndex: number, value: number) => void;
+  /** `settings` is the variant and the object's own controls; `presence` is the game-mode list. */
+  part?: 'settings' | 'presence';
 }) {
   if (entity.objectId === undefined || !objectProfile) return null;
   const presenceFlags = entity.presenceFlags;
   const guidance = guidanceOnlyObjectProfileNotes[objectProfile.title];
   const behaviourNote = objectBehaviourNote(objectProfile, entity);
+  if (part === 'presence') {
+    if (presenceFlags === undefined) return null;
+    return (
+      <>
+        <div className="inspectorCheckList">
+          {gobjPresenceModeOptions.map((option) => (
+            <Toggle
+              key={option.mask}
+              variant="checkbox"
+              label={option.friendlyLabel}
+              checked={(presenceFlags & option.mask) !== 0}
+              onChange={(checked) => onChangePresenceFlags(setMaskedBits(presenceFlags, option.mask, checked))}
+            />
+          ))}
+        </div>
+        <p className={`inspectorNote${(presenceFlags & 0x0007) === 0 ? ' is-warning' : ''}`}>{describePresenceModes(presenceFlags)}</p>
+      </>
+    );
+  }
   return (
     <>
       {objectVariantOptions.length > 1 && (
@@ -54,23 +76,6 @@ export function ObjectSetupSection({
       </div>
       {behaviourNote && <p className="inspectorNote is-warning">{behaviourNote}</p>}
       {guidance && <p className="inspectorNote">{guidance}</p>}
-      {presenceFlags !== undefined && (
-        <>
-          <div className="inspectorGroupTitle">Appears in</div>
-          <div className="inspectorCheckList">
-            {gobjPresenceModeOptions.map((option) => (
-              <Toggle
-                key={option.mask}
-                variant="checkbox"
-                label={option.friendlyLabel}
-                checked={(presenceFlags & option.mask) !== 0}
-                onChange={(checked) => onChangePresenceFlags(setMaskedBits(presenceFlags, option.mask, checked))}
-              />
-            ))}
-          </div>
-          <p className={`inspectorNote${(presenceFlags & 0x0007) === 0 ? ' is-warning' : ''}`}>{describePresenceModes(presenceFlags)}</p>
-        </>
-      )}
     </>
   );
 }

@@ -43,6 +43,19 @@ export interface BakeCourseModelOptions {
   importedMeshes?: readonly ImportedMesh[];
   /** BRRES bytes for each imported mesh's `sourcePath`, keyed by that path. */
   importSources?: ReadonlyMap<string, Uint8Array>;
+  /**
+   * Where `brres` lives in the track archive (`./course_model.brres`). When given, only edits
+   * whose `target.archivePath` names this archive are baked. Model mode also records edits on
+   * the models placed from the content browser (`./editor-imported/imported-N.brres`); their
+   * draw-op indices count *that* model's draw calls, so applying them here would hide, delete
+   * or move whichever course draw call happens to share the index.
+   */
+  archivePath?: string;
+}
+
+/** Lower-case, forward slashes, no leading `./`: how two archive paths are compared. */
+export function normalizeArchivePath(path: string): string {
+  return path.replace(/\\/g, '/').replace(/^(\.\/)+/, '').replace(/^\/+/, '').toLowerCase();
 }
 
 export interface BakeCourseModelResult {
@@ -57,10 +70,21 @@ export interface BakeCourseModelResult {
 }
 
 export function bakeCourseModel(brres: Uint8Array, options: BakeCourseModelOptions = {}): BakeCourseModelResult {
-  const edits = (options.edits ?? []).filter((edit) => !isNeutral(edit));
+  const ownArchive = options.archivePath === undefined ? null : normalizeArchivePath(options.archivePath);
+  const elsewhere = (edit: MeshEdit): boolean =>
+    ownArchive !== null && !!edit.target.archivePath && normalizeArchivePath(edit.target.archivePath) !== ownArchive;
+  const activeEdits = (options.edits ?? []).filter((edit) => !isNeutral(edit));
+  const foreign = activeEdits.filter(elsewhere);
+  const edits = activeEdits.filter((edit) => !elsewhere(edit));
+  const foreignWarnings: BakeWarning[] = foreign.length === 0 ? [] : [{
+    code: 'model.edit-other-archive',
+    message: foreign.length === 1
+      ? 'A change to part of a placed model was left out of the export; move, hide or delete the whole placed model instead.'
+      : `${foreign.length} changes to parts of placed models were left out of the export; move, hide or delete the whole placed models instead.`,
+  }];
   const importedMeshes = (options.importedMeshes ?? []).filter((mesh) => mesh.visible);
   if (edits.length === 0 && importedMeshes.length === 0) {
-    return { data: brres, changed: false, warnings: [], transformedMeshes: 0, removedDrawOps: 0, addedMeshes: 0, addedTextures: [] };
+    return { data: brres, changed: false, warnings: foreignWarnings, transformedMeshes: 0, removedDrawOps: 0, addedMeshes: 0, addedTextures: [] };
   }
 
   const raw = readBrresRaw(brres);
@@ -69,7 +93,7 @@ export function bakeCourseModel(brres: Uint8Array, options: BakeCourseModelOptio
     return {
       data: brres,
       changed: false,
-      warnings: [{ code: 'model.no-models', message: 'The course model archive has no 3D models to edit.' }],
+      warnings: [...foreignWarnings, { code: 'model.no-models', message: 'The course model archive has no 3D models to edit.' }],
       transformedMeshes: 0,
       removedDrawOps: 0,
       addedMeshes: 0,
@@ -77,7 +101,7 @@ export function bakeCourseModel(brres: Uint8Array, options: BakeCourseModelOptio
     };
   }
 
-  const warnings: BakeWarning[] = [];
+  const warnings: BakeWarning[] = [...foreignWarnings];
   let transformedMeshes = 0;
   let removedDrawOps = 0;
   let addedMeshes = 0;

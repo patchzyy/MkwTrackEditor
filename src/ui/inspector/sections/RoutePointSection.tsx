@@ -8,6 +8,7 @@ import {
   potiRouteShapeOptions,
 } from '../optionTables';
 import type { InspectorScope } from './scope';
+import { PropertyRow } from '../PropertySheet';
 
 /**
  * Enemy / item route points and object-route (POTI) nodes.
@@ -42,8 +43,7 @@ export function RoutePointSection({
     return (
       <div className="propertyGrid">
         {entity.pointDeviation !== undefined && (
-          <label>
-            Corridor width
+          <PropertyRow label="Corridor width" help="How far off this point a driver or item may stray.">
             <input
               aria-label="Corridor width"
               type="number"
@@ -54,12 +54,10 @@ export function RoutePointSection({
                 if (Number.isFinite(value)) onChangePointDeviation(value);
               }}
             />
-            <span>How far off this point a driver or item may stray.</span>
-          </label>
+          </PropertyRow>
         )}
         {showSpare && pointSettings && (
-          <label>
-            Spare byte
+          <PropertyRow label="Spare byte" help="Unused by the game. Kept so an export matches the original file.">
             <input
               aria-label="Spare byte"
               type="number"
@@ -71,8 +69,7 @@ export function RoutePointSection({
                 if (Number.isFinite(value)) onChangePointSetting(2, Math.max(0, Math.min(0xff, Math.trunc(value))));
               }}
             />
-            <span>Unused by the game. Kept so an export matches the original file.</span>
-          </label>
+          </PropertyRow>
         )}
         {showRaw && pointSettings && (
           <label>
@@ -97,8 +94,7 @@ export function RoutePointSection({
         )}
         {poti && (
           <>
-            <label>
-              Node value 1
+            <PropertyRow label="Node value 1" help="Usually the speed a follower moves at when it leaves this node.">
               <input
                 aria-label="Node value 1"
                 type="number"
@@ -110,10 +106,8 @@ export function RoutePointSection({
                   if (Number.isFinite(value)) onChangePotiPointSetting(0, Math.max(0, Math.min(0xffff, Math.trunc(value))));
                 }}
               />
-              <span>Usually the speed a follower moves at when it leaves this node.</span>
-            </label>
-            <label>
-              Node value 2
+            </PropertyRow>
+            <PropertyRow label="Node value 2" help="Usually how long a follower waits at this node.">
               <input
                 aria-label="Node value 2"
                 type="number"
@@ -125,8 +119,7 @@ export function RoutePointSection({
                   if (Number.isFinite(value)) onChangePotiPointSetting(1, Math.max(0, Math.min(0xffff, Math.trunc(value))));
                 }}
               />
-              <span>Usually how long a follower waits at this node.</span>
-            </label>
+            </PropertyRow>
           </>
         )}
       </div>

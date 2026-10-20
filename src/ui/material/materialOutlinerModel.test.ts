@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { GxArchiveMaterials, GxMaterialSummary } from '../../lib/gxMaterial';
 import type { TrackDocument } from '../../lib/track';
 import {
+  archiveKey,
   buildMaterialTree,
   describeArchiveTotals,
   describeMaterialArchive,
@@ -69,6 +70,44 @@ describe('archive listing', () => {
   it('finds an archive by name, ignoring case', () => {
     expect(findArchiveBytes(trackWith(['Course_Model.brres']), 'course_model.brres')).toBeInstanceOf(Uint8Array);
     expect(findArchiveBytes(trackWith(['course_model.brres']), 'nope.brres')).toBeNull();
+  });
+});
+
+describe('groups and shared game models', () => {
+  it('sorts models into Course, Sky, Objects and Other', () => {
+    const entries = listMaterialArchives(trackWith(['itembox.brres', 'map_model.brres', 'vrcorn_model.brres', 'course_model.brres']));
+    expect(entries.map((entry) => [entry.label, entry.group])).toEqual([
+      ['Track model', 'course'],
+      ['Skybox', 'sky'],
+      ['Minimap', 'other'],
+      ['itembox', 'objects'],
+    ]);
+  });
+
+  it('lists object models the viewport draws even when the track does not carry them', () => {
+    const track = trackWith(['course_model.brres', 'itembox.brres']);
+    const entries = listMaterialArchives(
+      track,
+      [
+        { path: './itembox.brres', label: 'Item Box' },
+        { path: './dokan_sfc.brres', label: 'Dokan SFC' },
+      ],
+      new Map([['itembox.brres', 'Item Box']]),
+    );
+    expect(entries.map((entry) => `${entry.label}:${entry.source}`)).toEqual(['Track model:track', 'Dokan SFC:common', 'Item Box:track']);
+    expect(entries.every((entry) => entry.group === 'course' || entry.group === 'objects')).toBe(true);
+  });
+
+  it('finds an archive however its path is spelled', () => {
+    const track = trackWith(['sub/Item.brres']);
+    expect(findArchiveBytes(track, './sub/item.brres')).toBeInstanceOf(Uint8Array);
+    expect(archiveKey('./Sub/Item.brres')).toBe('sub/item.brres');
+  });
+
+  it('looks a listed archive up by its normalized key too', () => {
+    const entries = listMaterialArchives(trackWith(['./course_model.brres']));
+    const tree = buildMaterialTree(entries, new Map([['course_model.brres', archive([summary('course', 'road')])]]));
+    expect(tree[0].loaded).toBe(true);
   });
 });
 

@@ -17,7 +17,7 @@ export function AdvancedBlock({
   children,
 }: {
   title?: string;
-  /** One line under the summary saying what is inside, so the user knows whether to open it. */
+  /** What is inside, shown as a tooltip on the bar so the user knows whether to open it. */
   hint?: string;
   storageKey: string;
   defaultOpen?: boolean;
@@ -26,17 +26,17 @@ export function AdvancedBlock({
   const [open, setOpen] = useRemembered(storageKey, defaultOpen);
   const bodyId = useId();
   return (
-    <div className={open ? 'materialAdvanced isOpen' : 'materialAdvanced'}>
+    <div className={open ? 'materialAdvanced isOpen' : 'materialAdvanced'} data-category={title}>
       <button
         type="button"
         className="materialAdvancedToggle"
         aria-expanded={open}
         aria-controls={bodyId}
+        title={hint}
         onClick={() => setOpen(!open)}
       >
-        {open ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}
+        {open ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />}
         <span className="materialAdvancedTitle">{title}</span>
-        {hint && <span className="materialAdvancedHint">{hint}</span>}
       </button>
       <div id={bodyId} className="materialAdvancedBody" hidden={!open}>
         {open && children}

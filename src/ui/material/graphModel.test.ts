@@ -15,6 +15,8 @@ import {
   duplicateNodes,
   edgesTouching,
   fitView,
+  fitViewReadable,
+  READABLE_ZOOM,
   graphBounds,
   inlineValue,
   marqueeRect,
@@ -314,6 +316,21 @@ describe('pan and zoom', () => {
     const centre = toScreenPoint(view, bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
     expect(centre.x).toBeCloseTo(400, 4);
     expect(centre.y).toBeCloseTo(200, 4);
+  });
+
+  it('never opens a big graph below a readable zoom, centred on the output node', () => {
+    const graph = graphOf([texture('a', 0, 0), texture('b', 4000, 1600)]);
+    const bounds = graphBounds(graph)!;
+    const focus = graphBounds(graph, ['b'])!;
+    expect(fitView(bounds, 800, 400, 48, 1).zoom).toBeLessThan(READABLE_ZOOM);
+    const view = fitViewReadable(bounds, focus, 800, 400, 48, 1);
+    expect(view.zoom).toBe(READABLE_ZOOM);
+    const centre = toScreenPoint(view, focus.x + focus.width / 2, focus.y + focus.height / 2);
+    expect(centre.x).toBeCloseTo(400, 4);
+    expect(centre.y).toBeCloseTo(200, 4);
+    // A graph that fits comfortably is framed exactly as before.
+    const small = graphBounds(graphOf([texture('a', 0, 0), texture('b', 300, 100)]))!;
+    expect(fitViewReadable(small, null, 1600, 900, 48, 1)).toEqual(fitView(small, 1600, 900, 48, 1));
   });
 
   it('has no bounds for an empty graph', () => {

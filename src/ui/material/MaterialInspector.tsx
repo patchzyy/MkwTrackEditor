@@ -1,8 +1,11 @@
-import { AlertTriangle, ChevronRight, MousePointerClick, Palette, Plus } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Palette, Plus, Waypoints } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { GxMaterialDoc, GxMaterialRef, GxMaterialSummary, GxTextureSummary, MaterialIssue } from '../../lib/gxMaterial';
 import type { VisualTextureInfo } from '../visual/visualArchive';
-import { Button, EmptyState, PanelSection } from '../components';
+import { Button, EmptyState } from '../components';
+import { InspectorHeader } from '../inspector/InspectorHeader';
+import { DetailsCategory } from '../inspector/PropertySheet';
+import { TexturePreview } from '../visual/TexturePreview';
 import { GraphNodeDetails } from './GraphNodeDetails';
 import { NODE_SUMMARY, nodeCaption, nodeTitle, type EditorGraphNode, type EditorShaderGraph } from './graphModel';
 import { addLayer, MAX_SAMPLERS } from './materialDoc';
@@ -107,7 +110,7 @@ export function MaterialInspector({
         <EmptyState
           icon={<Palette size={22} />}
           title="No track loaded"
-          description="Open a .szs course archive, then pick a material on the left."
+          description="Open a .szs course archive, then click something in the viewport."
         />
       </div>
     );
@@ -119,7 +122,7 @@ export function MaterialInspector({
         <EmptyState
           icon={<Palette size={22} />}
           title="No material selected"
-          description="Pick a material on the left — or click the model — to edit its textures, colours and shader."
+          description="Click anything in the viewport to edit its textures, colours and shader."
         />
       </div>
     );
@@ -246,29 +249,37 @@ function MaterialOverview({
 }) {
   return (
     <>
-      <div className="materialInspectorHeader">
-        <input
-          className="materialNameInput"
-          type="text"
-          value={doc.name}
-          aria-label="Material name"
-          title="Renaming rewrites every reference to this material in the model."
-          onChange={(event) => onChange({ ...doc, name: event.currentTarget.value }, { transient: true })}
-          onBlur={(event) => onChange({ ...doc, name: event.currentTarget.value }, { status: `Renamed the material to ${event.currentTarget.value}.` })}
-        />
-        <span className="materialInspectorWhere">
-          {materialRef.modelName} · {archivePath.replace(/^\.\//, '')}
-          {meshCount > 0 ? ` · ${meshCount} mesh${meshCount === 1 ? '' : 'es'}` : ''}
-        </span>
-        <span className="materialInspectorSummary">{describeMaterial(doc)}</span>
-      </div>
-
-      {hasGraph && (
-        <p className="detailsHint">
-          <MousePointerClick size={13} aria-hidden="true" />
-          <span>Click a node in the shader graph to see just its settings here.</span>
-        </p>
-      )}
+      <InspectorHeader
+        title={
+          <input
+            className="materialNameInput"
+            type="text"
+            value={doc.name}
+            aria-label="Material name"
+            title="Renaming rewrites every reference to this material in the model."
+            onChange={(event) => onChange({ ...doc, name: event.currentTarget.value }, { transient: true })}
+            onBlur={(event) => onChange({ ...doc, name: event.currentTarget.value }, { status: `Renamed the material to ${event.currentTarget.value}.` })}
+          />
+        }
+        typeName={describeMaterial(doc).replace(/.$/, '')}
+        badge={meshCount > 1 ? `${meshCount} meshes` : undefined}
+        description={
+          meshCount > 1
+            ? `This material paints ${meshCount} meshes of ${materialRef.modelName}. Changing it changes all of them.${hasGraph ? ' Click a node in the shader graph to see just its settings here.' : ''}`
+            : hasGraph
+              ? 'Click a node in the shader graph to see just its settings here.'
+              : undefined
+        }
+        media={
+          <TexturePreview
+            archivePath={archivePath}
+            archiveBytes={archiveBytes}
+            texture={textureInfos.find((entry) => entry.name === doc.samplers[0]?.texture) ?? null}
+            revision={0}
+          />
+        }
+        sections={[]}
+      />
 
       {issues.length > 0 && (
         <div className="materialIssues" role="status">
@@ -281,7 +292,7 @@ function MaterialOverview({
         </div>
       )}
 
-      <PanelSection title={`Textures (${doc.samplers.length})`} defaultOpen>
+      <DetailsCategory name="Textures" badge={doc.samplers.length}>
         <TextureList
           doc={doc}
           textures={textureInfos}
@@ -290,23 +301,23 @@ function MaterialOverview({
           onChange={onChange}
           onOpenLayer={onOpenTexture}
         />
-      </PanelSection>
+      </DetailsCategory>
 
-      <PanelSection title="Transparency" defaultOpen>
+      <DetailsCategory name="Transparency">
         <TransparencySection doc={doc} onChange={onChange} />
-      </PanelSection>
+      </DetailsCategory>
 
-      <PanelSection title="Lighting" defaultOpen>
+      <DetailsCategory name="Lighting">
         <ShadingSection doc={doc} onChange={onChange} />
-      </PanelSection>
+      </DetailsCategory>
 
-      <PanelSection title="Colours" defaultOpen>
+      <DetailsCategory name="Colours">
         <SimpleColorsSection doc={doc} onChange={onChange} />
-      </PanelSection>
+      </DetailsCategory>
 
-      <PanelSection title="Surface" defaultOpen>
+      <DetailsCategory name="Surface">
         <SurfaceSection doc={doc} summary={summary} onChange={onChange} />
-      </PanelSection>
+      </DetailsCategory>
     </>
   );
 }
@@ -337,10 +348,13 @@ function NodeDetails({
 
   return (
     <>
-      <div className="detailsNodeHeader">
-        <strong>{nodeHeading(node, doc)}</strong>
-        <span>{NODE_SUMMARY[node.type]}</span>
-      </div>
+      <InspectorHeader
+        title={nodeTitle(node)}
+        typeName={nodeCaption(node, doc) || undefined}
+        description={NODE_SUMMARY[node.type]}
+        media={<Waypoints size={18} aria-hidden="true" />}
+        sections={[]}
+      />
 
       {textureIndex !== null && !missingLayer && (
         <TextureLayerDetails
@@ -375,9 +389,9 @@ function NodeDetails({
       <NodeMaterialField node={node} doc={doc} onChange={onChange} />
 
       {graph && onChangeNode && (
-        <PanelSection title="Node" defaultOpen>
+        <DetailsCategory name="Node">
           <GraphNodeDetails node={node} graph={graph} doc={doc} onChangeNode={onChangeNode} showHeader={false} />
-        </PanelSection>
+        </DetailsCategory>
       )}
     </>
   );
@@ -394,10 +408,13 @@ function MultiSelection({
 }) {
   return (
     <div className="detailsMulti">
-      <div className="detailsNodeHeader">
-        <strong>{nodes.length} nodes selected</strong>
-        <span>Pick one to see its settings. Click an empty spot in the graph to see the whole material again.</span>
-      </div>
+      <InspectorHeader
+        title={`${nodes.length} nodes selected`}
+        typeName="Pick one to see its settings"
+        description="Click an empty spot in the graph to see the whole material again."
+        media={<Waypoints size={18} aria-hidden="true" />}
+        sections={[]}
+      />
       <ul className="detailsMultiList">
         {nodes.map((node) => (
           <li key={node.id}>

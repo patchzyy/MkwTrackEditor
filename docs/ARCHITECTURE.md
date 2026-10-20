@@ -317,7 +317,7 @@ the longest single stall during a load is ~210 ms, and the load takes about 1.6 
 | `camera-ui-probe.mjs`, `kmp-ui-probe.mjs`, `probe-model-ui.mjs`, `viewport-dev-probe.mjs` | Harnesses that drive a real off-screen Edge window and run a probe body against it. Headless Edge cannot run noclip, so these are not `--headless`. |
 | `studio-probe.mjs`, `studio-dev-restart.sh` | The Model Studio's harness — it waits on `window.__mkwStudio`, so it can drive a studio session with no track loaded — and the dev-server restart the probes need, because Vite's watcher does not see edits inside a git worktree on this host. |
 | `loading-probe.mjs` | The same, but for the *load itself*: it installs a main-thread responsiveness recorder before any application code runs and starts the probe body immediately after navigating, so the loading overlay can be watched and screenshotted while it happens. `PROFILE=1` adds a CPU profile of the run; `NO_REACT_TRACKS=1` measures how much of a dev-mode stall is React's own instrumentation. Bodies: `probe-loading.js`, `probe-loading-refresh.js`. Pipe it through `summarize-loading-probe.mjs`. |
-| `probe-*.js` | The probe bodies those harnesses execute (`probe-kmp-mode-ui.js`, `probe-camera-ui.js`, `probe-model-mode-ui.js`, `probe-visual-ui.js`, `probe-material-ui.js`, and the older single-feature ones). |
+| `probe-*.js` | The probe bodies those harnesses execute (`probe-kmp-mode-ui.js`, `probe-camera-mode.js`, `probe-model-mode-ui.js`, `probe-visual-ui.js`, `probe-material-ui.js`, and the older single-feature ones). |
 | `build-*.mjs` | The asset-database builders that generate what lives under `public/data/`. |
 
 ## Tests

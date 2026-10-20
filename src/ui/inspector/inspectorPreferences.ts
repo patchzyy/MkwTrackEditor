@@ -8,8 +8,8 @@ import { useCallback, useEffect, useState } from 'react';
  */
 export const INSPECTOR_DISCLOSURE_STORAGE_KEY = 'mkwTrackEditor.inspector.disclosures.v1';
 
-/** The disclosures the inspector remembers. */
-export type InspectorDisclosureId = 'advanced' | 'tips';
+/** The disclosures the inspector remembers: the two fixed ones plus one per details category name. */
+export type InspectorDisclosureId = 'advanced' | 'tips' | `category:${string}`;
 
 function readAll(): Record<string, boolean> {
   if (typeof localStorage === 'undefined') return {};
@@ -22,9 +22,10 @@ function readAll(): Record<string, boolean> {
   }
 }
 
-/** Whether the named disclosure was left open. Defaults to closed. */
-export function readInspectorDisclosure(id: InspectorDisclosureId): boolean {
-  return readAll()[id] === true;
+/** Whether the named disclosure was left open. Defaults to closed unless `fallback` says otherwise. */
+export function readInspectorDisclosure(id: InspectorDisclosureId, fallback = false): boolean {
+  const stored = readAll()[id];
+  return typeof stored === 'boolean' ? stored : fallback;
 }
 
 /** Remembers the disclosure state. Storage failures (private mode, quota) are ignored. */
@@ -39,15 +40,14 @@ export function writeInspectorDisclosure(id: InspectorDisclosureId, open: boolea
 
 /**
  * Remembered open/closed state for one inspector disclosure. The first render is always the
- * closed state so server-rendered markup and the client agree; the stored value is applied in
+ * default state (closed unless `defaultOpen`) so server-rendered markup and the client agree; the stored value is applied in
  * an effect straight after mount.
  */
-export function useInspectorDisclosure(id: InspectorDisclosureId): [boolean, (open: boolean) => void] {
-  const [open, setOpen] = useState(false);
+export function useInspectorDisclosure(id: InspectorDisclosureId, defaultOpen = false): [boolean, (open: boolean) => void] {
+  const [open, setOpen] = useState(defaultOpen);
   useEffect(() => {
-    const stored = readInspectorDisclosure(id);
-    if (stored) setOpen(true);
-  }, [id]);
+    setOpen(readInspectorDisclosure(id, defaultOpen));
+  }, [id, defaultOpen]);
   const change = useCallback(
     (next: boolean) => {
       setOpen(next);

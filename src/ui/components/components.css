@@ -550,11 +550,22 @@
 
 .uiField {
   display: grid;
-  grid-template-columns: minmax(96px, 38%) minmax(0, 1fr);
+  grid-template-columns: minmax(84px, 40%) minmax(0, 1fr);
   align-items: center;
-  gap: var(--space-1) var(--space-3);
-  padding: 5px 0;
+  gap: 0 var(--space-3);
+  min-height: 28px;
   min-width: 0;
+  padding: 3px var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.uiField:hover {
+  background: var(--surface-hover);
+}
+
+.uiFieldGroup > .uiField:last-child {
+  border-bottom: 0;
 }
 
 .uiFieldLabel {
@@ -570,6 +581,21 @@
   white-space: nowrap;
 }
 
+/* A label that has a tooltip says so with a dotted underline and the help cursor. */
+.uiFieldLabel.hasHelp .uiFieldLabelText,
+.propRow.hasHelp .propRowLabelText {
+  cursor: help;
+  text-decoration: underline dotted var(--border-strong);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.uiFieldLabelText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .uiFieldHint {
   flex: 0 0 auto;
   color: var(--text-dim);
@@ -578,13 +604,6 @@
 
 .uiFieldControl {
   min-width: 0;
-}
-
-.uiFieldHelp {
-  grid-column: 2;
-  color: var(--text-dim);
-  font-size: var(--font-size-xs);
-  line-height: 1.4;
 }
 
 .uiFieldRow {
@@ -672,7 +691,9 @@
 }
 
 .uiNumberUnit {
+  flex: 0 0 auto;
   padding-right: var(--space-2);
+  white-space: nowrap;
   color: var(--text-dim);
   font-size: var(--font-size-xs);
   pointer-events: none;
@@ -693,10 +714,10 @@
   grid-template-columns: minmax(0, 1fr);
 }
 
-.uiField:has(.uiVectorInput) > .uiFieldLabel,
-.uiField:has(.uiVectorInput) > .uiFieldControl,
-.uiField:has(.uiVectorInput) > .uiFieldHelp {
-  grid-column: 1;
+.uiField:has(.uiVectorInput) {
+  gap: var(--space-2) 0;
+  padding-top: 5px;
+  padding-bottom: 6px;
 }
 
 /* ---------------------------------------------------------------- select */

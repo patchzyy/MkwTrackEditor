@@ -1,5 +1,5 @@
 import type { GxMaterialDoc } from '../../../lib/gxMaterial';
-import { ColorField, EmptyState, Field, FieldGroup, SegmentedControl } from '../../components';
+import { ColorField, Field, FieldGroup, SegmentedControl } from '../../components';
 import { AdvancedBlock } from '../AdvancedBlock';
 import { colorToRgb255, patchChannel, rgb255ToColor } from '../materialDoc';
 import type { MaterialDocChange } from '../MaterialInspector';
@@ -28,11 +28,9 @@ export function ShadingSection({ doc, onChange }: { doc: GxMaterialDoc; onChange
 
   if (!channel) {
     return (
-      <EmptyState
-        size="sm"
-        title="No lighting channels"
-        description="This material takes its colour entirely from its textures and colours."
-      />
+      <p className="detailsNote" title="This material takes its colour entirely from its textures and colours.">
+        No lighting channels
+      </p>
     );
   }
 

@@ -22,7 +22,7 @@ import type { EditorModeContext, ModeUi } from '../modes/types';
 const objectName = (objectId: number) => (objectId === 0x65 ? 'Item Box' : objectId === 0xcb ? 'Goomba' : `Object ${objectId}`);
 
 describe('KMP section views', () => {
-  it.each(KMP_OUTLINER_SECTIONS)('shows only $label in the list and viewport overlays', (section) => {
+  it.each(KMP_OUTLINER_SECTIONS)('shows only $label in the list, and its layers plus the object markers in the viewport', (section) => {
     let ui: ModeUi;
     const context = {
       editorMode: 'kmp', track: { kmpFile: sampleFile() },
@@ -35,7 +35,8 @@ describe('KMP section views', () => {
     }
     const markup = renderToStaticMarkup(createElement(SectionView));
     const visible = Object.entries(ui!.viewportProps!.sectionVisibility!).filter(([, value]) => value).map(([key]) => key);
-    expect(visible).toEqual(section.visibility);
+    // Object markers are always on so an object can be clicked from any section.
+    expect([...visible].sort()).toEqual([...new Set([...section.visibility, 'GOBJ'])].sort());
     const tree = markup.slice(markup.indexOf('role="tree"'));
     expect(tree).toContain(`<span class="kmpTreeName">${section.label}</span>`);
     for (const other of KMP_OUTLINER_SECTIONS.filter((candidate) => candidate.key !== section.key)) {
@@ -43,6 +44,23 @@ describe('KMP section views', () => {
     }
     expect(markup).toContain('aria-label="KMP section"');
   });
+});
+
+it('opens on the Objects section with its markers visible when nothing is selected', () => {
+  let ui: ModeUi;
+  const context = {
+    editorMode: 'kmp', track: { kmpFile: sampleFile() },
+    selection: { selectedId: null, selectedIds: [] },
+    validation: [], editActions: {}, clipboard: {},
+  } as unknown as EditorModeContext;
+  function FreshView() {
+    ui = useKmpMode(context);
+    return ui.leftPanel;
+  }
+  const markup = renderToStaticMarkup(createElement(FreshView));
+  const visible = Object.entries(ui!.viewportProps!.sectionVisibility!).filter(([, value]) => value).map(([key]) => key);
+  expect(visible).toEqual(['GOBJ']);
+  expect(markup).toContain('<span class="kmpTreeName">Objects</span>');
 });
 
 function sampleFile(): KmpFile {

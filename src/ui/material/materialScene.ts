@@ -5,7 +5,17 @@
 import type { EditorMeshTarget } from '../../lib/brresEditor';
 import type { VisualRendererScene } from '../visual/visualScene';
 
+/** One model instance the viewport can pick, as `collectEditorSurfaceInstances` reports it. */
+export interface SceneSurfaceInstance {
+  archivePath: string;
+  kind: 'course' | 'skybox' | 'object' | 'placed';
+  objectId: number | null;
+  objectName: string | null;
+}
+
 export interface MaterialRendererScene extends VisualRendererScene {
+  /** Every model the viewport can pick: the course, the sky and each object preview. */
+  collectEditorSurfaceInstances?: () => SceneSurfaceInstance[];
   /**
    * Re-parses one material out of edited BRRES bytes and swaps it into every live model instance
    * of that model, without rebuilding the scene. False when the scene has not loaded that

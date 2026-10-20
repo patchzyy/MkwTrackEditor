@@ -2,6 +2,7 @@ import type { KmpBattleFinishField, KmpCannonField, KmpEntity, KmpRespawnField }
 import { ShortNumberInputs } from '../fields/ShortNumberInputs';
 import { cannonEffectOptions } from '../optionTables';
 import type { InspectorScope } from './scope';
+import { PropertyRow } from '../PropertySheet';
 
 /**
  * Respawn points, cannon points and battle finish points.
@@ -46,9 +47,8 @@ export function RespawnCannonSection({
   if (!entity.cannon) return null;
   return (
     <div className="propertyGrid">
-      <label>
-        Cannon number
-        <input
+      <PropertyRow label="Cannon number" help="The cannon object with this number fires drivers to this point.">
+                <input
           aria-label="Cannon number"
           type="number"
           min="0"
@@ -59,8 +59,7 @@ export function RespawnCannonSection({
             if (Number.isFinite(next)) onChangeCannonField('id', Math.max(0, Math.min(0xffff, Math.trunc(next))));
           }}
         />
-        <span>The cannon object with this number fires drivers to this point.</span>
-      </label>
+      </PropertyRow>
       <label>
         Flight shape
         <select aria-label="Flight shape" value={String(entity.cannon.effect)} onChange={(event) => onChangeCannonField('effect', Number(event.currentTarget.value))}>

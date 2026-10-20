@@ -1,7 +1,9 @@
-import { Boxes, Copy, Eye, EyeOff, RotateCcw, Trash2 } from 'lucide-react';
+import { Boxes, Box, Copy, Eye, EyeOff, MousePointerClick, RotateCcw, Trash2 } from 'lucide-react';
 import { MESH_SELECTION_GRANULARITIES, type MeshSelectionGranularity } from '../../lib/brresEditor';
-import { DetailsSummaryBar } from '../inspector/DetailsSummaryBar';
+import type { MenuSection } from '../components/Menu';
 import { VectorInputs } from '../inspector/fields/VectorInputs';
+import { InspectorHeader, type InspectorHeaderAction } from '../inspector/InspectorHeader';
+import { DetailsCategory, DetailsEmpty, PropertyRow } from '../inspector/PropertySheet';
 import type { OpenModelStudio } from '../studio/studioLaunch';
 import type { ModelEditing } from './useModelEditing';
 
@@ -12,7 +14,7 @@ const GRANULARITY_LABELS: Record<MeshSelectionGranularity, string> = {
 };
 
 const GRANULARITY_HINTS: Record<MeshSelectionGranularity, string> = {
-  component: 'Clicking picks one connected piece — one tree out of a row of trees.',
+  component: 'Clicking picks one connected piece, like one tree out of a row of trees.',
   shape: 'Clicking picks the whole mesh the piece belongs to.',
   node: 'Clicking picks everything attached to the same bone.',
 };
@@ -27,144 +29,138 @@ const GRANULARITY_HINTS: Record<MeshSelectionGranularity, string> = {
 export function ModelInspector({ editing, onOpenModelStudio }: { editing: ModelEditing; onOpenModelStudio?: OpenModelStudio }) {
   const placed = editing.activePlaced;
   const hasSelection = placed !== null || editing.active !== null;
+  const mesh = editing.active ? editing.meshByDrawOp.get(editing.active.drawOpIndex) : undefined;
+
+  const granularity = !placed && (
+    <DetailsCategory name="What a click selects" help={GRANULARITY_HINTS[editing.granularity]} defaultOpen={!hasSelection}>
+      <div className="modelGranularity" role="group" aria-label="Selection size">
+        {MESH_SELECTION_GRANULARITIES.map((value) => (
+          <button
+            key={value}
+            type="button"
+            className={editing.granularity === value ? 'modelGranularityOption active' : 'modelGranularityOption'}
+            title={GRANULARITY_HINTS[value]}
+            onClick={() => editing.setGranularity(value)}
+          >
+            {GRANULARITY_LABELS[value]}
+          </button>
+        ))}
+      </div>
+    </DetailsCategory>
+  );
+
+  if (!hasSelection) {
+    return (
+      <div className="modelInspector">
+        <DetailsEmpty icon={<MousePointerClick size={22} />}>Click a piece of the track in the viewport, or a row on the left, to edit it</DetailsEmpty>
+        {granularity}
+      </div>
+    );
+  }
+
+  const headerActions: InspectorHeaderAction[] = [
+    {
+      id: 'visibility',
+      label: editing.activeHidden ? 'Show it again' : 'Hide it in the viewport',
+      icon: editing.activeHidden ? <Eye size={14} /> : <EyeOff size={14} />,
+      onClick: () => editing.setHidden(!editing.activeHidden),
+    },
+  ];
+  if (!placed) {
+    headerActions.push({ id: 'duplicate', label: 'Duplicate', icon: <Copy size={14} />, onClick: editing.duplicateSelection, disabled: !editing.active });
+  }
+  headerActions.push({
+    id: 'delete',
+    label: placed ? 'Remove it from the track' : 'Delete it from the exported track',
+    icon: <Trash2 size={14} />,
+    onClick: editing.deleteSelection,
+    danger: true,
+  });
+
+  const menuItems: MenuSection['items'] = [];
+  if (!placed) menuItems.push({ id: 'restore', label: 'Restore to how it was', icon: <RotateCcw size={14} />, onSelect: editing.resetSelection });
+  if (onOpenModelStudio && editing.active) {
+    menuItems.push({
+      id: 'studio',
+      label: 'Open in Model Studio',
+      icon: <Boxes size={14} />,
+      onSelect: () => onOpenModelStudio({ trackArchivePath: editing.active!.archivePath }),
+    });
+  }
+
+  const title = placed ? placed.label ?? placed.sourcePath : editing.activeLabel;
+  const multi = editing.selection.length > 1;
 
   return (
     <div className="modelInspector">
-      <h2>{placed ? placed.label ?? placed.sourcePath : editing.active ? editing.activeLabel : 'Nothing selected'}</h2>
+      <InspectorHeader
+        media={<Box size={20} aria-hidden="true" />}
+        title={title}
+        typeName={placed ? (placed.sourceShape ? 'Copy of track geometry' : 'Imported object') : 'Track mesh'}
+        description={
+          (placed
+            ? 'Removing a placed object takes it straight back out of the track.'
+            : 'Deleting a mesh drops its draw call from the exported model. Restore puts it back exactly as it was.') +
+          (multi ? ' Hide and delete apply to every selected mesh; the numbers edit the last one.' : '')
+        }
+        chips={[multi ? `${editing.selection.length} selected` : null]}
+        actions={headerActions}
+        sections={[{ id: 'model-actions', items: menuItems }]}
+      />
 
-      {!hasSelection && (
-        <p className="panelSubtle">
-          Click a piece of the track in the viewport, or a row in the list on the left, to edit it. Use <kbd>]</kbd> and{' '}
-          <kbd>[</kbd> to widen or narrow what a click selects, and <kbd>F</kbd> to fly to it.
-        </p>
-      )}
-
-      {!placed && (
-        <section className="modelInspectorSection">
-          <h3>What a click selects</h3>
-          <div className="modelGranularity" role="group" aria-label="Selection size">
-            {MESH_SELECTION_GRANULARITIES.map((value) => (
-              <button
-                key={value}
-                type="button"
-                className={editing.granularity === value ? 'modelGranularityOption active' : 'modelGranularityOption'}
-                onClick={() => editing.setGranularity(value)}
-              >
-                {GRANULARITY_LABELS[value]}
-              </button>
-            ))}
+      {editing.activeDeleted ? (
+        <p className="modelInspectorNotice">This mesh is deleted and will not be in the exported track. Use Restore in the menu above to bring it back.</p>
+      ) : (
+        <DetailsCategory name="Transform">
+          <div className="propertyGrid">
+            <PropertyRow label="Position" wide help="How far it is moved from where it sits in the track.">
+              <VectorInputs
+                value={editing.activeTransform.translation}
+                step={10}
+                onChange={(translation) => editing.setActiveTransform({ ...editing.activeTransform, translation })}
+              />
+            </PropertyRow>
+            <PropertyRow label="Rotation" wide help="In degrees, added on top of its current rotation.">
+              <VectorInputs
+                value={editing.activeTransform.rotation}
+                step={5}
+                onChange={(rotation) => editing.setActiveTransform({ ...editing.activeTransform, rotation })}
+              />
+            </PropertyRow>
+            <PropertyRow label="Scale" wide help="1 keeps its current size.">
+              <VectorInputs
+                value={editing.activeTransform.scale}
+                step={0.1}
+                onChange={(scale) => editing.setActiveTransform({ ...editing.activeTransform, scale })}
+              />
+            </PropertyRow>
           </div>
-          <p className="panelSubtle">{GRANULARITY_HINTS[editing.granularity]}</p>
-        </section>
+        </DetailsCategory>
       )}
 
-      {hasSelection && (
-        <>
-          {editing.selection.length > 1 && (
-            <p className="panelSubtle">
-              {editing.selection.length} meshes selected. Hiding and deleting apply to all of them; the numbers below
-              edit the last one.
-            </p>
-          )}
-
-          {!placed && editing.active && (
-            <DetailsSummaryBar
-              items={[
-                { label: 'Mesh', value: editing.meshByDrawOp.get(editing.active.drawOpIndex)?.shapeName ?? '—' },
-                { label: 'Material', value: editing.meshByDrawOp.get(editing.active.drawOpIndex)?.materialName || '—' },
-                { label: 'Bone', value: editing.meshList?.nodeNames.get(editing.active.nodeId) ?? `${editing.active.nodeId}` },
-                {
-                  label: 'Triangles',
-                  value: (editing.meshByDrawOp.get(editing.active.drawOpIndex)?.triangleCount ?? 0).toLocaleString(),
-                },
-              ]}
-            />
-          )}
-
-          {placed && (
-            <DetailsSummaryBar
-              items={[
-                { label: 'Kind', value: placed.sourceShape ? 'Copy of track geometry' : 'Imported object' },
-                { label: 'From', value: placed.sourcePath.split(/[\\/]/).pop() ?? placed.sourcePath },
-              ]}
-            />
-          )}
-
-          {editing.activeDeleted ? (
-            <p className="modelInspectorNotice">
-              This mesh is deleted and will not be in the exported track. Restore it to bring it back.
-            </p>
+      <DetailsCategory name={placed ? 'Source' : 'Mesh'}>
+        <div className="propertyGrid">
+          {placed ? (
+            <PropertyRow label="From">
+              <span className="propValue">{placed.sourcePath.split(/[\\/]/).pop() ?? placed.sourcePath}</span>
+            </PropertyRow>
           ) : (
-            <section className="modelInspectorSection">
-              <h3>Move</h3>
-              <div className="propertyGrid">
-                <label>
-                  Position offset
-                  <VectorInputs
-                    value={editing.activeTransform.translation}
-                    step={10}
-                    onChange={(translation) => editing.setActiveTransform({ ...editing.activeTransform, translation })}
-                  />
-                </label>
-                <label>
-                  Rotation (degrees)
-                  <VectorInputs
-                    value={editing.activeTransform.rotation}
-                    step={5}
-                    onChange={(rotation) => editing.setActiveTransform({ ...editing.activeTransform, rotation })}
-                  />
-                </label>
-                <label>
-                  Scale
-                  <VectorInputs
-                    value={editing.activeTransform.scale}
-                    step={0.1}
-                    onChange={(scale) => editing.setActiveTransform({ ...editing.activeTransform, scale })}
-                  />
-                </label>
-              </div>
-            </section>
+            <>
+              <PropertyRow label="Material">
+                <span className="propValue">{mesh?.materialName || '-'}</span>
+              </PropertyRow>
+              <PropertyRow label="Bone">
+                <span className="propValue">{editing.active ? editing.meshList?.nodeNames.get(editing.active.nodeId) ?? `${editing.active.nodeId}` : '-'}</span>
+              </PropertyRow>
+              <PropertyRow label="Triangles">
+                <span className="propValue">{(mesh?.triangleCount ?? 0).toLocaleString()}</span>
+              </PropertyRow>
+            </>
           )}
+        </div>
+      </DetailsCategory>
 
-          <section className="modelInspectorSection">
-            <h3>Actions</h3>
-            <div className="modelInspectorActions">
-              <button className="inlineAction" type="button" onClick={() => editing.setHidden(!editing.activeHidden)}>
-                {editing.activeHidden ? <Eye size={14} /> : <EyeOff size={14} />}
-                {editing.activeHidden ? 'Show' : 'Hide'}
-              </button>
-              {!placed && (
-                <button className="inlineAction" type="button" onClick={editing.duplicateSelection} disabled={!editing.active}>
-                  <Copy size={14} /> Duplicate
-                </button>
-              )}
-              {onOpenModelStudio && editing.active && (
-                <button
-                  className="inlineAction"
-                  type="button"
-                  title="Open this mesh's archive in the Model Studio, where its shaders and animations can be edited."
-                  onClick={() => onOpenModelStudio({ trackArchivePath: editing.active!.archivePath })}
-                >
-                  <Boxes size={14} /> Open in Model Studio
-                </button>
-              )}
-              <button className="inlineAction" type="button" onClick={editing.deleteSelection}>
-                <Trash2 size={14} /> {placed ? 'Remove' : 'Delete'}
-              </button>
-              {!placed && (
-                <button className="inlineAction" type="button" onClick={editing.resetSelection}>
-                  <RotateCcw size={14} /> Restore
-                </button>
-              )}
-            </div>
-            <p className="panelSubtle">
-              {placed
-                ? 'Removing a placed object takes it straight back out of the track.'
-                : 'Deleting a mesh drops its draw call from the exported model; Restore puts it back exactly as it was.'}
-            </p>
-          </section>
-        </>
-      )}
+      {granularity}
     </div>
   );
 }

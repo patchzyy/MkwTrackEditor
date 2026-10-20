@@ -11,7 +11,15 @@ import * as Yaz0 from '../Common/Compression/Yaz0.js';
 import { assert, readString, hexzero, assertExists } from '../util.js';
 import ArrayBufferSlice from '../ArrayBufferSlice.js';
 import { mat4, quat, vec3, vec4, type ReadonlyVec3 } from 'gl-matrix';
-import { RRESTextureHolder, MDL0Model, MDL0ModelInstance, RRESFogSettings } from '../rres/render.js';
+import { RRESTextureHolder, MDL0Model, MDL0ModelInstance, RRESFogSettings, editorFrameClock } from '../rres/render.js';
+import {
+    EditorSurfacePicker,
+    normalizeEditorArchivePath,
+    type EditorSurfaceHighlightDraw,
+    type EditorSurfaceHighlightRequest,
+    type EditorSurfaceInstance,
+    type EditorSurfacePickResult,
+} from './EditorSurfacePicker.js';
 import AnimationController from '../AnimationController.js';
 import { fillSceneParamsDataOnTemplate, GXRenderHelperGfx } from '../gx/gx_render.js';
 import { GfxDevice, GfxFrontFaceMode } from '../gfx/platform/GfxPlatform.js';
@@ -554,7 +562,16 @@ async function yieldToBrowser(): Promise<void> {
 
 class ModelCache {
     public rresCache = new Map<string, BRRES.RRES>();
+    /**
+     * Models by name. Two archives can carry a model of the same name (an imported course model is
+     * called `course` too), in which case the last one loaded wins here; editor code that knows
+     * the archive goes through `findModel` / `modelsByRRES` instead.
+     */
     public modelCache = new Map<string, MDL0Model>();
+    /** Editor extension: the models each parsed archive produced, by name. */
+    public modelsByRRES = new Map<BRRES.RRES, Map<string, MDL0Model>>();
+    /** Editor extension: the `rresCache` key (archive path) each model was loaded from. */
+    public modelArchivePath = new Map<MDL0Model, string>();
 
     public ensureRRES(device: GfxDevice, renderer: MarioKartWiiRenderer, path: string, buffer: ArrayBufferSlice | null): BRRES.RRES {
         if (!this.rresCache.has(path)) {
@@ -565,13 +582,36 @@ class ModelCache {
             this.rresCache.set(path, rres);
 
             const cache = renderer.renderHelper.renderInstManager.gfxRenderCache;
+            const models = new Map<string, MDL0Model>();
             for (let i = 0; i < rres.mdl0.length; i++) {
                 const mdl0Model = new MDL0Model(device, cache, rres.mdl0[i], renderer.materialHacks);
                 this.modelCache.set(rres.mdl0[i].name, mdl0Model);
+                models.set(rres.mdl0[i].name, mdl0Model);
+                this.modelArchivePath.set(mdl0Model, path);
             }
+            this.modelsByRRES.set(rres, models);
         }
 
         return this.rresCache.get(path)!;
+    }
+
+    /** The `rresCache` key matching `archivePath`, compared without case or a leading `./`. */
+    public findArchiveKey(archivePath: string): string | null {
+        if (this.rresCache.has(archivePath))
+            return archivePath;
+        const wanted = normalizeEditorArchivePath(archivePath);
+        for (const key of this.rresCache.keys())
+            if (normalizeEditorArchivePath(key) === wanted)
+                return key;
+        return null;
+    }
+
+    /** Editor extension: a model by archive and name; falls back to the name alone. */
+    public findModel(archivePath: string, modelName: string): MDL0Model | null {
+        const key = this.findArchiveKey(archivePath);
+        const rres = key !== null ? this.rresCache.get(key) : undefined;
+        const model = rres !== undefined ? this.modelsByRRES.get(rres)?.get(modelName) : undefined;
+        return model ?? this.modelCache.get(modelName) ?? null;
     }
 
     public destroy(device: GfxDevice): void {
@@ -654,6 +694,9 @@ class MarioKartWiiRenderer {
     private editorMode: EditorMode = 'kmp';
     private editorMeshPicker: EditorMeshPicker | null = null;
     private editorMeshHighlights: EditorOverlayMeshHighlight[] = [];
+    private editorSurfacePicker = new EditorSurfacePicker();
+    private editorSurfaceHighlightRequests: EditorSurfaceHighlightRequest[] = [];
+    private editorSurfaceHighlightBox = new AABB();
     private editorImportedInstances = new Map<string, EditorImportedModelRenderer>();
     private editorImportedInstanceSerial = 0;
     /** Create mode: generated chunks standing in for the course model. Not in `baseObjects`, see EditorPreviewChunk. */
@@ -1217,9 +1260,11 @@ class MarioKartWiiRenderer {
      * Returns false when the archive, model or material is not one this scene has loaded.
      */
     public reloadEditorMaterial(archivePath: string, modelName: string, materialName: string, brres: ArrayBufferSlice | Uint8Array): boolean {
-        const model = this.modelCache.modelCache.get(modelName);
-        if (model === undefined)
+        // Archive-aware: an object model (`./itembox.brres`) and a placed model can share a name.
+        const model = this.modelCache.findModel(archivePath, modelName);
+        if (model === null)
             return false;
+        archivePath = this.modelCache.modelArchivePath.get(model) ?? archivePath;
 
         const buffer = brres instanceof ArrayBufferSlice
             ? brres
@@ -1615,6 +1660,183 @@ class MarioKartWiiRenderer {
 
     //#endregion
 
+    //#region Surface picking: click a model, get its draw call and material (any mode)
+
+    /**
+     * Every model instance surface picking can hit: the course model and skybox, models placed
+     * from the content browser, and every KMP object preview. Start-grid karts and Create mode
+     * chunks are not editable surfaces and are left out.
+     */
+    public collectEditorSurfaceInstances(): EditorSurfaceInstance[] {
+        const out: EditorSurfaceInstance[] = [];
+        for (const object of this.baseObjects) {
+            if (!object.visible)
+                continue;
+            if (object instanceof CourseBGRenderer) {
+                const skybox = object.modelInstance.isSkybox || object.archivePath.toLowerCase().includes('vrcorn');
+                out.push({ modelInstance: object.modelInstance, archivePath: object.archivePath, kind: skybox ? 'skybox' : 'course', objectIndex: null, objectId: null, objectName: null, placedInstanceId: null });
+            } else if (object instanceof EditorImportedModelRenderer) {
+                out.push({ modelInstance: object.modelInstance, archivePath: object.archivePath, kind: 'placed', objectIndex: null, objectId: null, objectName: null, placedInstanceId: object.id });
+            } else if (object instanceof GobjPreviewRenderer) {
+                const objectName = this.commonCache.objFlow.objects[object.gobj.objectId]?.name ?? null;
+                for (const modelInstance of object.getModelInstances()) {
+                    out.push({
+                        modelInstance,
+                        archivePath: this.modelCache.modelArchivePath.get(modelInstance.mdl0Model) ?? '',
+                        kind: 'object',
+                        objectIndex: object.gobj.editorIndex,
+                        objectId: object.gobj.objectId,
+                        objectName,
+                        placedInstanceId: null,
+                    });
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * The surface under normalized viewport coordinates (0..1, y down), or null for empty space.
+     * See `EditorSurfacePicker` for what is approximate.
+     */
+    public pickEditorSurface(normalizedX: number, normalizedY: number, options: { includeSkybox?: boolean } = {}): EditorSurfacePickResult | null {
+        const ray = this.buildEditorPickRay(normalizedX, normalizedY);
+        if (ray === null)
+            return null;
+        this.editorSurfacePicker.sceneScale = scaleFactor;
+        return this.editorSurfacePicker.pick(this.collectEditorSurfaceInstances(), ray.origin, ray.direction, options.includeSkybox ?? false);
+    }
+
+    /**
+     * Replaces the surface highlight: single draw calls (`drawOpIndex`) and/or every draw call that
+     * uses a material (`materialName`), optionally limited to one KMP object. Resolved every frame
+     * against what is on screen, so it follows moving objects and survives an object rebuild.
+     */
+    public setEditorSurfaceHighlight(requests: EditorSurfaceHighlightRequest[]): void {
+        this.editorSurfaceHighlightRequests = requests.map((request) => ({ ...request }));
+    }
+
+    private drawEditorSurfaceHighlights(): void {
+        if (this.editorSurfaceHighlightRequests.length === 0)
+            return;
+        const draws: EditorSurfaceHighlightDraw[] = this.editorSurfacePicker.resolveHighlights(this.collectEditorSurfaceInstances(), this.editorSurfaceHighlightRequests);
+        const debugDraw = this.renderHelper.debugDraw;
+        const a = this.editorOverlayScratchA;
+        const b = this.editorOverlayScratchB;
+        for (const draw of draws) {
+            const color = draw.selected ? editorMeshSelectedColor : editorMeshHoverColor;
+            const edges = draw.edges;
+            for (let i = 0; i + 5 < edges.length; i += 6) {
+                vec3.set(a, edges[i], edges[i + 1], edges[i + 2]);
+                vec3.set(b, edges[i + 3], edges[i + 4], edges[i + 5]);
+                vec3.transformMat4(a, a, draw.matrix);
+                vec3.transformMat4(b, b, draw.matrix);
+                debugDraw.drawLine(a, b, color, undefined, editorOverlayLineOptions);
+            }
+            if (draw.box) {
+                this.editorSurfaceHighlightBox.set(draw.bounds.min.x, draw.bounds.min.y, draw.bounds.min.z, draw.bounds.max.x, draw.bounds.max.y, draw.bounds.max.z);
+                debugDraw.drawBoxLine(this.editorSurfaceHighlightBox, draw.matrix, editorMeshBoxColor, editorOverlayLineOptions);
+            }
+        }
+    }
+
+    /**
+     * Live preview of `setDrawOpMaterial` (src/lib/materialSlots.ts): re-points one draw call of a
+     * model at another material of the same model, on every live instance of that model, without
+     * rebuilding the scene. When the two materials belong in different passes the draw op moves to
+     * the end of the other draw list — the same move the byte-level edit makes — so draw-op
+     * indices keep matching the archive.
+     *
+     * Returns false when the model is not loaded or either index is out of range; the caller then
+     * falls back to a scene refresh.
+     */
+    public setEditorDrawOpMaterial(archivePath: string, modelName: string, drawOpIndex: number, materialIndex: number): boolean {
+        const model = this.modelCache.findModel(archivePath, modelName);
+        if (model === null)
+            return false;
+        const mdl0 = model.mdl0;
+        const opa = mdl0.sceneGraph.drawOpaOps;
+        const xlu = mdl0.sceneGraph.drawXluOps;
+        if (!Number.isInteger(drawOpIndex) || drawOpIndex < 0 || drawOpIndex >= opa.length + xlu.length)
+            return false;
+        if (model.materialData[materialIndex] === undefined || mdl0.materials[materialIndex] === undefined)
+            return false;
+        const inOpaque = drawOpIndex < opa.length;
+        const op = inOpaque ? opa[drawOpIndex] : xlu[drawOpIndex - opa.length];
+        if (op.matId === materialIndex)
+            return true;
+
+        const instances: MDL0ModelInstance[] = [];
+        for (const object of this.baseObjects)
+            for (const instance of getModelInstances(object))
+                if (instance.mdl0Model === model && !instances.includes(instance))
+                    instances.push(instance);
+        // An instance that does not line up with the model's draw lists cannot be patched by index.
+        if (instances.some((instance) => instance.shapeInstances.length !== opa.length + xlu.length))
+            return false;
+
+        const oldTranslucent = mdl0.materials[op.matId]?.translucent ?? !inOpaque;
+        const newTranslucent = mdl0.materials[materialIndex].translucent;
+        const move = oldTranslucent !== newTranslucent && inOpaque === !oldTranslucent;
+        let order: number[] | null = null;
+        if (move) {
+            const opaqueIndices = opa.map((_, i) => i);
+            const translucentIndices = xlu.map((_, i) => opa.length + i);
+            order = inOpaque
+                ? [...opaqueIndices.filter((i) => i !== drawOpIndex), ...translucentIndices, drawOpIndex]
+                : [...opaqueIndices, drawOpIndex, ...translucentIndices.filter((i) => i !== drawOpIndex)];
+        }
+        op.matId = materialIndex;
+        if (move) {
+            if (inOpaque) {
+                opa.splice(drawOpIndex, 1);
+                xlu.push(op);
+            } else {
+                xlu.splice(drawOpIndex - opa.length, 1);
+                opa.push(op);
+            }
+        }
+
+        const key = this.modelCache.modelArchivePath.get(model) ?? null;
+        const rres = key !== null ? this.modelCache.rresCache.get(key) ?? null : null;
+        for (const instance of instances) {
+            const next = instance.replaceDrawOpMaterial(drawOpIndex, materialIndex, order);
+            if (next === null)
+                continue;
+            instance.setVertexColorsEnabled(this.editorVertexColorsEnabled);
+            instance.setTexturesEnabled(this.editorTexturesEnabled);
+            next.setMaterialHacks({ disableLighting: !this.editorLightingEnabled });
+            if (rres !== null && key !== null) {
+                const isEnabled = (kind: string, name: string) => !this.editorDisabledAnimations.has(this.editorAnimationKey(key, kind, name));
+                for (const srt0 of rres.srt0)
+                    if (isEnabled('srt0', srt0.name))
+                        next.bindSRT0(this.animationController, srt0);
+                for (const pat0 of rres.pat0)
+                    if (isEnabled('pat0', pat0.name))
+                        next.bindPAT0(this.animationController, pat0);
+                for (const clr0 of rres.clr0)
+                    if (isEnabled('clr0', clr0.name))
+                        next.bindCLR0(this.animationController, clr0);
+            }
+        }
+        // The Model-mode picker caches material names and draw-op indices.
+        this.refreshEditorMeshSources();
+        return true;
+    }
+
+    /**
+     * Where each loaded archive came from: `'track'` when the course archive had the file, `'common'`
+     * when it was found in Common.szs (or the bundled object folders) instead.
+     */
+    public getEditorArchiveSource(archivePath: string): 'track' | 'common' | null {
+        const key = this.modelCache.findArchiveKey(archivePath);
+        if (key === null)
+            return null;
+        return this.courseArc.findFileData(key) !== null ? 'track' : 'common';
+    }
+
+    //#endregion
+
     //#region Create mode: preview chunks
 
     /**
@@ -1889,6 +2111,8 @@ class MarioKartWiiRenderer {
     }
 
     protected prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
+        // Editor: one tick per rendered frame, so the surface picker knows which instances are on screen.
+        editorFrameClock.frame++;
         this.animationController.setTimeInMilliseconds(this.calcEditorAnimationTimeMs(viewerInput.time));
         this.editorOverlayTimeMs = viewerInput.time;
         mat4.copy(this.editorOverlayClipFromWorldMatrix, viewerInput.camera.clipFromWorldMatrix);
@@ -2086,6 +2310,8 @@ class MarioKartWiiRenderer {
                 editorOverlayPointOptions,
             );
         }
+
+        this.drawEditorSurfaceHighlights();
 
         for (const highlight of this.editorMeshHighlights)
             this.drawEditorMeshHighlight(highlight);
@@ -4551,7 +4777,9 @@ class MarioKartWiiSceneDesc implements Viewer.SceneDesc {
 
     private static createModelInstanceFromRRES(renderer: MarioKartWiiRenderer, rres: BRRES.RRES, objectName: string): MDL0ModelInstance {
         const modelCache = renderer.modelCache;
-        const mdl0Model = assertExists(modelCache.modelCache.get(objectName));
+        // Look the model up in *this* archive first: a placed model of the same name loaded later
+        // must not take over every object preview that uses the name.
+        const mdl0Model = assertExists(modelCache.modelsByRRES.get(rres)?.get(objectName) ?? modelCache.modelCache.get(objectName));
         const mdl0Instance = new MDL0ModelInstance(renderer.textureHolder, mdl0Model, objectName);
         mdl0Instance.setSortKeyLayer(GfxRendererLayer.OPAQUE + 1);
         mdl0Instance.bindRRESAnimations(renderer.animationController, rres, null);

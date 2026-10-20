@@ -12,6 +12,7 @@ import { useKmpMode } from './kmp/KmpMode';
 import { useMaterialMode } from './material/MaterialMode';
 import { useModelMode } from './model/ModelMode';
 import type { EditorModeContext, ExportGuard, ModeUi } from './modes/types';
+import type { SurfacePick } from '../lib/surfacePick';
 import { useVisualMode } from './visual/VisualMode';
 import { ContentBrowser, type ContentBrowserActions } from './contentBrowser/ContentBrowser';
 import { PlaceAssetsRail } from './contentBrowser/PlaceAssetsRail';
@@ -22,12 +23,11 @@ import { useAssetLibrary } from './state/useAssetLibrary';
 import { buildFillBetweenPositions, getFillBetweenSelection } from './fillBetween';
 import { FillBetweenPanel } from './inspector/FillBetweenPanel';
 import { InspectorPanel } from './inspector/InspectorPanel';
-import { getTrackPostEffectResources } from './inspector/postEffectResources';
 import { SelectedEntityInspector } from './inspector/SelectedEntityInspector';
 import { Noclip3DViewport, type SceneReloadEvent, type TransformTool, type ViewMode } from './Noclip3DViewport';
 import { browserObjectTitle, isBrowsableObjectChoice, featuredObjectIds, type ObjectOption } from './objects/objectCatalog';
 import { getObjectInspectorProfile, getObjectVariantOptions } from './objects/objectProfiles';
-import type { EditorModeStub, InspectorSection } from './state/types';
+import type { EditorModeStub } from './state/types';
 import { useBrowserFolders } from './state/useBrowserFolders';
 import { useClipboard } from './state/useClipboard';
 import { useEditorHistory } from './state/useEditorHistory';
@@ -36,7 +36,6 @@ import { useKmpEditActions } from './state/useKmpEditActions';
 import { CONTENT_BROWSER_COLLAPSED_HEIGHT, usePanelLayout } from './state/usePanelLayout';
 import { CREATE_DOCK_SIZING } from './create/palette/dockMetrics';
 import { isPaletteDragActive } from './create/tools/useCreateTools';
-import { usePostEffectActions } from './state/usePostEffectActions';
 import { useSelection } from './state/useSelection';
 import { useSmokeHarness } from './state/useSmokeHarness';
 import { useTrackDocument } from './state/useTrackDocument';
@@ -64,6 +63,7 @@ import { ToastProvider, ToastViewport, useToastStore } from './components/Toast'
  */
 export function App() {
   const [editorMode, setEditorMode] = useState<EditorModeStub>('kmp');
+  const [pendingMaterialPick, setPendingMaterialPick] = useState<SurfacePick | null>(null);
   // Create mode opens its palette on exactly one row of tiles; every other mode keeps 260 px.
   const layout = usePanelLayout(editorMode === 'create' ? CREATE_DOCK_SIZING : undefined);
   const selection = useSelection();
@@ -71,9 +71,7 @@ export function App() {
   const [tool, setTool] = useState<TransformTool>('translate');
   const [viewMode, setViewMode] = useState<ViewMode>('normal');
   const [collisionVisible, setCollisionVisible] = useState(false);
-  const [inspectorSection, setInspectorSection] = useState<InspectorSection>('object');
-  const [batchOffset, setBatchOffset] = useState<Vec3>({ x: 0, y: 0, z: 0 });
-  const [batchObjectId, setBatchObjectId] = useState<number | null>(null);
+  const [batchOffset] = useState<Vec3>({ x: 0, y: 0, z: 0 });
   const [fillBetweenCount, setFillBetweenCount] = useState(3);
   const [fillBetweenPanelOpen, setFillBetweenPanelOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -135,7 +133,6 @@ export function App() {
   const gravityRecords = useMemo(() => (track?.kmp ? gravityRecordsFromEntities(track.kmp.entities) : []), [track?.kmp]);
   const validation = useMemo(() => (analysisTrack ? validateTrack(analysisTrack, { common: commonArchive }) : []), [analysisTrack, commonArchive]);
   const areaInspectorResources = useMemo(() => getAreaInspectorResources(analysisTrack), [analysisTrack]);
-  const postEffectResources = useMemo(() => getTrackPostEffectResources(analysisTrack), [analysisTrack]);
   const selectedObjectProfile = useMemo(() => (selected?.section === 'GOBJ' ? getObjectInspectorProfile(selected, objFlow) : null), [objFlow, selected]);
   const validationCounts = useMemo(() => {
     const errorCount = validation.filter((item) => item.level === 'error').length;
@@ -272,7 +269,6 @@ export function App() {
     fillBetweenCount,
     entityLabel,
   });
-  const postEffectActions = usePostEffectActions({ track, postEffectResources, selection, history, setStatus });
   const clipboard = useClipboard({ track, selected, selectedEntities, selection, history, setStatus, entityLabel });
   const { downloadExport } = useTrackExport({ track, commonArchive, setStatus });
 
@@ -434,7 +430,6 @@ export function App() {
     refreshTrack();
   }, [refreshTrack]);
 
-  const selectedInspectorSection: InspectorSection = selected?.section === 'STGI' ? 'track' : 'object';
   const selectedInspector = selected ? (
     <SelectedEntityInspector
       entity={selected}
@@ -482,6 +477,12 @@ export function App() {
     openTrackBytes: trackDocument.openTrackBytes,
     applyGeneratedTrack: (next) => history.applyEditorChange(next, selection.selectedIdRef.current, false, selection.selectedIdsRef.current),
     createWizard: { open: createWizardOpen, setOpen: setCreateWizardOpen },
+    openMaterialEditor: (pick) => {
+      setPendingMaterialPick(pick);
+      setEditorMode('material');
+    },
+    pendingMaterialPick,
+    consumePendingMaterialPick: () => setPendingMaterialPick(null),
   };
   const createModeUi = useCreateMode(modeContext);
   const kmpModeUi = useKmpMode(modeContext);
@@ -501,19 +502,6 @@ export function App() {
           : editorMode === 'material'
             ? materialModeUi
             : kmpModeUi;
-
-  useEffect(() => {
-    if (!selected) return;
-    setInspectorSection(selected.section === 'STGI' ? 'track' : 'object');
-  }, [selected]);
-
-  useEffect(() => {
-    if (canBatchReplaceObjects) {
-      setBatchObjectId(selectedEntities[0]?.objectId ?? null);
-    } else {
-      setBatchObjectId(null);
-    }
-  }, [canBatchReplaceObjects, selectedEntities]);
 
   useEffect(() => {
     if (!fillBetweenSelection) setFillBetweenPanelOpen(false);
@@ -837,31 +825,7 @@ export function App() {
           onBeginResize={(event) => layout.beginSidebarResize('inspector', event)}
           onResetSize={() => layout.resetSidebarSize('inspector')}
           onClose={() => layout.setInspectorOpen(false)}
-          inspectorSection={inspectorSection}
-          onChangeInspectorSection={setInspectorSection}
-          editorMode={editorMode}
           modeContent={modeUi.inspector}
-          track={track}
-          trackSummary={trackSummary}
-          selected={selected}
-          selectedEntities={selectedEntities}
-          selectedInspector={selectedInspector}
-          selectedInspectorSection={selectedInspectorSection}
-          entityLabel={entityLabel}
-          objectOptions={objectOptions}
-          canBatchReplaceObjects={canBatchReplaceObjects}
-          batchOffset={batchOffset}
-          onChangeBatchOffset={setBatchOffset}
-          onApplyBatchOffset={editActions.offsetSelectedEntities}
-          batchObjectId={batchObjectId}
-          onChangeBatchObjectId={setBatchObjectId}
-          onApplyBatchObjectId={editActions.replaceSelectedObjectTypes}
-          onDeleteSelected={editActions.deleteSelectedEntity}
-          onSelectEntity={(id, options) => selection.selectEntity(id, options?.additive)}
-          postEffectResources={postEffectResources}
-          postEffectActions={postEffectActions}
-          validation={validation}
-          validationCounts={validationCounts}
         />
         ) : (
           <PanelRail

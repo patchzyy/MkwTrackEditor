@@ -9,41 +9,53 @@
   min-width: 0;
 }
 
-.inspectorSheet > .propertyGrid {
-  margin-bottom: 0;
-}
-
 /* --- header --------------------------------------------------------------- */
 
 .inspectorHeader {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
   gap: var(--space-3);
-  padding-bottom: var(--space-3);
-  border-bottom: 1px solid var(--border-subtle);
+  min-width: 0;
 }
 
-.inspectorHeader:not(:has(.inspectorHeaderMedia)) {
-  grid-template-columns: minmax(0, 1fr) auto;
+.inspectorHeaderRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.inspectorHeaderIdentity {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
 }
 
 .inspectorHeaderMedia {
-  width: 46px;
-  height: 46px;
-  border-radius: var(--radius-sm);
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--accent-text);
   overflow: hidden;
 }
 
 .inspectorHeaderMedia .thumbnail {
-  width: 46px;
-  height: 46px;
+  width: 100%;
+  height: 100%;
   min-height: 0;
+  border: 0;
+  border-radius: 0;
 }
 
 .inspectorHeaderCopy {
   display: grid;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
 }
 
@@ -67,34 +79,50 @@
 }
 
 .inspectorHeaderType {
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-muted);
   font-size: var(--font-size-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .inspectorHeaderBadge {
-  padding: 1px 6px;
-  border: 1px solid var(--border-subtle);
+  padding: 0 6px;
+  border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
+  font-size: 10.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.inspectorHeaderDescription {
-  margin: 2px 0 0;
-  color: var(--text-muted);
-  font-size: var(--font-size-sm);
-  line-height: 1.4;
-}
-
 .inspectorHeaderActions {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
+  gap: 2px;
+}
+
+.inspectorHeaderActions .uiIconButton.is-danger:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.inspectorHeaderChips {
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+.inspectorHeaderChip {
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  font-size: var(--font-size-xs);
 }
 
 /* --- copy ----------------------------------------------------------------- */
@@ -108,8 +136,9 @@
 
 .inspectorNote {
   margin: 0;
-  color: var(--text-muted);
-  font-size: var(--font-size-sm);
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
   line-height: 1.45;
 }
 
@@ -117,18 +146,10 @@
   color: var(--warning-text);
 }
 
-.inspectorGroupTitle {
-  color: var(--text-muted);
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-}
-
 .inspectorCheckList {
   display: grid;
-  gap: var(--space-2);
-  padding: 2px 0;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
 }
 
 .inspectorRouteRow {
@@ -146,7 +167,7 @@
 .inspectorTips {
   display: grid;
   gap: var(--space-2);
-  margin: 0;
+  margin: var(--space-2) var(--space-3);
   padding-left: 16px;
   color: var(--text-muted);
   font-size: var(--font-size-sm);
@@ -157,61 +178,18 @@
   color: var(--warning-text);
 }
 
-/* --- disclosures ---------------------------------------------------------- */
-
-.inspectorDisclosure {
-  border-top: 1px solid var(--border-subtle);
-}
-
-.inspectorDisclosureToggle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-3) 0;
-  border: 0;
-  color: var(--text-muted);
-  background: transparent;
-  font: inherit;
-  font-size: var(--font-size-xs);
-  font-weight: 650;
-  letter-spacing: 0.05em;
-  text-align: left;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-
-.inspectorDisclosureToggle:hover {
-  color: var(--text);
-}
-
-.inspectorDisclosureHint {
-  margin-left: auto;
-  font-weight: 400;
-  letter-spacing: 0;
-  text-transform: none;
-  opacity: 0.75;
-}
-
-.inspectorDisclosureBody {
-  display: grid;
-  gap: var(--space-3);
-  padding-bottom: var(--space-3);
-}
-
-.inspectorDisclosureBody .propertyGrid {
-  margin-bottom: 0;
-}
-
 /* --- KMP-mode selection header -------------------------------------------- */
 
-.kmpSelectionHeader .inspectorHeader {
-  padding-bottom: 0;
-  border-bottom: 0;
+.kmpSelectionHeader {
+  display: grid;
+  gap: var(--space-2);
 }
 
 .kmpSelectionHeader h3 {
-  margin: 0 0 var(--space-2);
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
 }
 
 /* "⋯" at the end of a KMP tool button row. */
@@ -219,3 +197,94 @@
   display: inline-flex;
   margin-left: auto;
 }
+
+/* --- Problems summary (shared by the empty Details panel and the Track tab) --- */
+
+.trackProblems {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+}
+
+.trackProblemsFixAll {
+  justify-self: start;
+}
+
+.trackProblemList {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trackProblem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: 24px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm, 4px);
+  font-size: var(--font-size-sm);
+}
+
+.trackProblem:hover {
+  background: var(--surface-2);
+}
+
+.trackProblem > svg {
+  flex: none;
+}
+
+.trackProblem.error > svg {
+  color: var(--danger-text);
+}
+
+.trackProblem.warning > svg {
+  color: var(--warning-text);
+}
+
+.trackProblemText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trackProblemFix {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm, 4px);
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.trackProblemFix:hover {
+  color: var(--accent-text);
+  background: var(--surface-3, var(--surface-2));
+}
+
+.trackProblemsMore {
+  justify-self: start;
+  padding: 2px var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--accent-text);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.trackProblemsMore:hover {
+  text-decoration: underline;
+}
+

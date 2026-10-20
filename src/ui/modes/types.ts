@@ -3,6 +3,7 @@ import type { EditorProjectState } from '../../lib/brresEditor';
 import type { KmpEntity } from '../../lib/kmp';
 import type { TrackIssue } from '../../lib/kmpValidation';
 import type { CommonResourceArchive } from '../../lib/objflow';
+import type { SurfacePick } from '../../lib/surfacePick';
 import type { NoclipBrresSummary } from '../../lib/noclipBrres';
 import type { TrackDocument } from '../../lib/track';
 import type { Noclip3DViewport, TransformTool, ViewMode } from '../Noclip3DViewport';
@@ -70,6 +71,13 @@ export interface EditorModeContext {
   openTrackBytes: (bytes: Uint8Array, fileName: string, options?: { sourceId?: string }) => Promise<boolean>;
   /** Replaces the loaded track document without a history step (Create mode's compile result). */
   applyGeneratedTrack: (next: TrackDocument) => void;
+  /**
+   * Switches to Material mode with the material of this surface selected (Visual mode's
+   * "Edit this material"). `pendingMaterialPick` holds it until Material mode consumes it.
+   */
+  openMaterialEditor: (pick: SurfacePick) => void;
+  pendingMaterialPick: SurfacePick | null;
+  consumePendingMaterialPick: () => void;
   /** The Create mode "New track" wizard, owned by the shell so the welcome screen can open it. */
   createWizard: { open: boolean; setOpen: (open: boolean) => void };
 }

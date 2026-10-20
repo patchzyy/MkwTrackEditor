@@ -20,7 +20,8 @@ import type { ObjectInspectorProfile } from '../objects/objectProfiles';
 import { AdvancedDisclosure, Disclosure } from './Disclosure';
 import { useRegisterInspectorActions } from './InspectorActionsContext';
 import { InspectorHeader } from './InspectorHeader';
-import { describeKmpRecord, recordFieldPlan } from './recordSummary';
+import { DetailsCategory } from './PropertySheet';
+import { describeKmpRecord, recordFieldPlan, type KmpRecordKind } from './recordSummary';
 import { AdvancedObjectSection } from './sections/AdvancedObjectSection';
 import { AreaSection, type AreaGravityProps } from './sections/AreaSection';
 import { CameraSection } from './sections/CameraSection';
@@ -36,6 +37,23 @@ import { StartPointSection } from './sections/StartPointSection';
 import './inspector.css';
 
 const NO_ROUTE = 0xffff;
+
+/** Name of the category that holds a record's own controls. Objects say "Settings". */
+const SETTINGS_TITLE: Record<KmpRecordKind, string> = {
+  object: 'Settings',
+  checkpoint: 'Checkpoint',
+  enemyPoint: 'Route point',
+  itemPoint: 'Route point',
+  routePoint: 'Path node',
+  area: 'Area',
+  camera: 'Camera',
+  respawn: 'Respawn',
+  cannon: 'Cannon',
+  startPoint: 'Start point',
+  battleFinish: 'Battle finish',
+  stage: 'Track settings',
+  unknown: 'Settings',
+};
 
 /**
  * Property sheet for the selected KMP record.
@@ -231,6 +249,9 @@ export function Inspector({
     </>
   );
 
+  const isCamera = summary.kind === 'camera';
+  const settingsTitle = isObject ? 'Settings' : SETTINGS_TITLE[summary.kind];
+
   return (
     <div className="inspectorSheet">
       {!hosted && (
@@ -241,62 +262,79 @@ export function Inspector({
           sections={actionSections}
         />
       )}
-      {hosted && objectProfile && <p className="inspectorLead">{objectProfile.summary}</p>}
 
-      <PlacementSection
-        entity={entity}
-        summary={summary}
-        showPosition={!entity.checkpoint}
-        onChangePosition={onChangePosition}
-        onChangeRotation={onChangeRotation}
-        onChangeScale={onChangeScale}
-      />
-      <CheckpointSection scope="essentials" entity={entity} referenceCounts={referenceCounts} onChangeCheckpointEndpoint={onChangeCheckpointEndpoint} onChangeCheckpointField={onChangeCheckpointField} />
-      {showRouteRow && (
-        <ObjectRouteSection
+      <DetailsCategory name="Transform">
+        <PlacementSection
+          entity={entity}
+          summary={summary}
+          showPosition={!entity.checkpoint}
+          onChangePosition={onChangePosition}
+          onChangeRotation={onChangeRotation}
+          onChangeScale={onChangeScale}
+        />
+      </DetailsCategory>
+      {isCamera ? (
+        <CameraSection
+          scope="essentials"
+          entity={entity}
+          cameraHeader={cameraHeader}
+          referenceCounts={referenceCounts}
+          onChangeCameraField={onChangeCameraField}
+          onChangeCameraHeaderField={onChangeCameraHeaderField}
+          onChangeCameraViewPosition={onChangeCameraViewPosition}
+        />
+      ) : (
+        <DetailsCategory name={settingsTitle} help={objectProfile?.summary}>
+          <CheckpointSection scope="essentials" entity={entity} referenceCounts={referenceCounts} onChangeCheckpointEndpoint={onChangeCheckpointEndpoint} onChangeCheckpointField={onChangeCheckpointField} />
+          {showRouteRow && (
+            <ObjectRouteSection
+              entity={entity}
+              objectProfile={objectProfile}
+              referenceCounts={referenceCounts}
+              onChangeRouteIndex={onChangeRouteIndex}
+              onCreateObjectRoute={onCreateObjectRoute}
+              onSelectObjectRoute={onSelectObjectRoute}
+            />
+          )}
+          <ObjectSetupSection
+            entity={entity}
+            objectProfile={objectProfile}
+            objectVariantOptions={objectVariantOptions}
+            onChangeObjectId={onChangeObjectId}
+            onChangePresenceFlags={onChangePresenceFlags}
+            onChangeObjectSetting={onChangeObjectSetting}
+          />
+          <RoutePointSection
+            scope="essentials"
+            entity={entity}
+            onChangePointDeviation={onChangePointDeviation}
+            onChangePointSetting={onChangePointSetting}
+            onChangePotiRouteSetting={onChangePotiRouteSetting}
+            onChangePotiPointSetting={onChangePotiPointSetting}
+          />
+          <AreaSection scope="essentials" entity={entity} referenceCounts={referenceCounts} areaInspectorResources={areaInspectorResources} onChangeAreaField={onChangeAreaField} {...areaGravityProps} />
+          <RespawnCannonSection
+            scope="essentials"
+            entity={entity}
+            onChangeRespawnField={onChangeRespawnField}
+            onChangeCannonField={onChangeCannonField}
+            onChangeBattleFinishField={onChangeBattleFinishField}
+          />
+          <StartPointSection entity={entity} onChangePlayerIndex={onChangeStartPlayerIndex} />
+          <StageSection scope="essentials" entity={entity} onChangeStageField={onChangeStageField} onChangeStageFlareColor={onChangeStageFlareColor} />
+        </DetailsCategory>
+      )}
+      <DetailsCategory name="Appears in">
+        <ObjectSetupSection
+          part="presence"
           entity={entity}
           objectProfile={objectProfile}
-          referenceCounts={referenceCounts}
-          onChangeRouteIndex={onChangeRouteIndex}
-          onCreateObjectRoute={onCreateObjectRoute}
-          onSelectObjectRoute={onSelectObjectRoute}
+          objectVariantOptions={objectVariantOptions}
+          onChangeObjectId={onChangeObjectId}
+          onChangePresenceFlags={onChangePresenceFlags}
+          onChangeObjectSetting={onChangeObjectSetting}
         />
-      )}
-      <ObjectSetupSection
-        entity={entity}
-        objectProfile={objectProfile}
-        objectVariantOptions={objectVariantOptions}
-        onChangeObjectId={onChangeObjectId}
-        onChangePresenceFlags={onChangePresenceFlags}
-        onChangeObjectSetting={onChangeObjectSetting}
-      />
-      <RoutePointSection
-        scope="essentials"
-        entity={entity}
-        onChangePointDeviation={onChangePointDeviation}
-        onChangePointSetting={onChangePointSetting}
-        onChangePotiRouteSetting={onChangePotiRouteSetting}
-        onChangePotiPointSetting={onChangePotiPointSetting}
-      />
-      <AreaSection scope="essentials" entity={entity} referenceCounts={referenceCounts} areaInspectorResources={areaInspectorResources} onChangeAreaField={onChangeAreaField} {...areaGravityProps} />
-      <CameraSection
-        scope="essentials"
-        entity={entity}
-        cameraHeader={cameraHeader}
-        referenceCounts={referenceCounts}
-        onChangeCameraField={onChangeCameraField}
-        onChangeCameraHeaderField={onChangeCameraHeaderField}
-        onChangeCameraViewPosition={onChangeCameraViewPosition}
-      />
-      <RespawnCannonSection
-        scope="essentials"
-        entity={entity}
-        onChangeRespawnField={onChangeRespawnField}
-        onChangeCannonField={onChangeCannonField}
-        onChangeBattleFinishField={onChangeBattleFinishField}
-      />
-      <StartPointSection entity={entity} onChangePlayerIndex={onChangeStartPlayerIndex} />
-      <StageSection scope="essentials" entity={entity} onChangeStageField={onChangeStageField} onChangeStageFlareColor={onChangeStageFlareColor} />
+      </DetailsCategory>
 
       {objectProfile && (objectProfile.tips.length > 0 || (objectProfile.cautions?.length ?? 0) > 0) && (
         <Disclosure id="tips" title="How to use this" hint={`${objectProfile.tips.length + (objectProfile.cautions?.length ?? 0)} tips`}>

@@ -236,7 +236,7 @@ export interface ShapeInstanceEditorOverride {
     copyDraws: ShapeInstanceEditorCopyDraw[] | null;
 }
 
-class ShapeInstance {
+export class ShapeInstance {
     public sortKeyBias = 0;
     public editorOverride: ShapeInstanceEditorOverride | null = null;
 
@@ -442,7 +442,19 @@ export interface RRESFogSettings {
  *   still select their own fog *curve*, because the shader masks the type with 0x07 and the two
  *   families share those low bits.
  */
-function fillFogBlockParams(dst: GX_Material.FogBlock, fog: RRESFogSettings, camera: Camera): void {
+export function fillFogBlockParams(dst: GX_Material.FogBlock, fog: RRESFogSettings, camera: Camera): void {
+    dst.AdjCenter = 0;
+    if (camera.isOrthographic) {
+        // The editor's orthographic views put the eye at an arbitrary distance with a near plane
+        // far behind it, so "distance from the camera" means nothing there and the perspective
+        // terms below come out negative (a solid fog wall). B = 0 selects the shader's ortho path
+        // and A = C = 0 pins the fog distance at startZ, i.e. (near enough) no fog.
+        dst.A = 0;
+        dst.B = 0;
+        dst.C = 0;
+        return;
+    }
+
     const near = camera.near;
     const far = camera.far;
     // A zero-width band is a division by zero. Collapse it to a hair's width so the fog reads as
@@ -458,10 +470,9 @@ function fillFogBlockParams(dst: GX_Material.FogBlock, fog: RRESFogSettings, cam
         dst.B = 1.0;
     }
     dst.C = fog.startZ / denom;
-    dst.AdjCenter = 0;
 }
 
-class MaterialInstance {
+export class MaterialInstance {
     private srt0Animators: (BRRES.SRT0TexMtxAnimator | null)[] = [];
     private pat0Animators: (BRRES.PAT0TexAnimator | null)[] = [];
     private clr0Animators: (BRRES.CLR0ColorAnimator | null)[] = [];
@@ -861,11 +872,21 @@ function getRequiredViewMatrixCount(mdl0: BRRES.MDL0): number {
     return count;
 }
 
+/**
+ * Editor extension: a frame counter a host bumps once per rendered frame. Every instance records
+ * the frame it last queued draws in (`editorPreparedFrame`), so a CPU picker can tell an instance
+ * that is on screen right now from one that was culled, hidden or not spawned yet — and whose
+ * joint matrices are therefore stale.
+ */
+export const editorFrameClock = { frame: 0 };
+
 export class MDL0ModelInstance {
     public shapeInstances: ShapeInstance[] = [];
     public materialInstances: MaterialInstance[] = [];
     /** Editor extension: the MDL0 material index behind `materialInstances[i]`. */
     public materialInstanceMatIds: number[] = [];
+    /** Editor extension: `editorFrameClock.frame` when this instance last queued draws; -1 never. */
+    public editorPreparedFrame = -1;
 
     private chr0NodeAnimator: BRRES.CHR0NodesAnimator | null = null;
     private vis0NodeAnimator: BRRES.VIS0NodesAnimator | null = null;
@@ -950,6 +971,49 @@ export class MDL0ModelInstance {
             replaced++;
         }
         return replaced;
+    }
+
+    /**
+     * Editor extension: gives one draw call (an index into `[...DrawOpa, ...DrawXlu]`, which is
+     * also the index into `shapeInstances` / `materialInstances`) a `MaterialInstance` for another
+     * material of the same model, without rebuilding the instance.
+     *
+     * When the host also moved the draw op to the other pass in `mdl0.sceneGraph`, it passes the
+     * new order (`order[newIndex] = oldIndex`) and the per-op arrays are permuted to match, so the
+     * instance keeps lining up with the model's draw lists. Animations are not re-bound here; the
+     * new `MaterialInstance` is returned so the caller can bind the SRT0/PAT0/CLR0 it wants.
+     */
+    public replaceDrawOpMaterial(drawOpIndex: number, materialIndex: number, order: readonly number[] | null = null): MaterialInstance | null {
+        const materialData = this.mdl0Model.materialData[materialIndex];
+        const previous = this.materialInstances[drawOpIndex];
+        const shapeInstance = this.shapeInstances[drawOpIndex];
+        if (materialData === undefined || previous === undefined || shapeInstance === undefined)
+            return null;
+
+        const next = new MaterialInstance(this, materialData);
+        next.visible = previous.visible;
+        next.setSortKeyLayer(previous.sortKeyLayer);
+        next.setUsesSkinning(shapeInstance.shape.mtxIdx < 0);
+        const fog = previous.getFogSettings() ?? this.fogSettings;
+        if (fog !== null)
+            next.setFogSettings(materialData.material.fogIdx >= 0 ? fog : null);
+        shapeInstance.materialInstance = next;
+        this.materialInstances[drawOpIndex] = next;
+        this.materialInstanceMatIds[drawOpIndex] = materialIndex;
+
+        if (order !== null && order.length === this.shapeInstances.length) {
+            const shapes = order.map((from) => this.shapeInstances[from]);
+            const materials = order.map((from) => this.materialInstances[from]);
+            const matIds = order.map((from) => this.materialInstanceMatIds[from]);
+            this.shapeInstances = shapes;
+            this.materialInstances = materials;
+            this.materialInstanceMatIds = matIds;
+            // `execDrawOpList` biases translucent draws by their position in DrawXlu.
+            const opaqueCount = this.mdl0Model.mdl0.sceneGraph.drawOpaOps.length;
+            for (let i = 0; i < this.shapeInstances.length; i++)
+                this.shapeInstances[i].sortKeyBias = i < opaqueCount ? 0 : i - opaqueCount;
+        }
+        return next;
     }
 
     public setVertexColorsEnabled(v: boolean): void {
@@ -1165,6 +1229,7 @@ export class MDL0ModelInstance {
         if (depth < 0)
             return;
 
+        this.editorPreparedFrame = editorFrameClock.frame;
         this.calcView(camera);
 
         for (let i = 0; i < this.shapeInstances.length; i++) {

@@ -1,8 +1,11 @@
-/* Visual mode: left panel groups, texture previews and the view-preset overlay.
-   Scoped to `.visual*` class names so nothing here leaks into the other editor modes.
+/* Visual mode: the Environment panel (left), the Materials browser (bottom dock), the surface
+   Details (right) and the viewport preview switch. Scoped to `.visual*` class names so nothing
+   here leaks into the other editor modes.
 
    Colours, spacing, radii and type come from the design tokens in the `:root` block of
    `src/styles.css`; the few remaining literals are commented where they appear. */
+
+/* ------------------------------------------------------------------ left panel: Environment */
 
 .visualPanel {
   position: relative;
@@ -10,19 +13,9 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  /* The element also carries `.placeAssetsPanel`; these repeat the dock's own chrome so the
-     two stay in step. */
   border-right: 1px solid var(--border);
   background: var(--surface-1);
   overflow: hidden;
-}
-
-.visualPanelHeader {
-  /* The subtitle counts models, textures and bytes and wraps onto two lines, so the header must
-     not be shrunk by the scrolling body next to it in the column. */
-  flex: 0 0 auto;
-  align-items: flex-start;
-  min-height: 48px;
 }
 
 .visualPanelBody {
@@ -30,205 +23,456 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0 0 var(--space-4);
-}
-
-.visualArchivePicker {
-  display: grid;
-  gap: var(--space-2);
   padding: var(--space-3);
-  border-bottom: 1px solid var(--border);
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
 }
 
-.visualArchivePicker select {
-  height: var(--control-height);
-  min-width: 0;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  padding: 0 7px;
-  color: var(--text);
-  background: var(--surface-input);
-}
-
-.visualGroup {
-  border-bottom: 1px solid var(--border);
-}
-
-.visualGroupHeader {
-  display: flex;
-  align-items: center;
+.visualSheet {
   gap: var(--space-3);
-  width: 100%;
+}
+
+.visualEmpty {
+  padding: var(--space-3) var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+/* Shown while the viewport is previewing something other than the game look. */
+.visualPreviewBanner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-2) var(--space-3);
   padding: var(--space-3);
-  border: 0;
-  color: var(--text);
-  background: transparent;
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  text-align: left;
-  cursor: pointer;
-}
-
-.visualGroupHeader:hover {
-  background: var(--surface-hover);
-}
-
-.visualGroupChevron {
-  width: 10px;
-  color: var(--text-dim);
-  /* Below the type scale on purpose: the glyph has to fit the 10px column. */
-  font-size: 9px;
-}
-
-.visualGroupCount {
-  margin-left: auto;
-  color: var(--text-dim);
-  font-weight: 600;
-  letter-spacing: 0;
-  text-transform: none;
-}
-
-.visualGroupBody {
-  padding: var(--space-1) var(--space-3) var(--space-4);
-}
-
-.visualList {
-  display: grid;
-  gap: var(--space-1);
-}
-
-.visualRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-3);
-  width: 100%;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid transparent;
+  border: 1px solid var(--warning-border);
   border-radius: var(--radius-md);
-  color: var(--text);
-  background: transparent;
-  font-size: var(--font-size-sm);
-  text-align: left;
-  cursor: pointer;
+  color: var(--warning-text);
+  background: var(--warning-soft);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
 }
 
-.visualRow:hover {
-  background: var(--surface-hover);
+.visualPreviewBanner svg {
+  margin-top: 1px;
 }
 
-.visualRow.selected {
-  border-color: var(--selection-border);
-  background: var(--selection);
-}
-
-.visualRowMain {
-  min-width: 0;
-  display: grid;
-  gap: var(--space-1);
-}
-
-.visualRowMain strong {
-  overflow: hidden;
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* A `visualRowMain` that is itself the click target, inside a row that has its own controls. */
-.visualRowButton {
-  border: 0;
+.visualPreviewBanner button {
+  grid-column: 2;
+  justify-self: start;
   padding: 0;
-  color: inherit;
+  border: 0;
+  color: var(--text);
   background: transparent;
   font: inherit;
-  text-align: left;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
   cursor: pointer;
 }
 
-.visualRowMeta {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* --- looks ---------------------------------------------------------------------------------- */
 
-.visualRowAside {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-
-.visualToggle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
-
-.visualToggle input {
-  margin: 0;
-}
-
-.visualToggle.disabled {
-  color: var(--text-disabled);
-  cursor: not-allowed;
-}
-
-.visualToggleGrid {
+.visualLookGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-2) var(--space-3);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  padding: var(--space-3);
 }
 
-.visualTextureGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(74px, 1fr));
-  gap: var(--space-2);
-}
-
-.visualTextureTile {
+.visualLookChip {
   display: grid;
   gap: var(--space-2);
+  min-width: 0;
   padding: var(--space-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  color: var(--text);
-  background: var(--surface-input);
+  color: var(--text-secondary);
+  background: var(--surface-2);
   font-size: var(--font-size-xs);
-  text-align: left;
+  font-weight: 550;
+  text-align: center;
   cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
 }
 
-.visualTextureTile:hover {
+.visualLookChip:hover {
   border-color: var(--border-hover);
+  background: var(--surface-3);
+  transform: translateY(-1px);
 }
 
-.visualTextureTile.selected {
+.visualLookChip:active {
+  transform: translateY(0);
+}
+
+.visualLookChip.isActive {
   border-color: var(--selection-border);
+  color: var(--text);
   background: var(--selection);
 }
 
-.visualTextureTile strong {
+.visualLookChip:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.visualLookChip > span:last-child {
   overflow: hidden;
-  font-size: var(--font-size-xs);
-  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.visualTextureTile span {
+/* Sun, shadow and fog colours of a look as one smooth strip. */
+.visualLookStrip {
+  display: block;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 10%);
+}
+
+/* --- sliders and swatches ------------------------------------------------------------------- */
+
+.visualSliderWrap {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.visualSliderRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.visualSliderValue {
+  flex: 0 0 auto;
+  min-width: 34px;
   color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.visualSliderEnds {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+input[type='range'].visualSlider {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  appearance: none;
+  cursor: pointer;
+}
+
+input[type='range'].visualSlider:focus-visible {
+  outline: none;
+}
+
+input[type='range'].visualSlider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--accent) var(--fill, 0%), var(--surface-4) var(--fill, 0%));
+}
+
+input[type='range'].visualSlider::-moz-range-track {
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-4);
+}
+
+input[type='range'].visualSlider::-moz-range-progress {
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+input[type='range'].visualSlider::-webkit-slider-thumb {
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border: 2px solid var(--surface-1);
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 0 0 1px var(--border-strong);
+  appearance: none;
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+input[type='range'].visualSlider::-moz-range-thumb {
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--surface-1);
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+
+input[type='range'].visualSlider:hover::-webkit-slider-thumb,
+input[type='range'].visualSlider:focus-visible::-webkit-slider-thumb {
+  background: var(--accent-strong);
+  transform: scale(1.15);
+}
+
+input[type='range'].visualSlider:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.visualColorSlider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.visualSwatch {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-block;
+  width: 26px;
+  height: 20px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--swatch, #888);
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 22%),
+    0 0 0 1px rgb(0 0 0 / 40%);
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.visualSwatchWithHex {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.visualSwatchWithHex code {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.visualSwatch.isSmall {
+  width: 22px;
+  height: 16px;
+}
+
+.visualSwatch:hover {
+  transform: scale(1.06);
+}
+
+.visualSwatch.isDisabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.visualSwatch input[type='color'] {
+  position: absolute;
+  inset: -4px;
+  width: calc(100% + 8px);
+  height: calc(100% + 8px);
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* An effect the track does not have yet, with the button that adds it. */
+.visualMissing {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.visualRowNote {
+  margin: var(--space-2) var(--space-3);
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+}
+
+.visualNote {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.visualNote.warning {
+  color: var(--warning-text);
+}
+
+.visualNote.error {
+  color: var(--danger-text);
+}
+
+.visualMuted {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visualNested {
+  margin: var(--space-2) var(--space-3);
+}
+
+.visualLightRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.visualLightTag {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  font-size: 10px;
+  line-height: 16px;
+}
+
+/* --- animations ----------------------------------------------------------------------------- */
+
+.visualScrubber {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.visualScrubberRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.visualLinkButton {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  color: var(--accent-text);
+  background: transparent;
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.visualLinkButton:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.visualLinkRow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) var(--space-3) var(--space-3);
+}
+
+/* ------------------------------------------------------------------ bottom dock: Materials */
+
+.visualDockHeader {
+  gap: var(--space-4);
+}
+
+.visualDockHeader .uiTabs {
+  flex: 0 0 auto;
+}
+
+.visualAssignHint {
+  min-width: 0;
+  padding: 2px var(--space-3);
+  overflow: hidden;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-pill);
+  color: var(--accent-text) !important;
+  background: var(--accent-soft);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visualAssignHint b {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.visualArchiveSelect select {
+  height: var(--control-height-sm);
+  max-width: 150px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-3);
+  color: var(--text);
+  background: var(--surface-input);
+  font-size: var(--font-size-sm);
+}
+
+.visualArchiveSelect select:disabled {
+  color: var(--text-muted);
+}
+
+.visualDockBody {
+  display: grid;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.visualTileGrid {
+  grid-template-columns: repeat(auto-fill, minmax(var(--tile-size, 112px), 1fr));
+}
+
+.visualMaterialTile {
+  cursor: pointer;
+  font: inherit;
+}
+
+.visualMaterialTile:active {
+  cursor: pointer;
+}
+
+.visualMaterialTile.isInUse {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.visualMaterialTile.isInUse > span {
+  color: var(--accent-text);
+}
+
+.visualMaterialTile:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.visualLazyTexture {
+  min-width: 0;
+}
+
+.visualNoTexture {
+  color: var(--text-dim);
+  opacity: 0.6;
 }
 
 /* Alpha-aware preview: a checkerboard behind the decoded texture. The two tones are surface
@@ -264,43 +508,162 @@
 .visualTexturePreviewLarge {
   min-height: 180px;
   max-height: 320px;
+  margin: var(--space-3);
   padding: var(--space-3);
 }
 
-.visualEmpty {
-  padding: var(--space-3) var(--space-1);
-  color: var(--text-dim);
-  font-size: var(--font-size-xs);
-  line-height: 1.4;
-}
+/* ------------------------------------------------------------------ right panel: Details */
 
-.visualScrubber {
+.visualSlotList {
   display: grid;
   gap: var(--space-2);
-  padding: var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-input);
+  padding: var(--space-2) var(--space-3);
 }
 
-.visualScrubberRow {
-  display: flex;
+.visualSlot,
+.visualTextureRow {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-3);
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
 }
 
-.visualScrubberRow input[type='range'] {
-  flex: 1 1 auto;
+.visualTextureRow {
+  grid-template-columns: 32px minmax(0, 1fr);
+  margin: var(--space-2) var(--space-3);
+}
+
+.visualSlot:hover {
+  border-color: var(--border-hover);
+}
+
+.visualSlot.isActive {
+  border-color: var(--selection-border);
+  background: var(--selection);
+}
+
+.visualSlot .visualCheckerboard,
+.visualTextureRow .visualCheckerboard {
+  width: 100%;
+}
+
+.visualSlotText {
+  display: grid;
+  gap: 1px;
   min-width: 0;
-  accent-color: var(--accent);
 }
 
-.visualScrubberValue {
-  min-width: 58px;
+.visualSlotText strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visualSlotText span {
+  overflow: hidden;
   color: var(--text-muted);
   font-size: var(--font-size-xs);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visualSlotPick {
+  height: var(--control-height-sm);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-3);
+  color: var(--text);
+  background: var(--surface-3);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.visualSlotPick:hover {
+  border-color: var(--border-hover);
+  background: var(--surface-4);
+}
+
+.visualSlot.isActive .visualSlotPick {
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
+.visualButtonRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.visualActionRow {
+  padding: var(--space-2) var(--space-3) var(--space-3);
+}
+
+.visualSummaryValue {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-secondary);
+}
+
+.visualDot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 25%),
+    0 0 0 1px rgb(0 0 0 / 40%);
+}
+
+/* ------------------------------------------------------------------ viewport preview switch */
+
+.visualOverlayPanel {
+  display: grid;
+  gap: var(--space-3);
+  width: 236px;
+}
+
+.visualPresetRow {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.visualPresetRow .visualInlineButton {
+  flex: 1 1 0;
+}
+
+.visualOverlayToggles {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.visualToggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.visualToggle input {
+  margin: 0;
+}
+
+.visualToggle.disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
 }
 
 .visualInlineButton {
@@ -329,70 +692,9 @@
   background: var(--accent-soft);
 }
 
-.visualButtonRow {
-  display: flex;
-  flex-wrap: wrap;
+/* The create buttons at the end of the raw effect files list. */
+.rawEffectButtons {
+  display: inline-flex;
+  flex: none;
   gap: var(--space-2);
-}
-
-.visualPresetRow {
-  display: flex;
-  gap: var(--space-2);
-}
-
-.visualPresetRow .visualInlineButton {
-  flex: 1 1 0;
-}
-
-.visualNote {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  line-height: 1.4;
-}
-
-.visualNote.warning {
-  color: var(--warning-text);
-}
-
-.visualNote.error {
-  color: var(--danger-text);
-}
-
-.visualInspectorHeader {
-  display: grid;
-  gap: var(--space-1);
-  margin-bottom: var(--space-3);
-}
-
-.visualInspectorHeader strong {
-  font-size: var(--font-size-md);
-}
-
-.visualTagRow {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.visualTag {
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-pill);
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-
-.visualOverlayPanel {
-  width: 236px;
-}
-
-.visualOverlayToggles {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-2) var(--space-3);
-}
-
-.visualOverlayDivider {
-  height: 1px;
-  background: var(--border-overlay);
 }

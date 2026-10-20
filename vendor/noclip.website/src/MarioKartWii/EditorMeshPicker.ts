@@ -97,14 +97,14 @@ export interface EditorMeshSource {
  * `gx/gx_render.ts`), so a triangle is front-facing when its `(b-a) x (c-a)` normal points the
  * same way as the view direction.
  */
-function cullFacingSign(cullMode: GX.CullMode): number {
+export function cullFacingSign(cullMode: GX.CullMode): number {
     if (cullMode === GX.CullMode.FRONT) return 1;
     if (cullMode === GX.CullMode.BACK) return -1;
     return 0;
 }
 
 /** `+1` when the triangle faces away from the ray (front, under GX's CW convention), else `-1`. */
-function triangleFacing(positions: Float32Array, a: number, b: number, c: number, direction: vec3): number {
+export function triangleFacing(positions: Float32Array, a: number, b: number, c: number, direction: vec3): number {
     const abx = positions[b] - positions[a];
     const aby = positions[b + 1] - positions[a + 1];
     const abz = positions[b + 2] - positions[a + 2];

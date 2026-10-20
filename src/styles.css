@@ -1089,18 +1089,6 @@ h4 {
   border-top: 0;
 }
 
-.inspectorSections {
-  display: flex;
-  width: 100%;
-  margin: 0 0 var(--space-4);
-}
-
-.inspectorSections .uiSegment,
-.inspectorSections button {
-  flex: 1 1 0;
-  width: auto;
-}
-
 /* Icon button. Kept for the mode panels that use `.iconButton` directly. */
 .iconButton {
   display: inline-flex;
@@ -1195,77 +1183,52 @@ h4 {
   line-height: 1.5;
 }
 
-.detailsSummaryBar {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
-  gap: var(--space-2);
-  margin-bottom: var(--space-4);
-}
-
-.detailsSummaryItem {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  padding: var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
-}
-
-.detailsSummaryItem span {
-  color: var(--text-dim);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.detailsSummaryItem strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text);
-  font-size: var(--font-size-sm);
-  font-weight: 550;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Property grid used by every inspector section. */
+/*
+ * Property grid used by every inspector section. One row is a label (about 40%) and its
+ * control, 28px tall, with a hairline under it and a hover wash across the whole row. Help text
+ * lives in a tooltip on the label (see `PropertyRow`), never in a paragraph between rows.
+ */
 .propertyGrid {
   display: grid;
   gap: 0;
-  margin-bottom: var(--space-5);
+  margin-bottom: 0;
 }
 
 .detailsSectionHeader {
   grid-column: 1 / -1;
-  margin-top: var(--space-4);
-  padding: var(--space-4) 0 var(--space-3);
-  border-top: 1px solid var(--border-subtle);
-  color: var(--text-muted);
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .detailsSectionHeader:first-child {
   margin-top: 0;
-  padding-top: 0;
-  border-top: 0;
 }
 
 .propertyGrid label,
-.advancedDetailsBody label {
+.advancedDetailsBody label,
+.propRow {
   display: grid;
-  grid-template-columns: minmax(104px, 38%) minmax(0, 1fr);
+  grid-template-columns: minmax(84px, 40%) minmax(0, 1fr);
   align-items: center;
-  gap: var(--space-2) var(--space-4);
-  padding: 6px 0;
+  gap: 0 var(--space-3);
+  min-height: 28px;
+  padding: 3px var(--space-3);
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-muted);
   font-size: var(--font-size-sm);
+  line-height: 1.3;
+  transition: background-color var(--dur-fast, 120ms) var(--ease, ease);
+}
+
+.propertyGrid label:hover,
+.advancedDetailsBody label:hover,
+.propRow:hover {
+  background: var(--surface-hover);
 }
 
 .propertyGrid label:last-child,
@@ -1273,35 +1236,49 @@ h4 {
   border-bottom: 0;
 }
 
+.propertyGrid label.is-filtered,
+.advancedDetailsBody label.is-filtered,
+.uiField.is-filtered,
+.cameraField.is-filtered,
+.propRow.is-filtered {
+  display: none;
+}
+
 /*
  * Multi-column value rows (X/Y/Z vectors, the four object settings, the post-effect triples)
- * take the whole row and put their label above, for the same reason as `.uiField` in
- * components.css: beside a label column each column is far too narrow for a track coordinate.
+ * take the whole row and put their label above: beside a label column each column is far too
+ * narrow for a five-digit track coordinate.
  */
 .propertyGrid label:has(.vectorInputs),
 .propertyGrid label:has(.settingInputs),
 .advancedDetailsBody label:has(.vectorInputs),
-.advancedDetailsBody label:has(.settingInputs) {
+.advancedDetailsBody label:has(.settingInputs),
+.propRow.isWide {
   grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2) 0;
+  padding-top: 5px;
+  padding-bottom: 6px;
 }
 
-.propertyGrid label:has(.vectorInputs) > *,
-.propertyGrid label:has(.settingInputs) > *,
-.advancedDetailsBody label:has(.vectorInputs) > *,
-.advancedDetailsBody label:has(.settingInputs) > * {
+.propertyGrid label:not(.propRow):has(.vectorInputs) > *,
+.propertyGrid label:not(.propRow):has(.settingInputs) > *,
+.advancedDetailsBody label:not(.propRow):has(.vectorInputs) > *,
+.advancedDetailsBody label:not(.propRow):has(.settingInputs) > *,
+.propRow.isWide > * {
   grid-column: 1;
 }
 
-.propertyGrid label > div,
-.propertyGrid label > span,
-.propertyGrid label > input,
-.propertyGrid label > select,
-.propertyGrid label > button,
-.advancedDetailsBody label > div,
-.advancedDetailsBody label > span,
-.advancedDetailsBody label > input,
-.advancedDetailsBody label > select,
-.advancedDetailsBody label > button {
+/* Everything after the label text sits in the control column, however many pieces there are. */
+.propertyGrid label:not(.propRow) > div,
+.propertyGrid label:not(.propRow) > span,
+.propertyGrid label:not(.propRow) > input,
+.propertyGrid label:not(.propRow) > select,
+.propertyGrid label:not(.propRow) > button,
+.advancedDetailsBody label:not(.propRow) > div,
+.advancedDetailsBody label:not(.propRow) > span,
+.advancedDetailsBody label:not(.propRow) > input,
+.advancedDetailsBody label:not(.propRow) > select,
+.advancedDetailsBody label:not(.propRow) > button {
   grid-column: 2;
 }
 
@@ -1310,16 +1287,6 @@ h4 {
   color: var(--text);
   font-size: var(--font-size-sm);
   overflow-wrap: anywhere;
-}
-
-/* `Field` renders its own two-column grid, so opt it out of the label rules above. */
-.propertyGrid .uiField > .uiFieldControl,
-.propertyGrid .uiField > .uiFieldHelp {
-  grid-column: 2;
-}
-
-.propertyGrid .uiField > .uiFieldLabel {
-  grid-column: 1;
 }
 
 .advancedDetails {
@@ -1418,7 +1385,7 @@ h4 {
 .routeInput {
   min-width: 0;
   height: var(--control-height-sm);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 0 var(--space-2);
   color: var(--text);

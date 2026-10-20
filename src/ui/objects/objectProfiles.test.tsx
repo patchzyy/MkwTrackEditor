@@ -69,16 +69,22 @@ function renderObjectSettings(objectId: number): string {
 }
 
 function renderObjectSetup(objectId: number): string {
-  return renderToStaticMarkup(
-    <ObjectSetupSection
-      entity={gobjEntity(objectId)}
-      objectProfile={profileFor(objectId)}
-      objectVariantOptions={[]}
-      onChangeObjectId={() => {}}
-      onChangePresenceFlags={() => {}}
-      onChangeObjectSetting={() => {}}
-    />,
-  );
+  // The settings and the game-mode list are two parts the inspector puts in separate categories.
+  return (['settings', 'presence'] as const)
+    .map((part) =>
+      renderToStaticMarkup(
+        <ObjectSetupSection
+          part={part}
+          entity={gobjEntity(objectId)}
+          objectProfile={profileFor(objectId)}
+          objectVariantOptions={[]}
+          onChangeObjectId={() => {}}
+          onChangePresenceFlags={() => {}}
+          onChangeObjectSetting={() => {}}
+        />,
+      ),
+    )
+    .join('');
 }
 
 /** True when the object gets more than the generic "placement only" inspector. */
@@ -134,7 +140,6 @@ describe('object inspector profiles', () => {
 
   it('renders the friendly object setup block in plain language, including guidance-only notes', () => {
     const itemBox = renderObjectSetup(0x65);
-    expect(itemBox).toContain('Appears in');
     expect(itemBox).toContain('Single player and time trials');
     // The raw bit mask belongs in the inspector's Advanced disclosure, never here.
     expect(itemBox).not.toContain('Presence Flags');

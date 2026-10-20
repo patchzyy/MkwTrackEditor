@@ -2,8 +2,6 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { KmpEntity, Vec3 } from '../../lib/kmp';
 import type { PathInfo, ReferenceCounts } from '../../lib/kmpEdit';
-import { BatchSelectionPanel } from './BatchSelectionPanel';
-import { DetailsSummaryBar } from './DetailsSummaryBar';
 import { Inspector } from './Inspector';
 import { AreaSection } from './sections/AreaSection';
 import { gravityRecordsFromEntities } from '../../lib/gravityField';
@@ -125,6 +123,7 @@ describe('Inspector', () => {
       }),
     );
     expect(markup).toContain('Movement path');
+    expect(markup).toContain('Appears in');
     expect(markup).toContain('Does not follow a path');
     expect(markup).toContain('Advanced');
     // Everything technical is behind the closed disclosure, so none of it is rendered.
@@ -146,61 +145,6 @@ describe('Inspector', () => {
     expect(markup).toContain('Advanced');
     expect(markup).not.toContain('Group links');
     expect(markup).not.toContain('2, 3');
-  });
-});
-
-describe('multi-selection panels', () => {
-  it('offers batch offset and batch object replacement', () => {
-    const markup = renderToStaticMarkup(
-      <BatchSelectionPanel
-        count={3}
-        offset={origin}
-        onChangeOffset={noop}
-        onApplyOffset={noop}
-        objectOptions={[{ id: 0x65, label: 'Item Box', detail: 'itembox' }]}
-        objectId={0x65}
-        onChangeObjectId={noop}
-        onApplyObjectId={noop}
-        onDelete={noop}
-      />,
-    );
-    expect(markup).toContain('Batch Edit');
-    expect(markup).toContain('3 elements selected');
-    expect(markup).toContain('Move selected');
-    expect(markup).toContain('Replace selected objects');
-    expect(markup).toContain('Delete');
-  });
-
-  it('hides the object replacement controls when the selection is not all objects', () => {
-    const markup = renderToStaticMarkup(
-      <BatchSelectionPanel
-        count={2}
-        offset={origin}
-        onChangeOffset={noop}
-        onApplyOffset={noop}
-        objectOptions={[]}
-        objectId={null}
-        onChangeObjectId={noop}
-        onDelete={noop}
-      />,
-    );
-    expect(markup).toContain('Batch Edit');
-    expect(markup).not.toContain('Replace selected objects');
-  });
-});
-
-describe('DetailsSummaryBar', () => {
-  it('renders only the items that have a value', () => {
-    const markup = renderToStaticMarkup(
-      <DetailsSummaryBar items={[{ label: 'Selection', value: 'Item Box #3' }, { label: 'Multi-Select', value: '' }]} />,
-    );
-    expect(markup).toContain('Selection');
-    expect(markup).toContain('Item Box #3');
-    expect(markup).not.toContain('Multi-Select');
-  });
-
-  it('renders nothing when every item is empty', () => {
-    expect(renderToStaticMarkup(<DetailsSummaryBar items={[{ label: 'Selection', value: '  ' }]} />)).toBe('');
   });
 });
 

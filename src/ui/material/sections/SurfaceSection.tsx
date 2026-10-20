@@ -41,9 +41,8 @@ export function SurfaceSection({
       </FieldGroup>
 
       {summary && summary.sharedShaderWith.length > 0 && (
-        <p className="materialNote">
-          This material's shader is shared with {summary.sharedShaderWith.join(', ')}. Editing the graph gives this
-          material its own copy so the others are left alone.
+        <p className="detailsNote" title={`Shared with ${summary.sharedShaderWith.join(', ')}. Editing the graph gives this material its own copy so the others are left alone.`}>
+          Shader shared with {summary.sharedShaderWith.length} other material{summary.sharedShaderWith.length === 1 ? '' : 's'}
         </p>
       )}
 

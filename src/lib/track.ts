@@ -7,7 +7,8 @@ import { parseKcl, type KclMesh } from './kcl';
 import { parseNoclipBrresSummary, type NoclipBrresSummary } from './noclipBrres';
 import { readingFraction, type TrackLoadProgressListener } from './trackLoadProgress';
 import { getObjFlowResourceNames, type CommonResourceArchive } from './objflow';
-import { bakeCourseModel, type BakeWarning } from './brres/bakeCourseModel';
+import { bakeCourseModel, normalizeArchivePath, type BakeWarning } from './brres/bakeCourseModel';
+import { setDrawOpMaterialDetailed } from './materialSlots';
 import type { ImportedMesh, MeshEdit } from './brresEditor';
 
 export type { TrackIssue } from './kmpValidation';
@@ -265,7 +266,7 @@ export function bakeMeshEdits(entries: readonly U8Entry[], track: TrackDocument)
   }
 
   const importSources = new Map<string, Uint8Array>(Object.entries(track.meshImportSources ?? {}));
-  const result = bakeCourseModel(entries[index].data!, { edits, importedMeshes: imports, importSources });
+  const result = bakeCourseModel(entries[index].data!, { edits, importedMeshes: imports, importSources, archivePath: entries[index].path });
   if (!result.changed) return { entries: [...entries], warnings: result.warnings };
 
   const next = [...entries];
@@ -300,6 +301,167 @@ export function getExportArchiveEntries(track: TrackDocument, common?: CommonRes
 
   return out;
 }
+
+//#region Track-local copies of shared object models, and material assignment
+
+/** The archive entry at `path`, compared case-insensitively and without a leading `./`. */
+export function findTrackArchiveEntry(track: TrackDocument, path: string): U8Entry | null {
+  const wanted = normalizeArchivePath(path);
+  const files = track.archiveEntries.filter((entry) => entry.type === 'file' && entry.data);
+  const exact = files.find((entry) => normalizeArchivePath(entry.path) === wanted);
+  if (exact) return exact;
+  // Object models always sit next to the course model; accept a bare file name for them.
+  const baseName = wanted.split('/').pop() ?? wanted;
+  return files.find((entry) => (normalizeArchivePath(entry.path).split('/').pop() ?? '') === baseName) ?? null;
+}
+
+/** The Common.szs (or bundled object folder) copy of an archive, matched by file name. */
+export function findCommonArchiveEntry(common: CommonResourceArchive | null | undefined, path: string): U8Entry | null {
+  if (!common) return null;
+  const baseName = normalizeArchivePath(path).split('/').pop() ?? '';
+  const entry = common.byBaseName.get(baseName);
+  return entry?.data ? entry : null;
+}
+
+export interface ResolvedArchiveBytes {
+  /** `'track'` when the track archive has its own copy, `'common'` when only Common.szs does. */
+  source: 'track' | 'common';
+  /** The path inside the track archive (the one it has, or the one a copy would get). */
+  path: string;
+  bytes: Uint8Array;
+}
+
+/**
+ * The bytes the game would load for `path`: the track's own copy when it has one, otherwise the
+ * shared one. That is the same order the game uses — a course archive's `itembox.brres` wins over
+ * the one in Common.szs — and the order the viewport loads object models in.
+ */
+export function resolveArchiveBytes(track: TrackDocument, common: CommonResourceArchive | null | undefined, path: string): ResolvedArchiveBytes | null {
+  const own = findTrackArchiveEntry(track, path);
+  if (own?.data) return { source: 'track', path: own.path, bytes: own.data };
+  const shared = findCommonArchiveEntry(common, path);
+  if (shared?.data) return { source: 'common', path: trackLocalPathFor(track, path), bytes: shared.data };
+  return null;
+}
+
+/** Where a copied object model goes: next to `course_model.brres`, like retail tracks have it. */
+function trackLocalPathFor(track: TrackDocument, path: string): string {
+  const baseName = path.replace(/\\/g, '/').split('/').pop() ?? path;
+  const courseModel = track.archiveEntries.find((entry) => entry.type === 'file' && entry.path.toLowerCase().endsWith('course_model.brres'));
+  const directory = courseModel ? courseModel.path.slice(0, courseModel.path.length - 'course_model.brres'.length) : './';
+  return `${directory}${baseName}`;
+}
+
+export interface TrackLocalArchiveResult {
+  track: TrackDocument;
+  /** The archive path of the track's copy. */
+  path: string;
+  /** False when the track already had its own copy (the document is returned unchanged). */
+  copied: boolean;
+}
+
+/**
+ * Makes sure the track archive carries its own copy of a shared object model, so it can be
+ * edited. Retail tracks ship the object models they use inside the course archive and the game
+ * prefers that copy over Common.szs, so this is the right home for an edit: export keeps a
+ * track-local copy as it is (it only fills in models the track is missing) and the viewport loads
+ * the track's copy first on its next rebuild.
+ *
+ * The copy is byte-identical, so the running scene needs no refresh until something in it
+ * changes; material edits on it then go through `reloadEditorMaterial` as usual.
+ *
+ * Throws when neither the track nor `common` has the file.
+ */
+export function ensureTrackLocalArchive(track: TrackDocument, common: CommonResourceArchive | null | undefined, path: string): TrackLocalArchiveResult {
+  const own = findTrackArchiveEntry(track, path);
+  if (own) return { track, path: own.path, copied: false };
+  const shared = findCommonArchiveEntry(common, path);
+  if (!shared?.data) throw new Error(`Neither the track nor the shared game files have ${path.split('/').pop() ?? path}.`);
+  const localPath = trackLocalPathFor(track, path);
+  const next = replaceArchiveFile(track, localPath, shared.data.slice());
+  const brresFiles = next.brresFiles.some((file) => normalizeArchivePath(file) === normalizeArchivePath(localPath))
+    ? next.brresFiles
+    : [...next.brresFiles, localPath];
+  return { track: { ...next, brresFiles }, path: localPath, copied: true };
+}
+
+export interface AssignDrawOpMaterialRequest {
+  archivePath: string;
+  modelName: string;
+  drawOpIndex: number;
+  materialIndex: number;
+}
+
+export interface AssignDrawOpMaterialResult {
+  track: TrackDocument;
+  /** The archive path that was written (a Common object is copied into the track first). */
+  path: string;
+  /** False when the draw call already used that material. */
+  changed: boolean;
+  /** The track did not have its own copy of the archive; one was made. */
+  copied: boolean;
+  /** Where the draw call is now; differs from the request only when it changed pass. */
+  drawOpIndex: number;
+  moved: boolean;
+  /** `indexMap[old] = new` for every draw call of the model. */
+  indexMap: number[];
+  /** The archive's new bytes, for `reloadEditorMaterial` / a rebuild. */
+  bytes: Uint8Array;
+}
+
+/**
+ * Gives one draw call another material of the same model and writes the result into the track:
+ * copies a Common object model in first if needed, patches the draw op (`setDrawOpMaterialDetailed`)
+ * and, when the op changed pass and the other draw calls' indices shifted, re-keys the Model-mode
+ * edits and duplicates that point into that model.
+ */
+export function assignDrawOpMaterial(
+  track: TrackDocument,
+  common: CommonResourceArchive | null | undefined,
+  request: AssignDrawOpMaterialRequest,
+): AssignDrawOpMaterialResult {
+  const local = ensureTrackLocalArchive(track, common, request.archivePath);
+  const entry = findTrackArchiveEntry(local.track, local.path)!;
+  const result = setDrawOpMaterialDetailed(entry.data!, request.modelName, request.drawOpIndex, request.materialIndex);
+  if (!result.changed) {
+    return { track: local.track, path: local.path, changed: false, copied: local.copied, drawOpIndex: result.drawOpIndex, moved: false, indexMap: result.indexMap, bytes: entry.data! };
+  }
+  let next = replaceArchiveFile(local.track, entry.path, result.bytes);
+  if (result.moved) next = remapDrawOpIndices(next, entry.path, request.modelName, result.indexMap);
+  return {
+    track: next,
+    path: entry.path,
+    changed: true,
+    copied: local.copied,
+    drawOpIndex: result.drawOpIndex,
+    moved: result.moved,
+    indexMap: result.indexMap,
+    bytes: result.bytes,
+  };
+}
+
+/** Re-keys Model-mode edits and duplicates stored by draw-op index after a model's draw lists changed. */
+export function remapDrawOpIndices(track: TrackDocument, archivePath: string, modelName: string, indexMap: readonly number[]): TrackDocument {
+  const archive = normalizeArchivePath(archivePath);
+  const matches = (target: { archivePath: string; modelName: string }) =>
+    normalizeArchivePath(target.archivePath) === archive && target.modelName === modelName;
+  const remap = <T extends { archivePath: string; modelName: string; drawOpIndex: number }>(target: T): T =>
+    matches(target) && indexMap[target.drawOpIndex] !== undefined && indexMap[target.drawOpIndex] !== target.drawOpIndex
+      ? { ...target, drawOpIndex: indexMap[target.drawOpIndex] }
+      : target;
+  const meshEdits = track.meshEdits?.map((edit) => {
+    const target = remap(edit.target);
+    return target === edit.target ? edit : { ...edit, target };
+  });
+  const importedMeshes = track.importedMeshes?.map((mesh) => {
+    if (!mesh.sourceShape) return mesh;
+    const sourceShape = remap(mesh.sourceShape);
+    return sourceShape === mesh.sourceShape ? mesh : { ...mesh, sourceShape };
+  });
+  return { ...track, meshEdits, importedMeshes };
+}
+
+//#endregion
 
 export interface ValidateTrackOptions {
   common?: CommonResourceArchive | null;

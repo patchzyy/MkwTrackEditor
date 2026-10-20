@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KmpEntity, Vec3 } from '../../lib/kmp';
-import { validateTrack, type TrackIssue } from '../../lib/track';
+import { replaceCourseKmp, validateTrack, type TrackIssue } from '../../lib/track';
 import type { EditorModeContext, ModeUi } from '../modes/types';
 import type { CameraPreviewProgress, CameraPreviewRequest, CameraViewportApi } from '../Noclip3DViewport';
 import { CameraInspector } from './CameraInspector';
 import { CameraOutliner } from './CameraOutliner';
-import { CameraPlaybackControls } from './CameraPlaybackControls';
-import type { ChainEditorProps } from './ChainEditor';
+import { CameraTimeline } from './CameraTimeline';
 import {
   NO_CAMERA_LINK,
+  addCameraToChain,
+  createDefaultCameraValues,
   findCameraEntity,
   getCameraChain,
   listCameraRows,
@@ -32,18 +33,21 @@ interface PreviewState {
  * Camera (CAME) mode. Owns everything under `src/ui/camera/`.
  *
  * The renderer side (gizmos, view-point handles, preview playback) lives in the viewport; see
- * `docs/viewport-api.md`. This hook supplies the camera outliner, the two pan-chain editors, the
- * property inspector and the playback HUD, and routes every edit through the history stack.
+ * `docs/viewport-api.md`. This hook supplies the camera outliner, the property inspector and the
+ * timeline dock (the pan sequences, playback and scrubbing), and routes every edit through the
+ * history stack.
  */
 export function useCameraMode(ctx: EditorModeContext): ModeUi {
   const active = ctx.editorMode === 'camera';
-  const { track, selection, editActions, setStatus, commonArchive } = ctx;
+  const { track, selection, editActions, setStatus, commonArchive, history } = ctx;
   const kmp = track?.kmp ?? null;
 
   const viewportApiRef = useRef<CameraViewportApi | null>(null);
   const progressRef = useRef<CameraPreviewProgress | null>(null);
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [looping, setLooping] = useState(false);
+  const [chainKind, setChainKind] = useState<CameraChainKind>('opening');
+  const scrubResumeRef = useRef(false);
   const [introShots, setIntroShots] = useState<IntroCameraShot[]>([
     { points: [], time: 220 }, { points: [], time: 257 }, { points: [], time: 294 },
   ]);
@@ -66,6 +70,12 @@ export function useCameraMode(ctx: EditorModeContext): ModeUi {
   const rows = useMemo(() => listCameraRows(kmp), [kmp]);
   const openingChain = useMemo(() => getCameraChain(kmp, 'opening'), [kmp]);
   const selectionChain = useMemo(() => getCameraChain(kmp, 'selection'), [kmp]);
+  const hasOpeningChain = openingChain.order.length > 0 || openingChain.first !== NO_CAMERA_LINK;
+  const hasSelectionChain = selectionChain.order.length > 0 || selectionChain.first !== NO_CAMERA_LINK;
+  // The switch only exists when both sequences do; otherwise show whichever one there is.
+  const activeKind: CameraChainKind = hasOpeningChain && hasSelectionChain ? chainKind : hasSelectionChain ? 'selection' : 'opening';
+  const activeChain = activeKind === 'opening' ? openingChain : selectionChain;
+  const otherChain = activeKind === 'opening' ? selectionChain : openingChain;
   const routePointCounts = useMemo(() => (kmp?.routes ?? []).map((route) => route.points.length), [kmp]);
   const validation = useMemo(() => (active && track ? validateTrack(track, { common: commonArchive }) : []), [active, track, commonArchive]);
 
@@ -101,14 +111,24 @@ export function useCameraMode(ctx: EditorModeContext): ModeUi {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [active, preview, setStatus]);
 
+  // The viewport walks the chain once when a sequence preview starts, so an edit to the chain
+  // (order or a duration) ends the preview rather than letting it play a stale sequence.
+  const chainSignature = `${activeKind}:${activeChain.steps.map((step) => `${step.cameraIndex}/${step.durationFrames}`).join(',')}`;
+  const previewRef = useRef(preview);
+  previewRef.current = preview;
+  useEffect(() => {
+    if (previewRef.current?.sequence) setPreview(null);
+  }, [chainSignature]);
+
   const previewTotalFrames = useMemo(() => {
     if (!preview) return 0;
-    if (preview.sequence) return openingChain.totalFrames;
+    if (preview.sequence) return activeChain.totalFrames;
     const row = rows.find((candidate) => candidate.index === preview.cameraIndex);
     return row ? (row.timeFrames > 0 ? row.timeFrames : row.animatedFrames) : 0;
-  }, [openingChain.totalFrames, preview, rows]);
+  }, [activeChain.totalFrames, preview, rows]);
 
   function startPreview(cameraIndex: number, options: { sequence?: boolean; time?: number } = {}) {
+    progressRef.current = null;
     setPreview((current) => ({
       cameraIndex,
       playing: true,
@@ -171,33 +191,94 @@ export function useCameraMode(ctx: EditorModeContext): ModeUi {
     );
   }
 
-  function detachFromChain(kind: CameraChainKind, cameraIndex: number) {
-    const chain = kind === 'opening' ? openingChain : selectionChain;
-    const nextOrder = chain.order.filter((index) => index !== cameraIndex);
-    editActions.setCameraChainOrder(kind, nextOrder);
+  /** Play / pause from wherever the playhead is; with nothing playing, starts the sequence. */
+  function togglePlay() {
+    if (preview?.playing) {
+      setPreview((current) => (current ? { ...current, playing: false, time: progressRef.current?.frames ?? current.time } : current));
+    } else if (preview) {
+      setPreview((current) => (current ? { ...current, playing: true, seek: current.seek + 1 } : current));
+    } else if (activeChain.order.length > 0) {
+      startPreview(activeChain.order[0], { sequence: true });
+    } else if (selectedRow) {
+      startPreview(selectedRow.index);
+    }
   }
 
-  function buildChainEditor(kind: CameraChainKind): ChainEditorProps {
-    const chain = kind === 'opening' ? openingChain : selectionChain;
-    return {
-      kind,
-      title: kind === 'opening' ? 'Opening pan' : 'Selection screen pan',
-      description:
-        kind === 'opening'
-          ? 'Plays over the track before the countdown. Drag to change the order.'
-          : 'Plays behind the character-selection screen. Drag to change the order.',
-      chain,
-      rows,
-      selectedId: selection.selectedId,
-      canEdit: kmp !== null,
-      onSelect: selectCameraIndex,
-      onPlay: () => {
-        if (chain.order.length === 0) return;
-        startPreview(chain.order[0], { sequence: true });
-      },
-      onReorder: (order) => editActions.setCameraChainOrder(kind, order),
-      onRemove: (cameraIndex) => detachFromChain(kind, cameraIndex),
+  /**
+   * Plays the sequence from `frames`. The viewport starts every new preview at 0, so the preview
+   * opens paused at the wanted time and a moment later is told to play from there.
+   */
+  function playSequenceFrom(frames: number) {
+    const first = activeChain.order[0];
+    if (first === undefined) return;
+    if (frames <= 0) {
+      startPreview(first, { sequence: true });
+      return;
+    }
+    progressRef.current = null;
+    const time = Math.min(frames, activeChain.totalFrames - 0.5);
+    setPreview((current) => ({ cameraIndex: first, playing: false, time, sequence: true, seek: (current?.seek ?? 0) + 1 }));
+    // The viewport reports progress once it has shown the paused frame; only then is a seek honoured.
+    const waitingSince = performance.now();
+    const resume = () => {
+      if (progressRef.current === null && performance.now() - waitingSince < 1500) {
+        window.setTimeout(resume, 30);
+        return;
+      }
+      setPreview((current) => (current && !current.playing && current.sequence && current.time === time ? { ...current, playing: true, seek: current.seek + 1 } : current));
     };
+    window.setTimeout(resume, 30);
+  }
+
+  /** Scrubbing pauses playback, shows the sequence at the playhead, and resumes on release. */
+  function beginScrub() {
+    scrubResumeRef.current = preview?.playing ?? false;
+    if (preview?.playing) {
+      setPreview((current) => (current ? { ...current, playing: false, time: progressRef.current?.frames ?? current.time } : current));
+    }
+  }
+
+  function scrubTo(frames: number) {
+    const first = activeChain.order[0];
+    if (first === undefined) return;
+    // Right at the end the sequence has finished, which the viewport treats as "stop".
+    const time = Math.max(0, Math.min(frames, activeChain.totalFrames - 0.5));
+    setPreview((current) => ({ cameraIndex: first, playing: false, time, sequence: true, seek: (current?.seek ?? 0) + 1 }));
+  }
+
+  function endScrub() {
+    if (!scrubResumeRef.current) return;
+    scrubResumeRef.current = false;
+    setPreview((current) => (current ? { ...current, playing: true, seek: current.seek + 1 } : current));
+  }
+
+  function changeChainOrder(order: number[], message: string) {
+    editActions.setCameraChainOrder(activeKind, order);
+    setStatus(message);
+  }
+
+  function setShotDuration(cameraIndex: number, frames: number) {
+    editActions.updateCamera(`CAME-${cameraIndex}`, { time: frames }, `Camera ${cameraIndex} now lasts ${(frames / 60).toFixed(1)} s.`);
+  }
+
+  /** Adds a camera where the free camera is and plays it last in the shown sequence: one undo step. */
+  function addShot() {
+    if (!track?.kmp) return;
+    const pose = viewportApiRef.current?.getFreeCameraPose();
+    if (!pose) {
+      setStatus('The viewport is not ready yet.');
+      return;
+    }
+    const viewStart = viewportApiRef.current?.pickCenterPoint() ?? pose.target;
+    try {
+      const values = createDefaultCameraValues({ position: pose.position, rotation: pose.rotation, viewStart, viewEnd: viewStart });
+      const result = addCameraToChain(track.kmp, activeKind, values);
+      if (!result.selectedId) return;
+      history.applyEditorChange(replaceCourseKmp(track, result.bytes), result.selectedId, true, [result.selectedId]);
+      setStatus(`Added ${result.selectedId.replace('CAME-', 'camera ')} to the end of the ${activeKind === 'opening' ? 'opening pan' : 'selection screen pan'}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
   }
 
   const cameraIssues = useMemo<TrackIssue[]>(() => {
@@ -238,8 +319,6 @@ export function useCameraMode(ctx: EditorModeContext): ModeUi {
       <CameraOutliner
         rows={rows}
         selectedId={selection.selectedId}
-        openingChain={buildChainEditor('opening')}
-        selectionChain={selectionChain.order.length > 0 || selectionChain.first !== NO_CAMERA_LINK ? buildChainEditor('selection') : null}
         canEdit={kmp !== null}
         introGenerator={
           <section className="cameraChain cameraIntroGenerator">
@@ -360,47 +439,42 @@ export function useCameraMode(ctx: EditorModeContext): ModeUi {
         }}
       />
     ),
-    topRightOverlay: preview ? (
-      <CameraPlaybackControls
-        cameraIndex={preview.cameraIndex}
-        describeCamera={describeCamera}
-        sequence={preview.sequence}
-        playing={preview.playing}
+    bottomDock: (dock) => (
+      <CameraTimeline
+        dock={dock}
+        chainKind={activeKind}
+        showChainSwitch={hasOpeningChain && hasSelectionChain}
+        onChangeChainKind={(kind) => {
+          if (kind === activeKind) return;
+          setPreview(null);
+          setChainKind(kind);
+        }}
+        chain={activeChain}
+        otherChainOrder={otherChain.order}
+        rows={rows}
+        selectedId={selection.selectedId}
+        canEdit={kmp !== null}
+        preview={preview ? { playing: preview.playing, sequence: preview.sequence, cameraIndex: preview.cameraIndex, time: preview.time } : null}
+        previewTotalFrames={previewTotalFrames}
         looping={looping}
-        time={preview.time}
-        totalFrames={previewTotalFrames}
         progressRef={progressRef}
-        onPlay={() => setPreview((current) => (current ? { ...current, playing: true, seek: current.seek + 1 } : current))}
-        onPause={() =>
-          setPreview((current) => (current ? { ...current, playing: false, time: progressRef.current?.frames ?? current.time } : current))
-        }
+        onSelectCamera={selectCameraIndex}
+        onTogglePlay={togglePlay}
         onStop={() => setPreview(null)}
-        onScrub={(frames) => setPreview((current) => (current ? { ...current, time: frames, seek: current.seek + 1 } : current))}
         onToggleLoop={() => setLooping((value) => !value)}
-        onPlayOpening={() => openingChain.order.length > 0 && startPreview(openingChain.order[0], { sequence: true })}
-        canPlayOpening={openingChain.order.length > 0}
+        onScrubStart={beginScrub}
+        onScrub={scrubTo}
+        onScrubEnd={endScrub}
+        onPreviewFrom={playSequenceFrom}
+        onPreviewCamera={(index) => {
+          const row = rows.find((candidate) => candidate.index === index);
+          if (row) selectCamera(row, false);
+          startPreview(index);
+        }}
+        onSetDuration={setShotDuration}
+        onChangeOrder={changeChainOrder}
+        onAddShot={addShot}
       />
-    ) : (
-      <div className="viewportOverlayPanel cameraPlaybackIdle">
-        <div className="viewportOverlayHeader">
-          <strong>Camera preview</strong>
-        </div>
-        <p className="viewportOverlayDetail">
-          {rows.length === 0
-            ? 'This track has no cameras. Use Add in the camera list to place one where you are looking from.'
-            : selectedRow
-              ? `Ready to play ${describeCamera(selectedRow.index)}.`
-              : 'Pick a camera in the list to preview it.'}
-        </p>
-        <div className="cameraPlaybackButtons">
-          <button type="button" className="button" disabled={!selectedRow} onClick={() => selectedRow && startPreview(selectedRow.index)}>
-            Play camera
-          </button>
-          <button type="button" className="button" disabled={openingChain.order.length === 0} onClick={() => startPreview(openingChain.order[0], { sequence: true })}>
-            Play opening sequence
-          </button>
-        </div>
-      </div>
     ),
   };
 }

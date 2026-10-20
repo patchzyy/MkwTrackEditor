@@ -23,13 +23,13 @@ export function Disclosure({
   const [open, setOpen] = useInspectorDisclosure(id);
   const bodyId = useId();
   return (
-    <section className={`inspectorDisclosure${open ? ' is-open' : ''}`} data-disclosure={id}>
-      <button type="button" className="inspectorDisclosureToggle" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen(!open)}>
-        {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-        <span className="inspectorDisclosureTitle">{title}</span>
-        {hint && !open && <span className="inspectorDisclosureHint">{hint}</span>}
+    <section className={`detailsCategory isDisclosure${open ? ' is-open' : ''}`} data-category={title} data-disclosure={id}>
+      <button type="button" className="detailsCategoryBar" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen(!open)}>
+        {open ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />}
+        <span className="detailsCategoryName">{title}</span>
+        {hint && !open && <span className="detailsCategoryBadge isQuiet">{hint}</span>}
       </button>
-      <div id={bodyId} className="inspectorDisclosureBody" hidden={!open}>
+      <div id={bodyId} className="detailsCategoryBody" hidden={!open}>
         {open && children}
       </div>
     </section>

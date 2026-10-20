@@ -91,9 +91,5 @@ export function CameraSection({
     }
   }
 
-  return (
-    <div className="propertyGrid">
-      <CameraFields entity={entity} cameraCount={referenceCounts.cameras} routeCount={referenceCounts.routes} showPlacement={false} onChange={applyValues} />
-    </div>
-  );
+  return <CameraFields entity={entity} cameraCount={referenceCounts.cameras} routeCount={referenceCounts.routes} showPlacement={false} onChange={applyValues} />;
 }

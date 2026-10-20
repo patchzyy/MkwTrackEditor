@@ -630,6 +630,37 @@ export function reorderChain(order: readonly number[], from: number, to: number)
   return next;
 }
 
+/**
+ * Puts `cameraIndex` into a play order at slot `at` (0 = first). A camera that is already in the
+ * order is moved rather than duplicated, and `at` counts slots among the *other* cameras, so
+ * "drop between the 2nd and 3rd clip" means the same thing whether the clip came from the
+ * sequence or from outside it.
+ */
+export function insertIntoChainOrder(order: readonly number[], cameraIndex: number, at: number): number[] {
+  const rest = order.filter((index) => index !== cameraIndex);
+  const slot = Math.max(0, Math.min(rest.length, Math.round(at)));
+  rest.splice(slot, 0, cameraIndex);
+  return rest;
+}
+
+/** Takes a camera out of a play order; the camera itself stays in the track. */
+export function removeFromChainOrder(order: readonly number[], cameraIndex: number): number[] {
+  return order.filter((index) => index !== cameraIndex);
+}
+
+/**
+ * Appends a new camera and plays it last in the chain, as one edit: the new camera, the previous
+ * last shot's hand-over and (for an empty chain) the CAME header start all land in the same bytes.
+ */
+export function addCameraToChain(document: KmpDocument, kind: CameraChainKind, values: CameraValues): CameraEditResult {
+  const order = getCameraChain(document, kind).order;
+  const added = addCamera(document, values);
+  if (!added.selectedId) return added;
+  const newIndex = Number(added.selectedId.replace('CAME-', ''));
+  const bytes = setChainOrder(parseKmp(added.bytes), kind, [...order, newIndex]);
+  return { bytes, selectedId: added.selectedId };
+}
+
 /** Cameras that can sensibly be added to a chain: the opening pan types. */
 export function isChainableCameraType(type: number): boolean {
   return isOpeningCameraType(type);

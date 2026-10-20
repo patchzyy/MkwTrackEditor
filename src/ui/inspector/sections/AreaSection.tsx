@@ -7,6 +7,7 @@ import { NumberOptionSelect } from '../fields/NumberOptionSelect';
 import { ReferenceSelect } from '../fields/ReferenceSelect';
 import { areaShapeOptions, areaTypeOptions } from '../optionTables';
 import type { InspectorScope } from './scope';
+import { PropertyRow } from '../PropertySheet';
 
 /** What the gravity field inspector needs: every AREA (gate links and chains span AREAs). */
 export interface AreaGravityProps {
@@ -52,8 +53,7 @@ export function AreaSection({
   if (scope === 'advanced' && isGravity) {
     return (
       <div className="propertyGrid">
-        <label>
-          Overlap priority
+        <PropertyRow label="Overlap priority" help="Where gravity fields overlap, the higher number wins; ties keep the field a kart is already in.">
           <input
             aria-label="Overlap priority"
             type="number"
@@ -65,8 +65,7 @@ export function AreaSection({
               if (Number.isFinite(next)) onChangeAreaField('priority', Math.max(0, Math.min(0xff, Math.trunc(next))));
             }}
           />
-          <span>Where gravity fields overlap, the higher number wins; ties keep the field a kart is already in.</span>
-        </label>
+        </PropertyRow>
       </div>
     );
   }
@@ -74,8 +73,7 @@ export function AreaSection({
   if (scope === 'advanced') {
     return (
       <div className="propertyGrid">
-        <label>
-          Overlap priority
+        <PropertyRow label="Overlap priority" help="When two areas overlap, the higher number wins.">
           <input
             aria-label="Overlap priority"
             type="number"
@@ -87,8 +85,7 @@ export function AreaSection({
               if (Number.isFinite(next)) onChangeAreaField('priority', Math.max(0, Math.min(0xff, Math.trunc(next))));
             }}
           />
-          <span>When two areas overlap, the higher number wins.</span>
-        </label>
+        </PropertyRow>
         <label>
           {labels?.setting2Label ?? 'Spare setting'}
           <input

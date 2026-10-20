@@ -1,6 +1,10 @@
+import { Download, Image as ImageIcon, Upload, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { canEncodeTex0Format, maxMipCount } from '../../lib/tex0Codec';
-import { TexturePreview } from './TexturePreview';
+import { Button } from '../components/Button';
+import { InspectorHeader } from '../inspector/InspectorHeader';
+import { DetailsCategory, PropertyRow } from '../inspector/PropertySheet';
+import { LazyTexture } from './MaterialsDock';
 import { listReplacementSizes, type BuildReplacementOptions } from './textureReplace';
 import { formatByteSize, type VisualTextureInfo } from './visualArchive';
 
@@ -12,24 +16,16 @@ export interface TextureInspectorProps {
   /** Resolves with any notes about the replacement (resizes, reduced mips); rejects with a reason. */
   onReplace: (texture: VisualTextureInfo, file: File, options: BuildReplacementOptions) => Promise<string[]>;
   onExport: (texture: VisualTextureInfo) => Promise<void>;
-  /** Jump to a material that samples this texture. */
-  onSelectMaterial: (modelName: string, materialName: string) => void;
+  /** Back to whatever was selected before. */
+  onClose: () => void;
 }
 
 /**
- * One TEX0: a decoded preview, its GX format details, the materials that sample it, and the
- * import/export controls. A replacement is written straight into the archive bytes, so it is
- * bounded by the space the original texture reserved — the size picker says which sizes fit.
+ * One texture: a big preview, its size and format, which materials use it, and the replace and
+ * export buttons. A replacement is written straight into the archive bytes, so it is bounded by
+ * the space the original texture reserved; the size picker says which sizes fit.
  */
-export function TextureInspector({
-  archivePath,
-  archiveBytes,
-  texture,
-  textureRevision,
-  onReplace,
-  onExport,
-  onSelectMaterial,
-}: TextureInspectorProps) {
+export function TextureInspector({ archivePath, archiveBytes, texture, textureRevision, onReplace, onExport, onClose }: TextureInspectorProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [sizeIndex, setSizeIndex] = useState(0);
   const [mipCount, setMipCount] = useState(texture.mipCount);
@@ -71,52 +67,34 @@ export function TextureInspector({
     }
   }
 
+  const users = texture.usedBy.map((user) => {
+    const [modelName, materialName] = user.split('/');
+    return { key: user, modelName, materialName: materialName ?? user };
+  });
+
   return (
     <>
-      <h2>Texture</h2>
-      <div className="visualInspectorHeader">
-        <strong>{texture.name}</strong>
-        <div className="visualTagRow">
-          <span className="visualTag">
-            {texture.width} x {texture.height}
-          </span>
-          <span className="visualTag">{texture.formatLabel}</span>
-          <span className="visualTag">{texture.mipCount} mip level{texture.mipCount === 1 ? '' : 's'}</span>
-          <span className="visualTag">{formatByteSize(texture.byteLength)}</span>
+      <InspectorHeader
+        title={texture.name}
+        typeName={`Texture, ${texture.width} x ${texture.height}`}
+        media={<ImageIcon size={16} aria-hidden="true" />}
+        actions={[{ id: 'close', label: 'Close', icon: <X size={14} />, onClick: onClose }]}
+        sections={[]}
+      />
+
+      <DetailsCategory name="Preview" defaultOpen>
+        <LazyTexture archivePath={archivePath} archiveBytes={archiveBytes} texture={texture} revision={textureRevision} size="large" />
+        <div className="visualButtonRow visualActionRow">
+          <Button size="sm" icon={<Download size={13} />} disabled={busy} onClick={() => void onExport(texture)}>
+            Export as PNG
+          </Button>
         </div>
-      </div>
+      </DetailsCategory>
 
-      <TexturePreview archivePath={archivePath} archiveBytes={archiveBytes} texture={texture} revision={textureRevision} size="large" />
-
-      <div className="propertyGrid">
-        <label>
-          Used by
-          <span>
-            {texture.usedBy.length === 0
-              ? 'No material in this archive samples this texture.'
-              : `${texture.usedBy.length} material${texture.usedBy.length === 1 ? '' : 's'}`}
-          </span>
-        </label>
-      </div>
-      {texture.usedBy.length > 0 && (
-        <div className="visualButtonRow">
-          {texture.usedBy.map((user) => {
-            const [modelName, materialName] = user.split('/');
-            return (
-              <button key={user} type="button" className="visualInlineButton" onClick={() => onSelectMaterial(modelName, materialName)}>
-                {materialName}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      <h2>Replace</h2>
-      {writable ? (
-        <>
-          <div className="propertyGrid">
-            <label>
-              Size
+      <DetailsCategory name="Replace image" defaultOpen>
+        {writable ? (
+          <>
+            <PropertyRow label="Size" help="Larger sizes need more room than this texture reserved and are greyed out.">
               <select value={sizeIndex} onChange={(event) => setSizeIndex(Number(event.currentTarget.value))} disabled={busy}>
                 {sizes.map((option, index) => (
                   <option key={option.label} value={index} disabled={!option.fits}>
@@ -125,9 +103,8 @@ export function TextureInspector({
                   </option>
                 ))}
               </select>
-            </label>
-            <label>
-              Mip levels
+            </PropertyRow>
+            <PropertyRow label="Detail levels" help="Smaller copies of the image the game switches to at a distance. More levels look smoother far away.">
               <input
                 type="number"
                 min={1}
@@ -137,40 +114,59 @@ export function TextureInspector({
                 disabled={busy}
                 onChange={(event) => setMipCount(Math.max(1, Math.min(mipLimit, Number(event.currentTarget.value) || 1)))}
               />
-            </label>
-          </div>
-          <p className="visualNote">
-            The new image is re-encoded to {texture.formatLabel} and written into the space this texture already reserves
-            ({formatByteSize(texture.dataCapacity)}), so it shows in the viewport immediately and exports with the track.
+            </PropertyRow>
+            <div className="visualButtonRow visualActionRow">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                hidden
+                aria-label={`Replace ${texture.name}`}
+                disabled={busy}
+                onChange={(event) => void handleFile(event.currentTarget.files?.[0])}
+              />
+              <Button size="sm" variant="primary" icon={<Upload size={13} />} disabled={busy} onClick={() => fileInputRef.current?.click()}>
+                {busy ? 'Working...' : 'Choose an image'}
+              </Button>
+            </div>
+            <p className="visualRowNote">
+              Saved in {texture.formatLabel}, in the {formatByteSize(texture.dataCapacity)} this texture already uses. It shows in the viewport straight away.
+            </p>
+          </>
+        ) : (
+          <p className="visualRowNote">{texture.formatLabel} textures can be viewed and exported but not replaced yet.</p>
+        )}
+        {error && <p className="visualNote error visualRowNote">{error}</p>}
+        {notes.map((note) => (
+          <p key={note} className="visualRowNote">
+            {note}
           </p>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            aria-label={`Replace ${texture.name}`}
-            disabled={busy}
-            onChange={(event) => void handleFile(event.currentTarget.files?.[0])}
-          />
-        </>
-      ) : (
-        <p className="visualNote warning">
-          {texture.formatLabel} textures can be read but not written by this editor yet, so this one cannot be replaced.
-        </p>
-      )}
+        ))}
+      </DetailsCategory>
 
-      {busy && <p className="visualNote">Encoding...</p>}
-      {error && <p className="visualNote error">{error}</p>}
-      {notes.map((note) => (
-        <p key={note} className="visualNote">
-          {note}
-        </p>
-      ))}
+      <DetailsCategory name="Used by" badge={users.length} defaultOpen={users.length <= 6}>
+        {users.length === 0 ? (
+          <p className="visualRowNote">No material in this file uses this texture.</p>
+        ) : (
+          users.map((user) => (
+            <PropertyRow key={user.key} label={user.materialName} help={`In ${user.modelName}`}>
+              <span className="visualMuted">{user.modelName}</span>
+            </PropertyRow>
+          ))
+        )}
+      </DetailsCategory>
 
-      <div className="visualButtonRow">
-        <button type="button" className="visualInlineButton" disabled={busy} onClick={() => void onExport(texture)}>
-          Export as PNG
-        </button>
-      </div>
+      <DetailsCategory name="Advanced" defaultOpen={false}>
+        <PropertyRow label="Format">
+          <span className="visualMuted">{texture.formatLabel}</span>
+        </PropertyRow>
+        <PropertyRow label="Size in file">
+          <span className="visualMuted">{formatByteSize(texture.byteLength)}</span>
+        </PropertyRow>
+        <PropertyRow label="Detail levels">
+          <span className="visualMuted">{texture.mipCount}</span>
+        </PropertyRow>
+      </DetailsCategory>
     </>
   );
 }

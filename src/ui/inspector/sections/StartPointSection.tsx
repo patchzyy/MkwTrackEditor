@@ -1,4 +1,5 @@
 import type { KmpEntity } from '../../../lib/kmp';
+import { PropertyRow } from '../PropertySheet';
 
 /**
  * Start points (KTPT). The only field beyond position and rotation is the player index, which
@@ -15,11 +16,16 @@ export function StartPointSection({
   const playerIndex = entity.ktptPlayerIndex;
   return (
     <div className="propertyGrid">
-      <label>
-        Used by
+      <PropertyRow
+        label="Used by"
+        help={
+          playerIndex < 0
+            ? 'The grid spreads every driver out from this point. This is what a race track wants.'
+            : `Only player ${playerIndex + 1} starts here. Battle arenas use this; a race track normally should not.`
+        }
+      >
         <select
           aria-label="Player this start point is for"
-          title="Races leave this on 'Any driver'. Battle arenas give each player their own start point."
           value={String(playerIndex < 0 ? -1 : playerIndex)}
           onChange={(event) => onChangePlayerIndex(Number(event.currentTarget.value))}
         >
@@ -30,12 +36,7 @@ export function StartPointSection({
             </option>
           ))}
         </select>
-        <span>
-          {playerIndex < 0
-            ? 'The grid spreads every driver out from this point. This is what a race track wants.'
-            : `Only player ${playerIndex + 1} starts here. Battle arenas use this; a race track normally should not.`}
-        </span>
-      </label>
+      </PropertyRow>
     </div>
   );
 }

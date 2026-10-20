@@ -1,5 +1,6 @@
 import type { GxMaterialDoc } from '../../../lib/gxMaterial';
-import { ColorField, Field, FieldGroup, PanelSection } from '../../components';
+import { ColorField, Field, FieldGroup } from '../../components';
+import { DetailsCategory } from '../../inspector/PropertySheet';
 import type { EditorGraphNode } from '../graphModel';
 import { channelName, colorRegisterName, konstColorName } from '../gxOptions';
 import { colorToRgb255, registerToRgb255, rgb255ToColor, rgb255ToRegister, setColorRegister, setKonstColor } from '../materialDoc';
@@ -22,7 +23,7 @@ export function NodeMaterialField({ node, doc, onChange }: { node: EditorGraphNo
     if (!value) return null;
     const readers = usedKonstColors(doc.tevStages).find((entry) => entry.slot === slot)?.stages ?? [];
     return (
-      <PanelSection title="Colour">
+      <DetailsCategory name="Colour">
         <FieldGroup>
           <Field
             label={konstColorName(slot)}
@@ -38,7 +39,7 @@ export function NodeMaterialField({ node, doc, onChange }: { node: EditorGraphNo
             />
           </Field>
         </FieldGroup>
-      </PanelSection>
+      </DetailsCategory>
     );
   }
 
@@ -48,7 +49,7 @@ export function NodeMaterialField({ node, doc, onChange }: { node: EditorGraphNo
     if (!value) return null;
     const readers = usedColorRegisters(doc.tevStages).find((entry) => entry.slot === slot)?.stages ?? [];
     return (
-      <PanelSection title="Start colour">
+      <DetailsCategory name="Start colour">
         <FieldGroup>
           <Field
             label={colorRegisterName(slot)}
@@ -68,7 +69,7 @@ export function NodeMaterialField({ node, doc, onChange }: { node: EditorGraphNo
             />
           </Field>
         </FieldGroup>
-      </PanelSection>
+      </DetailsCategory>
     );
   }
 
@@ -77,19 +78,19 @@ export function NodeMaterialField({ node, doc, onChange }: { node: EditorGraphNo
     // black sources have no simple view, so they get a sentence pointing at where they live.
     if (node.channel === 0) {
       return (
-        <PanelSection title="Lighting">
+        <DetailsCategory name="Lighting">
           <ShadingSection doc={doc} onChange={onChange} />
-        </PanelSection>
+        </DetailsCategory>
       );
     }
     return (
-      <PanelSection title="Source">
+      <DetailsCategory name="Source">
         <p className="detailsNote">
           {node.channel === 1
             ? `${channelName(1)} is the material's second lighting channel. Its settings are under Lighting › Lighting channels on the material.`
             : `${channelName(node.channel)}: this input comes from the rasteriser, not from a value the material stores.`}
         </p>
-      </PanelSection>
+      </DetailsCategory>
     );
   }
 

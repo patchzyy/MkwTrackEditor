@@ -3,6 +3,7 @@ import type { ReferenceCounts } from '../../../lib/kmpEdit';
 import { ReferenceSelect } from '../fields/ReferenceSelect';
 import { VectorInputs } from '../fields/VectorInputs';
 import type { InspectorScope } from './scope';
+import { PropertyRow } from '../PropertySheet';
 
 /**
  * Checkpoints. The essentials are the two ends of the line and the respawn a driver who falls
@@ -53,8 +54,7 @@ export function CheckpointSection({
 
   return (
     <div className="propertyGrid">
-      <label>
-        Checkpoint type byte
+      <PropertyRow label="Checkpoint type byte" help="255 is an ordinary checkpoint, 0 is the finish line, 1 and up are key checkpoints.">
         <input
           aria-label="Checkpoint type byte"
           type="number"
@@ -66,8 +66,7 @@ export function CheckpointSection({
             if (Number.isFinite(next)) onChangeCheckpointField('type', Math.max(0, Math.min(0xff, Math.trunc(next))));
           }}
         />
-        <span>255 is an ordinary checkpoint, 0 is the finish line, 1 and up are key checkpoints.</span>
-      </label>
+      </PropertyRow>
       <label>
         Previous checkpoint
         <ReferenceSelect label="Previous checkpoint" value={checkpoint.prev} noneValue={0xff} count={referenceCounts.checkpoints} optionLabel="Checkpoint" onChange={(next) => onChangeCheckpointField('prev', next)} />

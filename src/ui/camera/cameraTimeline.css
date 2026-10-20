@@ -1,0 +1,527 @@
+/*
+ * Camera timeline (the Camera-mode bottom dock). Imported by `CameraTimeline.tsx`.
+ * The dock itself reuses the content browser's shell classes (`.contentBrowser`, its resize
+ * handle, `.collapsed`), so size and collapse behave identically; everything else is `camera*`.
+ */
+
+.cameraTimelineDock {
+  --timeline-ruler-height: 22px;
+  --timeline-lane-height: 58px;
+  user-select: none;
+}
+
+.cameraTimelineDock.collapsed .cameraTimelineBody {
+  display: none;
+}
+
+/* --- Header ---------------------------------------------------------------- */
+
+.cameraTimelineHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  height: var(--panel-header-height);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.cameraTimelineIcon {
+  flex: none;
+  color: var(--text-dim);
+}
+
+.cameraTimelineTitle {
+  flex: none;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.cameraTimelineSwitch {
+  display: inline-flex;
+  flex: none;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-0);
+}
+
+.cameraTimelineSwitch button {
+  height: 18px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.cameraTimelineSwitch button:hover {
+  color: var(--text);
+}
+
+.cameraTimelineSwitch button.isActive {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.cameraTimelineTransport {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--border);
+}
+
+.cameraTimelinePlay {
+  color: var(--accent-text);
+}
+
+.cameraTimelineClock {
+  flex: none;
+  min-width: 150px;
+  padding: 0 var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cameraTimelineHeaderEnd {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+/* --- Body ------------------------------------------------------------------ */
+
+.cameraTimelineBody {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  outline: none;
+}
+
+.cameraTimelineScroll {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: calc(var(--timeline-ruler-height) + var(--timeline-lane-height));
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: var(--surface-0);
+}
+
+.cameraTimelineScroll::-webkit-scrollbar {
+  height: 8px;
+}
+
+.cameraTimelineContent {
+  position: relative;
+  min-width: 100%;
+  height: 100%;
+  min-height: calc(var(--timeline-ruler-height) + var(--timeline-lane-height));
+}
+
+/* --- Ruler ----------------------------------------------------------------- */
+
+.cameraRuler {
+  position: relative;
+  height: var(--timeline-ruler-height);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  cursor: col-resize;
+}
+
+.cameraRulerTick {
+  position: absolute;
+  bottom: 0;
+  width: 1px;
+  height: 5px;
+  background: var(--border-strong);
+}
+
+.cameraRulerTick.isMajor {
+  height: 100%;
+}
+
+.cameraRulerLabel {
+  position: absolute;
+  top: 3px;
+  left: 5px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* --- Lane and clips -------------------------------------------------------- */
+
+.cameraLane {
+  position: relative;
+  height: calc(100% - var(--timeline-ruler-height));
+  min-height: var(--timeline-lane-height);
+  background:
+    repeating-linear-gradient(90deg, transparent 0 59px, rgb(255 255 255 / 2.5%) 59px 60px),
+    var(--surface-0);
+}
+
+.cameraLaneClips {
+  position: absolute;
+  top: var(--space-3);
+  right: 0;
+  height: 54px;
+  pointer-events: none;
+}
+
+.cameraLaneEnd {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-strong);
+  pointer-events: none;
+}
+
+.cameraLaneEmpty {
+  position: absolute;
+  top: 50%;
+  left: var(--space-5);
+  right: var(--space-5);
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.cameraClip {
+  --clip-color: #8a94a6;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 0 var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--clip-color) 38%, var(--border));
+  border-top: 3px solid var(--clip-color);
+  border-radius: var(--radius-md);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--clip-color) 22%, var(--surface-3)),
+    color-mix(in srgb, var(--clip-color) 12%, var(--surface-2))
+  );
+  box-shadow: var(--shadow-1);
+  color: var(--text);
+  overflow: hidden;
+  pointer-events: auto;
+  cursor: grab;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+
+.cameraClip:hover {
+  border-color: color-mix(in srgb, var(--clip-color) 70%, var(--border));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--clip-color) 30%, var(--surface-3)),
+    color-mix(in srgb, var(--clip-color) 18%, var(--surface-2))
+  );
+}
+
+.cameraClip:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.cameraClip.isSelected {
+  border-color: var(--accent);
+  border-top-color: var(--clip-color);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--clip-color) 38%, var(--surface-4)),
+    color-mix(in srgb, var(--clip-color) 24%, var(--surface-3))
+  );
+  box-shadow:
+    0 0 0 1px var(--accent),
+    var(--shadow-1);
+}
+
+.cameraClip.hasWarning:not(.isSelected) {
+  border-color: var(--warning-border);
+}
+
+.cameraClip.isDragging {
+  opacity: 0.35;
+}
+
+.cameraClipTop,
+.cameraClipBottom {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.cameraClipName {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cameraClipTime {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.cameraClipType {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cameraClipWarn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-pill);
+  background: var(--warning-soft);
+  color: var(--warning);
+  cursor: help;
+}
+
+.cameraClipRemove {
+  display: none;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.cameraClip:hover .cameraClipRemove,
+.cameraClip.isSelected .cameraClipRemove,
+.cameraClipRemove:focus-visible {
+  display: inline-flex;
+}
+
+.cameraClipRemove:hover {
+  background: var(--danger-soft-strong);
+  color: var(--danger-text);
+}
+
+/* Right edge: drag to change the shot's duration. */
+.cameraClipHandle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.cameraClipHandle::after {
+  content: '';
+  position: absolute;
+  top: 30%;
+  bottom: 30%;
+  right: 2px;
+  width: 2px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text) 25%, transparent);
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.cameraClipHandle:hover::after {
+  background: var(--accent);
+}
+
+.cameraClipPlaceholder {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border: 1px dashed var(--accent-border);
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+}
+
+.cameraClipGhost {
+  position: fixed;
+  top: auto;
+  bottom: auto;
+  z-index: 60;
+  height: 46px;
+  opacity: 0.92;
+  box-shadow: var(--shadow-3);
+  cursor: grabbing;
+  pointer-events: none;
+}
+
+.cameraClipGhost.isLoose {
+  opacity: 0.55;
+}
+
+.cameraClipGhost.isDetaching {
+  border-color: var(--danger-border);
+}
+
+/* --- Playhead -------------------------------------------------------------- */
+
+.cameraPlayhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 5;
+  width: 0;
+  border-left: 1px solid var(--accent-strong);
+  pointer-events: none;
+}
+
+.cameraPlayheadHead {
+  position: absolute;
+  top: 0;
+  left: -6px;
+  width: 11px;
+  height: 12px;
+  background: var(--accent-strong);
+  clip-path: polygon(0 0, 100% 0, 100% 55%, 50% 100%, 0 55%);
+}
+
+.cameraPlayhead.isScrubbing {
+  border-left-color: var(--accent-text);
+}
+
+/* --- Other cameras --------------------------------------------------------- */
+
+.cameraOthers {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 32px;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border);
+  background: var(--surface-1);
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.cameraOthers.isDropTarget {
+  background: var(--danger-soft);
+}
+
+.cameraOthersLabel {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: help;
+}
+
+.cameraOthersChips {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.cameraOthersChips::-webkit-scrollbar {
+  display: none;
+}
+
+.cameraOthersEmpty {
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+}
+
+.cameraChip {
+  --clip-color: #8a94a6;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  height: 22px;
+  padding: 0 var(--space-3) 0 var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: grab;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+
+.cameraChip:hover {
+  border-color: color-mix(in srgb, var(--clip-color) 65%, var(--border-strong));
+  background: var(--surface-4);
+}
+
+.cameraChip:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.cameraChip.isSelected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.cameraChip.isDragging {
+  opacity: 0.4;
+}
+
+.cameraChipDot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--clip-color);
+}
+
+.cameraChipName {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.cameraChipType {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+body.cameraTimelineDragging,
+body.cameraTimelineDragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}

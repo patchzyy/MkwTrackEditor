@@ -10,8 +10,20 @@ import type { VisualTextureInfo } from './visualArchive';
 const previewCache = new Map<string, string | null>();
 const previewPending = new Map<string, Promise<string | null>>();
 
-function cacheKey(archivePath: string, texture: VisualTextureInfo, revision: number): string {
-  return `${archivePath}|${texture.name}|${texture.dataOffset}|${texture.format}|${texture.width}x${texture.height}|${revision}`;
+/** A stable number per archive byte array, so a decode of one set of bytes is never reused for another. */
+const bytesIds = new WeakMap<Uint8Array, number>();
+let nextBytesId = 1;
+function bytesId(bytes: Uint8Array): number {
+  let id = bytesIds.get(bytes);
+  if (id === undefined) {
+    id = nextBytesId++;
+    bytesIds.set(bytes, id);
+  }
+  return id;
+}
+
+function cacheKey(archivePath: string, archiveBytes: Uint8Array, texture: VisualTextureInfo, revision: number): string {
+  return `${archivePath}|${bytesId(archiveBytes)}|${texture.name}|${texture.dataOffset}|${texture.format}|${texture.width}x${texture.height}|${revision}`;
 }
 
 async function loadPreview(
@@ -20,7 +32,7 @@ async function loadPreview(
   texture: VisualTextureInfo,
   revision: number,
 ): Promise<string | null> {
-  const key = cacheKey(archivePath, texture, revision);
+  const key = cacheKey(archivePath, archiveBytes, texture, revision);
   const cached = previewCache.get(key);
   if (cached !== undefined) return cached;
   const inFlight = previewPending.get(key);
@@ -32,6 +44,8 @@ async function loadPreview(
     const image = await decodeTextureImage({ ...texture, data }, 0);
     const url = image ? textureImageToDataUrl(image) : null;
     previewCache.set(key, url);
+    // Every edit of an archive makes new keys, so keep only the newest decodes.
+    if (previewCache.size > 800) previewCache.delete(previewCache.keys().next().value as string);
     previewPending.delete(key);
     return url;
   })();

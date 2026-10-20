@@ -178,7 +178,7 @@ describe('Fix all track issues', () => {
     expect(trackRef.current).toBe(repaired);
     expect(setStatus).toHaveBeenLastCalledWith(expect.stringContaining('Repaired 0 issues.'));
     const markup = renderToStaticMarkup(createElement(KmpInspector, { ...inspector, issues: remaining }));
-    expect(markup).toContain('disabled="">Fix all repairable issues</button>');
+    expect(markup).toMatch(/disabled=""[^>]*>Fix all repairable issues<\/button>/);
   });
 
   it('leaves checkpoints unresolved when no respawn exists', () => {

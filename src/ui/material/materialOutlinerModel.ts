@@ -1,42 +1,98 @@
 // The archive → model → material tree Material mode's left panel shows, plus its search filter.
 // Pure and unit tested; `MaterialOutliner.tsx` only renders what this returns.
 import type { GxArchiveMaterials, GxMaterialRef, GxMaterialSummary } from '../../lib/gxMaterial';
+import { normalizeArchivePath } from '../../lib/brres/bakeCourseModel';
 import type { TrackDocument } from '../../lib/track';
 
 export type MaterialArchiveRole = 'course' | 'skybox' | 'minimap' | 'object';
+
+/** The left panel's top-level folders. */
+export type MaterialGroupId = 'course' | 'sky' | 'objects' | 'other';
+
+export const MATERIAL_GROUPS: ReadonlyArray<{ id: MaterialGroupId; label: string }> = [
+  { id: 'course', label: 'Course' },
+  { id: 'sky', label: 'Sky' },
+  { id: 'objects', label: 'Objects' },
+  { id: 'other', label: 'Other' },
+];
 
 export interface MaterialArchiveEntry {
   path: string;
   label: string;
   role: MaterialArchiveRole;
+  group: MaterialGroupId;
+  /** `'common'`: the model comes from the game's shared files and the track has no copy yet. */
+  source: 'track' | 'common';
+}
+
+/** A model the viewport can show that the track archive does not carry (a Common.szs object). */
+export interface ExtraMaterialArchive {
+  path: string;
+  label: string;
+}
+
+export function groupForRole(role: MaterialArchiveRole): MaterialGroupId {
+  return role === 'course' ? 'course' : role === 'skybox' ? 'sky' : role === 'object' ? 'objects' : 'other';
 }
 
 /**
  * Every `.brres` in the track, course model first, then the skybox, the minimap, and the object
  * models alphabetically — the order an author thinks about them in.
  */
-export function listMaterialArchives(track: TrackDocument | null): MaterialArchiveEntry[] {
+export function listMaterialArchives(
+  track: TrackDocument | null,
+  extras: readonly ExtraMaterialArchive[] = [],
+  /** Friendly names for object models, keyed by normalized path (`itembox.brres` -> "Item Box"). */
+  labels: ReadonlyMap<string, string> = new Map(),
+): MaterialArchiveEntry[] {
   if (!track) return [];
   const rank: Record<MaterialArchiveRole, number> = { course: 0, skybox: 1, minimap: 2, object: 3 };
-  return track.archiveEntries
+  const entries = track.archiveEntries
     .filter((entry) => entry.type === 'file' && entry.path.toLowerCase().endsWith('.brres'))
-    .map((entry) => describeMaterialArchive(entry.path))
-    .sort((a, b) => rank[a.role] - rank[b.role] || a.path.localeCompare(b.path));
+    .map((entry) => {
+      const described = describeMaterialArchive(entry.path);
+      const friendly = labels.get(normalizeArchivePath(entry.path));
+      return friendly && described.role === 'object' ? { ...described, label: friendly } : described;
+    });
+  const have = new Set(entries.map((entry) => baseNameOf(entry.path)));
+  for (const extra of extras) {
+    if (have.has(baseNameOf(extra.path))) continue;
+    have.add(baseNameOf(extra.path));
+    entries.push({ ...describeMaterialArchive(extra.path), label: extra.label, source: 'common' });
+  }
+  return entries.sort((a, b) => rank[a.role] - rank[b.role] || a.label.localeCompare(b.label) || a.path.localeCompare(b.path));
+}
+
+function baseNameOf(path: string): string {
+  return normalizeArchivePath(path).split('/').pop() ?? '';
 }
 
 export function describeMaterialArchive(path: string): MaterialArchiveEntry {
   const base = path.split('/').pop() ?? path;
   const lower = base.toLowerCase();
-  if (lower === 'course_model.brres') return { path, label: 'Track model', role: 'course' };
-  if (lower === 'vrcorn_model.brres') return { path, label: 'Skybox', role: 'skybox' };
-  if (lower === 'map_model.brres') return { path, label: 'Minimap', role: 'minimap' };
-  return { path, label: base.replace(/\.brres$/i, ''), role: 'object' };
+  const make = (label: string, role: MaterialArchiveRole): MaterialArchiveEntry => ({
+    path,
+    label,
+    role,
+    group: groupForRole(role),
+    source: 'track',
+  });
+  if (lower === 'course_model.brres') return make('Track model', 'course');
+  if (lower === 'vrcorn_model.brres') return make('Skybox', 'skybox');
+  if (lower === 'map_model.brres') return make('Minimap', 'minimap');
+  return make(base.replace(/\.brres$/i, ''), 'object');
+}
+
+/** The key archives are remembered under, whichever way the path was written. */
+export function archiveKey(path: string): string {
+  return normalizeArchivePath(path);
 }
 
 export function findArchiveBytes(track: TrackDocument | null, path: string): Uint8Array | null {
   if (!track) return null;
+  const wanted = archiveKey(path);
   const entry = track.archiveEntries.find(
-    (candidate) => candidate.type === 'file' && candidate.path.toLowerCase() === path.toLowerCase(),
+    (candidate) => candidate.type === 'file' && archiveKey(candidate.path) === wanted,
   );
   return entry?.data ?? null;
 }
@@ -67,6 +123,8 @@ export interface MaterialTreeArchive {
   path: string;
   label: string;
   role: MaterialArchiveRole;
+  group: MaterialGroupId;
+  source: 'track' | 'common';
   models: MaterialTreeModel[];
   /** Total materials under this archive, after filtering. */
   materialCount: number;
@@ -94,7 +152,7 @@ export function buildMaterialTree(
 ): MaterialTreeArchive[] {
   const needle = query.trim().toLowerCase();
   return entries.map((entry) => {
-    const archive = archives.get(entry.path);
+    const archive = archives.get(entry.path) ?? archives.get(archiveKey(entry.path));
     const models: MaterialTreeModel[] = (archive?.models ?? []).map((model) => ({
       kind: 'model',
       id: `${entry.path}|${model.modelName}`,
@@ -110,6 +168,8 @@ export function buildMaterialTree(
       path: entry.path,
       label: entry.label,
       role: entry.role,
+      group: entry.group,
+      source: entry.source,
       models: needle ? visible : models,
       materialCount: models.reduce((sum, model) => sum + model.materials.length, 0),
       loaded: archive !== undefined,

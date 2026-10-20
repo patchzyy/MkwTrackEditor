@@ -1,85 +1,49 @@
-import {
-  matchesVisualPreset,
-  visualPresets,
-  type VisualRenderSettings,
-  type VisualSceneCapabilities,
-} from './visualScene';
+import { matchesVisualPreset, visualPresets, type VisualRenderSettings } from './visualScene';
 
 export interface VisualRenderOverlayProps {
   settings: VisualRenderSettings;
   onChange: (patch: Partial<VisualRenderSettings>) => void;
-  /** What this particular track can drive; a track with no `posteffect.bblm` has no bloom. */
-  capabilities: VisualSceneCapabilities | null;
   hasScene: boolean;
 }
 
-interface ToggleSpec {
-  key: keyof VisualRenderSettings;
-  label: string;
-  title: string;
-  /** Set when the toggle depends on a track resource that may be missing. */
-  capability?: keyof VisualSceneCapabilities;
-}
-
-const toggles: ToggleSpec[] = [
-  { key: 'textures', label: 'Textures', title: 'Draw materials with their textures instead of flat colours' },
-  { key: 'vertexColors', label: 'Vertex colours', title: 'Use the baked per-vertex colours' },
-  { key: 'lighting', label: 'Lighting', title: 'Light the course with posteffect.blight', capability: 'lighting' },
-  { key: 'fog', label: 'Fog', title: 'Draw the course fog from posteffect.bfg', capability: 'fog' },
-  { key: 'bloom', label: 'Bloom', title: 'Draw the bloom pass from posteffect.bblm', capability: 'bloom' },
-  { key: 'depthOfField', label: 'Depth of field', title: 'Draw the depth-of-field pass from posteffect.bdof', capability: 'dof' },
-  { key: 'skybox', label: 'Skybox', title: 'Show vrcorn_model.brres' },
-  { key: 'objects', label: 'Objects', title: 'Show the models spawned from the KMP object list' },
-  { key: 'wireframe', label: 'Wireframe', title: 'Draw the course as wireframe', capability: 'wireframe' },
-];
-
 /**
- * Viewport top-right HUD for Visual mode: the three look presets and the individual render
- * toggles behind them, so an author can isolate exactly what they are looking at.
+ * The small "how am I looking at it" switch in the viewport corner: the game look, flat
+ * textures, or wireframe, plus the two toggles people actually reach for. Everything about the
+ * track's own mood (fog, glow, lighting) lives in the Environment panel, not here, and none of
+ * this is written to the track.
  */
-export function VisualRenderOverlay({ settings, onChange, capabilities, hasScene }: VisualRenderOverlayProps) {
+export function VisualRenderOverlay({ settings, onChange, hasScene }: VisualRenderOverlayProps) {
   return (
-    <div className="viewportOverlayPanel visualOverlayPanel">
-      <div className="viewportOverlayHeader">
-        <strong>Look</strong>
-      </div>
-      <div className="visualPresetRow">
-        {visualPresets.map((preset) => (
-          <button
-            key={preset.id}
-            type="button"
-            className={matchesVisualPreset(settings, preset) ? 'visualInlineButton active' : 'visualInlineButton'}
-            title={preset.hint}
-            disabled={!hasScene}
-            onClick={() => onChange(preset.settings)}
-          >
-            {preset.label}
-          </button>
-        ))}
-      </div>
-      <div className="visualOverlayDivider" />
-      <div className="visualOverlayToggles">
-        {toggles.map((toggle) => {
-          const available = !toggle.capability || capabilities === null || capabilities[toggle.capability];
-          const disabled = !hasScene || !available;
+    <div className="viewportOverlayPanel visualOverlayPanel" role="group" aria-label="Preview">
+      <div className="visualPresetRow" role="radiogroup" aria-label="Preview style">
+        {visualPresets.map((preset) => {
+          const active = matchesVisualPreset(settings, preset);
           return (
-            <label
-              key={toggle.key}
-              className={disabled ? 'visualToggle disabled' : 'visualToggle'}
-              title={available ? toggle.title : `${toggle.title} — this track has no such resource.`}
+            <button
+              key={preset.id}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              className={active ? 'visualInlineButton active' : 'visualInlineButton'}
+              title={preset.hint}
+              disabled={!hasScene}
+              onClick={() => onChange(preset.settings)}
             >
-              <input
-                type="checkbox"
-                checked={Boolean(settings[toggle.key])}
-                disabled={disabled}
-                onChange={(event) => onChange({ [toggle.key]: event.currentTarget.checked } as Partial<VisualRenderSettings>)}
-              />
-              {toggle.label}
-            </label>
+              {preset.label}
+            </button>
           );
         })}
       </div>
-      <p className="viewportOverlayHint">These toggles only change the preview. Nothing here is written to the track.</p>
+      <div className="visualOverlayToggles">
+        <label className={hasScene ? 'visualToggle' : 'visualToggle disabled'} title="Draw materials with their textures instead of flat colours">
+          <input type="checkbox" checked={settings.textures} disabled={!hasScene} onChange={(event) => onChange({ textures: event.currentTarget.checked })} />
+          Textures
+        </label>
+        <label className={hasScene ? 'visualToggle' : 'visualToggle disabled'} title="Use the colours painted into the track's vertices">
+          <input type="checkbox" checked={settings.vertexColors} disabled={!hasScene} onChange={(event) => onChange({ vertexColors: event.currentTarget.checked })} />
+          Painted colours
+        </label>
+      </div>
     </div>
   );
 }

@@ -310,6 +310,34 @@ export function fitView(bounds: Rect | null, width: number, height: number, marg
   };
 }
 
+/** Below this, node text is too small to read, so opening a material never frames tighter than this. */
+export const READABLE_ZOOM = 0.65;
+
+/**
+ * Like {@link fitView}, but never below `minZoom`. When the whole graph would have to shrink past
+ * that to fit, the view stays at `minZoom` and is centred on `focus` (the output node) instead, so
+ * what the material ends in is readable and the rest is a pan away.
+ */
+export function fitViewReadable(
+  bounds: Rect | null,
+  focus: Rect | null,
+  width: number,
+  height: number,
+  margin = 40,
+  maxZoom = MAX_ZOOM,
+  minZoom = READABLE_ZOOM,
+): Viewport {
+  const fit = fitView(bounds, width, height, margin, maxZoom);
+  if (fit.zoom >= minZoom || !bounds) return fit;
+  const target = focus ?? bounds;
+  const zoom = clampZoom(minZoom);
+  return {
+    zoom,
+    panX: target.x + target.width / 2 - width / (2 * zoom),
+    panY: target.y + target.height / 2 - height / (2 * zoom),
+  };
+}
+
 export function toGraphPoint(view: Viewport, screenX: number, screenY: number): { x: number; y: number } {
   return { x: view.panX + screenX / view.zoom, y: view.panY + screenY / view.zoom };
 }

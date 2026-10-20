@@ -23,6 +23,8 @@ import {
 import { buildU8 } from '../lib/u8';
 import type { CreateCameraApi, CreateFrameOptions, CreateHit, CreatePointerEvent, CreatePointerResult, CreateRay, CreateViewProps } from '../lib/create/types';
 import { CreateTopViewController } from './viewport/createTopView';
+import { toSurfacePick } from './viewport/surfacePicking';
+import { sameSurface, toRendererHighlightRequests, type SurfacePick, type SurfacePickingOptions, type SurfaceRendererScene } from '../lib/surfacePick';
 import {
   CREATE_RENDER_SCALE,
   computeFrameView,
@@ -185,6 +187,13 @@ interface Noclip3DViewportProps {
    * animation methods through it; see `src/ui/visual/visualScene.ts`.
    */
   onVisualSceneChange?: (scene: VisualRendererScene | null) => void;
+  /**
+   * Click-a-surface picking for any mode (Visual, Material, ...): a left click without drag picks
+   * the course model, an object preview (item box, tree) or a placed model under the cursor and
+   * reports its draw call and material; `highlight` outlines surfaces or every use of a material.
+   * Ignored in Model mode, which has its own mesh picking. See docs/SURFACE-PICKING.md.
+   */
+  surfacePicking?: SurfacePickingOptions | null;
   /**
    * "Refresh track": bump this number to build the scene again from the track document as it is
    * right now, without changing which track is loaded.
@@ -869,6 +878,7 @@ export function Noclip3DViewport({
   onTransformMesh,
   onChangeMeshGranularity,
   onVisualSceneChange,
+  surfacePicking: surfacePickingProp = null,
   sceneRevision = 0,
   loadProgress = null,
   onSceneReload,
@@ -926,6 +936,9 @@ export function Noclip3DViewport({
   const [devCreateView, setDevCreateView] = useState<CreateViewProps | null>(null);
   const createView: CreateViewProps | null = (import.meta.env.DEV ? devCreateView : null) ?? createViewProp;
   const mode: EditorMode = import.meta.env.DEV && devCreateView ? 'create' : modeProp;
+  // Dev hook: `window.__mkwViewport.surface.inject(options)` turns surface picking on without a mode.
+  const [devSurfacePicking, setDevSurfacePicking] = useState<SurfacePickingOptions | null>(null);
+  const surfacePicking: SurfacePickingOptions | null = (import.meta.env.DEV ? devSurfacePicking : null) ?? surfacePickingProp;
   const viewportRef = useRef<HTMLElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const uiContainerRef = useRef<HTMLDivElement | null>(null);
@@ -1055,6 +1068,11 @@ export function Noclip3DViewport({
   const onMoveCheckpointEndpointRef = useRef(onMoveCheckpointEndpoint);
   const onMoveCameraViewPointRef = useRef(onMoveCameraViewPoint);
   const onSelectMeshRef = useRef(onSelectMesh);
+  const surfacePickingRef = useRef<SurfacePickingOptions | null>(surfacePicking);
+  // Surface picking: the surface under the pointer, and the pending once-per-frame hover pick.
+  const hoveredSurfaceRef = useRef<SurfacePick | null>(null);
+  const surfaceHoverFrameRef = useRef<number | null>(null);
+  const surfaceHoverPointRef = useRef<{ x: number; y: number } | null>(null);
   const onTransformMeshRef = useRef(onTransformMesh);
   const onChangeMeshGranularityRef = useRef(onChangeMeshGranularity);
   const onCameraPreviewEndRef = useRef(onCameraPreviewEnd);
@@ -1155,6 +1173,7 @@ export function Noclip3DViewport({
   onMoveCheckpointEndpointRef.current = onMoveCheckpointEndpoint;
   onMoveCameraViewPointRef.current = onMoveCameraViewPoint;
   onSelectMeshRef.current = onSelectMesh;
+  surfacePickingRef.current = surfacePicking;
   resolveImportedMeshSourceRef.current = resolveImportedMeshSource;
   onTransformMeshRef.current = onTransformMesh;
   onChangeMeshGranularityRef.current = onChangeMeshGranularity;
@@ -1702,6 +1721,21 @@ export function Noclip3DViewport({
     }
   }, [skyboxVisible, mode, viewerReady, sceneKey, sceneEpoch, createTopView]);
 
+  // Surface picking: re-send the highlight whenever the mode's highlight, the mode or the scene
+  // changes; drop the hover when picking is switched off.
+  const surfacePickingEnabled = surfacePicking != null;
+  useEffect(() => {
+    if (!surfacePickingEnabled || mode === 'model' || mode === 'create') {
+      surfaceHoverPointRef.current = null;
+      hoveredSurfaceRef.current = null;
+    }
+    pushSurfaceHighlight();
+  }, [surfacePickingEnabled, surfacePicking?.highlight, surfacePicking?.hoverHighlight, mode, viewerReady, sceneKey, sceneEpoch]);
+
+  useEffect(() => () => {
+    if (surfaceHoverFrameRef.current !== null) cancelAnimationFrame(surfaceHoverFrameRef.current);
+  }, []);
+
   // Push the editor mode into the renderer and reset mode-specific state.
   useEffect(() => {
     const scene = getMeshScene();
@@ -2099,6 +2133,14 @@ export function Noclip3DViewport({
           const memory = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
           return { tracked: impl._resourceCreationTracker !== null, counts, jsHeapBytes: memory?.usedJSHeapSize ?? null };
         },
+      },
+      /** Surface-picking probes: switch the `surfacePicking` prop on without a mode, and pick directly. */
+      surface: {
+        /** Sets (or with null clears) a dev override of the `surfacePicking` prop. */
+        inject: (options: SurfacePickingOptions | null) => setDevSurfacePicking(options),
+        pickAt: (clientX: number, clientY: number) => pickSurfaceAtClient(clientX, clientY),
+        hovered: () => hoveredSurfaceRef.current,
+        scene: () => getSurfaceScene(),
       },
       /** The overlay handle under a screen point — how probes locate a camera view-point handle. */
       pickHandleAt: (clientX: number, clientY: number) =>
@@ -3043,6 +3085,12 @@ export function Noclip3DViewport({
       return;
     }
     if (draggingEntityRef.current) return;
+    // Surface picking owns the left click: no KMP handle or object grabbing underneath it (the
+    // overlay is hidden in the modes that use it, but objects are still hit-tested by position).
+    if (surfacePickingActive()) {
+      beginPointerGesture(canvas, event, 'select');
+      return;
+    }
 
     const additiveSelection = isAdditiveSelectionModifier(event);
     const scene = sceneRef.current as SceneGfx & {
@@ -3420,6 +3468,10 @@ export function Noclip3DViewport({
     if (modeRef.current === 'create') return;
     const clientX = gesture.startX;
     const clientY = gesture.startY;
+    if (surfacePickingActive()) {
+      surfacePickingRef.current?.onPick(pickSurfaceAtClient(clientX, clientY));
+      return;
+    }
     const modifiers: PointerModifiers = gesture.modifiers;
     const scene = sceneRef.current as SceneGfx & {
       pickEditorHandle?: (normalizedX: number, normalizedY: number) => SceneOverlayPick | null;
@@ -3460,6 +3512,7 @@ export function Noclip3DViewport({
     if (hoveredIdRef.current !== null) setHoveredId(null);
     lastPointerRef.current = null;
     setRouteInsertPreview(null);
+    clearSurfaceHover();
   }
 
   //#endregion
@@ -3829,6 +3882,83 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
       targets.push({ target: hovered.target, selected: false });
     scene.setEditorMeshHighlight(targets);
   }
+
+  //#region Surface picking (`surfacePicking` prop)
+
+  function getSurfaceScene() {
+    return sceneRef.current as (SceneGfx & SurfaceRendererScene) | null;
+  }
+
+  /** Model mode keeps its own mesh picking and Create mode its own pointer pipeline. */
+  function surfacePickingActive(): boolean {
+    return surfacePickingRef.current != null && modeRef.current !== 'model' && modeRef.current !== 'create';
+  }
+
+  function placedMeshIdForInstance(instanceId: string): string | undefined {
+    for (const [meshId, entry] of importedMeshInstancesRef.current) if (entry.instanceId === instanceId) return meshId;
+    return undefined;
+  }
+
+  function pickSurfaceAtClient(clientX: number, clientY: number): SurfacePick | null {
+    const canvas = canvasRef.current;
+    const scene = getSurfaceScene();
+    if (!canvas || !scene?.pickEditorSurface) return null;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    const raw = scene.pickEditorSurface((clientX - rect.left) / rect.width, (clientY - rect.top) / rect.height, {
+      includeSkybox: surfacePickingRef.current?.includeSkybox ?? false,
+    });
+    return raw ? toSurfacePick(raw, trackRef.current, placedMeshIdForInstance) : null;
+  }
+
+  /** Sends the mode's highlight plus the hovered surface to the renderer. */
+  function pushSurfaceHighlight() {
+    const scene = getSurfaceScene();
+    if (!scene?.setEditorSurfaceHighlight) return;
+    const options = surfacePickingRef.current;
+    if (!options || !surfacePickingActive()) {
+      scene.setEditorSurfaceHighlight([]);
+      return;
+    }
+    const hovered = options.hoverHighlight === false ? null : hoveredSurfaceRef.current;
+    scene.setEditorSurfaceHighlight(toRendererHighlightRequests(options.highlight, hovered));
+  }
+
+  function setHoveredSurface(next: SurfacePick | null) {
+    if (sameSurface(next, hoveredSurfaceRef.current)) {
+      hoveredSurfaceRef.current = next;
+      return;
+    }
+    hoveredSurfaceRef.current = next;
+    surfacePickingRef.current?.onHover?.(next);
+    pushSurfaceHighlight();
+  }
+
+  /** Hover picks run at most once per frame: a CPU ray test per pointer event would be wasteful. */
+  function scheduleSurfaceHover(clientX: number, clientY: number) {
+    surfaceHoverPointRef.current = { x: clientX, y: clientY };
+    if (surfaceHoverFrameRef.current !== null) return;
+    surfaceHoverFrameRef.current = requestAnimationFrame(() => {
+      surfaceHoverFrameRef.current = null;
+      const point = surfaceHoverPointRef.current;
+      const options = surfacePickingRef.current;
+      if (!point || !options || !surfacePickingActive()) return;
+      // Nobody listening and nothing to draw: skip the ray test entirely.
+      if (!options.onHover && options.hoverHighlight === false) return;
+      setHoveredSurface(pickSurfaceAtClient(point.x, point.y));
+    });
+  }
+
+  function clearSurfaceHover() {
+    surfaceHoverPointRef.current = null;
+    if (surfaceHoverFrameRef.current !== null) {
+      cancelAnimationFrame(surfaceHoverFrameRef.current);
+      surfaceHoverFrameRef.current = null;
+    }
+    if (hoveredSurfaceRef.current !== null) setHoveredSurface(null);
+  }
+
+  //#endregion
 
   function selectMeshFromClient(clientX: number, clientY: number, additive: boolean): boolean {
     const pick = pickMeshAtClient(clientX, clientY);
@@ -4400,6 +4530,11 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
     } | null;
     const scenePick = pickSceneHandle(scene, clientX, clientY, canvas);
     setHoveredGizmoHandle(pickToGizmoHandle(scenePick));
+    if (surfacePickingActive()) {
+      if (hoveredIdRef.current !== null) setHoveredId(null);
+      scheduleSurfaceHover(clientX, clientY);
+      return;
+    }
     if (modeRef.current === 'model') {
       if (!scenePick) updateHoveredMesh(clientX, clientY);
       if (hoveredIdRef.current !== null) setHoveredId(null);

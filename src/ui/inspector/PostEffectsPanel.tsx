@@ -1,11 +1,17 @@
+import { Plus } from 'lucide-react';
+import type { ReactNode } from 'react';
 import {
   type PostEffectBlightFile,
   type PostEffectBloomFile,
   type PostEffectDofFile,
 } from '../../lib/posteffects';
+import { Button } from '../components/Button';
+import { NumberInput } from '../components/NumberInput';
+import { Select } from '../components/Select';
 import { RgbaColorField } from './fields/RgbaColorField';
 import { RgbColorField } from './fields/RgbColorField';
-import { clampByte, type AreaFogPreset, type PostEffectResources } from './postEffectResources';
+import { DetailsCategory, PropertyRow } from './PropertySheet';
+import type { AreaFogPreset, PostEffectResources } from './postEffectResources';
 
 const fogTypeOptions = [
   { value: 0, label: 'None' },
@@ -62,6 +68,81 @@ const lightDistanceOptions = [
   { value: 3, label: 'Steep' },
 ];
 
+type Options = ReadonlyArray<{ value: number; label: string }>;
+
+/** One number in a property row. Typing commits on blur or Enter; dragging is off so a scrub is not a hundred undo steps. */
+function NumRow({
+  label,
+  name,
+  value,
+  step = 0.01,
+  min,
+  max,
+  integer,
+  onChange,
+}: {
+  label: string;
+  /** Accessible name; includes the file it belongs to. */
+  name: string;
+  value: number;
+  step?: number;
+  min?: number;
+  max?: number;
+  integer?: boolean;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <PropertyRow label={label}>
+      <NumberInput
+        value={Number.isFinite(value) ? value : 0}
+        label={name}
+        step={step}
+        min={min}
+        max={max}
+        integer={integer}
+        scrub={false}
+        onChange={(next) => {
+          if (Number.isFinite(next)) onChange(next);
+        }}
+      />
+    </PropertyRow>
+  );
+}
+
+function ChoiceRow({ label, name, value, options, onChange }: { label: string; name: string; value: number; options: Options; onChange: (value: number) => void }) {
+  const shown = options.some((option) => option.value === value) ? options : [...options, { value, label: `Unknown (${value})` }];
+  return (
+    <PropertyRow label={label}>
+      <Select label={name} value={value} options={shown} size="sm" onChange={(next) => onChange(Number(next))} />
+    </PropertyRow>
+  );
+}
+
+/** One file's worth of rows, folded away until asked for. */
+function FileGroup({ name, help, children }: { name: string; help?: string; children: ReactNode }) {
+  return (
+    <DetailsCategory name={name} help={help} defaultOpen={false} className="visualNested">
+      {children}
+    </DetailsCategory>
+  );
+}
+
+/** A file the track does not have (or may want another of), with the buttons that add it. */
+function CreateRow({ text, children }: { text: string; children: ReactNode }) {
+  return (
+    <div className="visualMissing">
+      <span>{text}</span>
+      <span className="rawEffectButtons">{children}</span>
+    </div>
+  );
+}
+
+/**
+ * Every value in the track's posteffect files, for experts. Visual mode's Environment panel holds
+ * the friendly Light, Fog and Glow controls; this is the long tail underneath them (blur passes,
+ * indirect-texture scrolls, per-light attenuation). Missing files can be created here and export
+ * with the track.
+ */
 export function PostEffectsPanel({
   resources,
   onCreateFog,
@@ -83,601 +164,149 @@ export function PostEffectsPanel({
   onCreateBlight: () => void;
   onChangeBlight: (data: PostEffectBlightFile) => void;
 }) {
+  const blight = resources.blight;
+  const patchLight = (index: number, patch: Partial<PostEffectBlightFile['lightObjects'][number]>) => {
+    if (!blight) return;
+    onChangeBlight({ ...blight, lightObjects: blight.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, ...patch } : entry)) });
+  };
+
   return (
     <>
-      <h2>Post Effects</h2>
-      <div className="propertyGrid">
-        <label>
-          Overview
-          <span>Edit fog, bloom, and depth-of-field directly from the loaded track archive. Missing files can be created here and will export with the track.</span>
-        </label>
-        {resources.fogPath ? (
-          resources.fogPresets.map((preset) => (
-            <label key={`fog-${preset.index}`}>
-              Fog Preset {preset.index}
-              <div className="postEffectEditor">
-                <select value={preset.fogType} onChange={(event) => onChangeFogPreset(preset.index, (entry) => ({ ...entry, fogType: Number(event.currentTarget.value) }))}>
-                  {fogTypeOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="number"
-                  step="1"
-                  value={Number.isFinite(preset.startZ) ? Number(preset.startZ.toFixed(2)) : 0}
-                  title="Start Z"
-                  aria-label={`Fog preset ${preset.index} start Z`}
-                  onChange={(event) => {
-                    const next = Number(event.currentTarget.value);
-                    if (Number.isFinite(next)) onChangeFogPreset(preset.index, (entry) => ({ ...entry, startZ: next }));
-                  }}
-                />
-                <input
-                  type="number"
-                  step="1"
-                  value={Number.isFinite(preset.endZ) ? Number(preset.endZ.toFixed(2)) : 0}
-                  title="End Z"
-                  aria-label={`Fog preset ${preset.index} end Z`}
-                  onChange={(event) => {
-                    const next = Number(event.currentTarget.value);
-                    if (Number.isFinite(next)) onChangeFogPreset(preset.index, (entry) => ({ ...entry, endZ: next }));
-                  }}
-                />
-                <RgbColorField value={preset.color} onChange={(color) => onChangeFogPreset(preset.index, (entry) => ({ ...entry, color }))} />
-                <input
-                  type="number"
-                  step="0.01"
-                  value={Number.isFinite(preset.fadeSpeed) ? Number(preset.fadeSpeed.toFixed(3)) : 0}
-                  title="Fade Speed"
-                  aria-label={`Fog preset ${preset.index} fade speed`}
-                  onChange={(event) => {
-                    const next = Number(event.currentTarget.value);
-                    if (Number.isFinite(next)) onChangeFogPreset(preset.index, (entry) => ({ ...entry, fadeSpeed: next }));
-                  }}
-                />
-              </div>
-              <span>Type, near Z, far Z, color, and fade speed. AREA type 2 can swap these presets in-game.</span>
-            </label>
-          ))
-        ) : (
-          <label>
-            Fog
-            <button className="inlineAction" type="button" onClick={onCreateFog}>
-              Create Fog File
-            </button>
-          </label>
-        )}
-        <label>
-          Bloom Files
-          <div className="actionStack">
-            <button className="inlineAction" type="button" onClick={onAddBloom}>
-              Add Bloom Preset
-            </button>
-            <span>AREA type 6 can swap between `posteffect.bblm`, `posteffect.bblm1`, and later files.</span>
-          </div>
-        </label>
-        {resources.bloomFiles.map((file) => (
-          <label key={file.path}>
-            Bloom Preset {file.index}
-            <div className="postEffectEditor">
-              <input
-                type="number"
-                step="0.01"
-                value={Number.isFinite(file.data.thresholdAmount) ? Number(file.data.thresholdAmount.toFixed(3)) : 0}
-                title="Threshold Amount"
-                aria-label={`${file.path} threshold amount`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeBloomFile(file.path, { ...file.data, thresholdAmount: next });
-                }}
-              />
-              <RgbaColorField value={file.data.thresholdColor} onChange={(thresholdColor) => onChangeBloomFile(file.path, { ...file.data, thresholdColor })} />
-              <RgbaColorField value={file.data.compositeColor} onChange={(compositeColor) => onChangeBloomFile(file.path, { ...file.data, compositeColor })} />
-              <input
-                type="number"
-                min="0"
-                max="65535"
-                value={file.data.blurFlags}
-                title="Blur Flags"
-                aria-label={`${file.path} blur flags`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeBloomFile(file.path, { ...file.data, blurFlags: Math.max(0, Math.min(0xffff, Math.trunc(next))) });
-                }}
-              />
-              <input
-                type="number"
-                step="0.01"
-                value={Number.isFinite(file.data.blur0Radius) ? Number(file.data.blur0Radius.toFixed(3)) : 0}
-                title="Blur 0 Radius"
-                aria-label={`${file.path} blur 0 radius`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeBloomFile(file.path, { ...file.data, blur0Radius: next });
-                }}
-              />
-              <input
-                type="number"
-                step="0.01"
-                value={Number.isFinite(file.data.blur0Intensity) ? Number(file.data.blur0Intensity.toFixed(3)) : 0}
-                title="Blur 0 Intensity"
-                aria-label={`${file.path} blur 0 intensity`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeBloomFile(file.path, { ...file.data, blur0Intensity: next });
-                }}
-              />
-              <input
-                type="number"
-                step="0.01"
-                value={Number.isFinite(file.data.blur1Radius) ? Number(file.data.blur1Radius.toFixed(3)) : 0}
-                title="Blur 1 Radius"
-                aria-label={`${file.path} blur 1 radius`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeBloomFile(file.path, { ...file.data, blur1Radius: next });
-                }}
-              />
-              <input
-                type="number"
-                step="0.01"
-                value={Number.isFinite(file.data.blur1Intensity) ? Number(file.data.blur1Intensity.toFixed(3)) : 0}
-                title="Blur 1 Intensity"
-                aria-label={`${file.path} blur 1 intensity`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeBloomFile(file.path, { ...file.data, blur1Intensity: next });
-                }}
-              />
-              <input
-                type="number"
-                min="0"
-                max="255"
-                value={file.data.compositeBlendMode}
-                title="Blend Mode"
-                aria-label={`${file.path} blend mode`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeBloomFile(file.path, { ...file.data, compositeBlendMode: Math.max(0, Math.min(0xff, Math.trunc(next))) });
-                }}
-              />
-              <input
-                type="number"
-                min="0"
-                max="255"
-                value={file.data.blur1NumPasses}
-                title="Second Blur Passes"
-                aria-label={`${file.path} second blur passes`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeBloomFile(file.path, { ...file.data, blur1NumPasses: Math.max(0, Math.min(0xff, Math.trunc(next))) });
-                }}
-              />
-              <input
-                type="number"
-                step="0.01"
-                value={Number.isFinite(file.data.bokehColorScale0) ? Number(file.data.bokehColorScale0.toFixed(3)) : 0}
-                title="Bokeh Scale 0"
-                aria-label={`${file.path} bokeh scale 0`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeBloomFile(file.path, { ...file.data, bokehColorScale0: next });
-                }}
-              />
-              <input
-                type="number"
-                step="0.01"
-                value={Number.isFinite(file.data.bokehColorScale1) ? Number(file.data.bokehColorScale1.toFixed(3)) : 0}
-                title="Bokeh Scale 1"
-                aria-label={`${file.path} bokeh scale 1`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeBloomFile(file.path, { ...file.data, bokehColorScale1: next });
-                }}
-              />
-            </div>
-            <span>Threshold, colors, blur passes, and glow scales for {file.path.split('/').pop()}.</span>
-          </label>
-        ))}
-        {resources.bloomFiles.length === 0 && (
-          <label>
-            Bloom
-            <span>No bloom files are in this archive yet. Add one above to create a swappable bloom preset.</span>
-          </label>
-        )}
-        <label>
-          Depth Of Field
-          <div className="actionRow">
-            <button className="inlineAction" type="button" onClick={() => onCreateDof('main')}>
-              Create Main DOF
-            </button>
-            <button className="inlineAction" type="button" onClick={() => onCreateDof('demo')}>
-              Create Intro DOF
-            </button>
-          </div>
-        </label>
-        {resources.dofFiles.map((file) => (
-          <label key={file.path}>
-            {file.label}
-            <div className="postEffectEditor">
-              <input
-                type="number"
-                min="0"
-                max="65535"
-                value={file.data.flags}
-                title="Flags"
-                aria-label={`${file.path} flags`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, flags: Math.max(0, Math.min(0xffff, Math.trunc(next))) });
-                }}
-              />
-              <select value={file.data.drawMode} onChange={(event) => onChangeDofFile(file.path, { ...file.data, drawMode: Number(event.currentTarget.value) })}>
-                {dofDrawModeOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <select value={file.data.blurDrawAmount} onChange={(event) => onChangeDofFile(file.path, { ...file.data, blurDrawAmount: Number(event.currentTarget.value) })}>
-                {dofDrawAmountOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="number"
-                min="0"
-                max="255"
-                value={file.data.depthCurveType}
-                title="Curve Type"
-                aria-label={`${file.path} curve type`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, depthCurveType: Math.max(0, Math.min(0xff, Math.trunc(next))) });
-                }}
-              />
-              <input
-                type="number"
-                min="0"
-                max="255"
-                value={file.data.blurAlpha[0]}
-                title="Inverse Alpha"
-                aria-label={`${file.path} inverse alpha`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, blurAlpha: [clampByte(next), file.data.blurAlpha[1]] });
-                }}
-              />
-              <input
-                type="number"
-                min="0"
-                max="255"
-                value={file.data.blurAlpha[1]}
-                title="Alpha"
-                aria-label={`${file.path} alpha`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, blurAlpha: [file.data.blurAlpha[0], clampByte(next)] });
-                }}
-              />
-              <input
-                type="number"
-                step="0.01"
-                value={Number.isFinite(file.data.focusCenter) ? Number(file.data.focusCenter.toFixed(3)) : 0}
-                title="Focus Distance"
-                aria-label={`${file.path} focus distance`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, focusCenter: next });
-                }}
-              />
-              <input
-                type="number"
-                step="0.01"
-                value={Number.isFinite(file.data.focusRange) ? Number(file.data.focusRange.toFixed(3)) : 0}
-                title="Focus Range"
-                aria-label={`${file.path} focus range`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, focusRange: next });
-                }}
-              />
-              <input
-                type="number"
-                step="0.01"
-                value={Number.isFinite(file.data.blurRadius) ? Number(file.data.blurRadius.toFixed(3)) : 0}
-                title="Blur Radius"
-                aria-label={`${file.path} blur radius`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, blurRadius: next });
-                }}
-              />
-              <input
-                type="number"
-                step="0.01"
-                value={Number.isFinite(file.data.indTexTransSScroll) ? Number(file.data.indTexTransSScroll.toFixed(3)) : 0}
-                title="Scroll S"
-                aria-label={`${file.path} scroll s`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, indTexTransSScroll: next });
-                }}
-              />
-              <input
-                type="number"
-                step="0.01"
-                value={Number.isFinite(file.data.indTexTransTScroll) ? Number(file.data.indTexTransTScroll.toFixed(3)) : 0}
-                title="Scroll T"
-                aria-label={`${file.path} scroll t`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, indTexTransTScroll: next });
-                }}
-              />
-              <input
-                type="number"
-                step="0.01"
-                value={Number.isFinite(file.data.indTexIndScaleS) ? Number(file.data.indTexIndScaleS.toFixed(3)) : 0}
-                title="Indirect Scale S"
-                aria-label={`${file.path} indirect scale s`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, indTexIndScaleS: next });
-                }}
-              />
-              <input
-                type="number"
-                step="0.01"
-                value={Number.isFinite(file.data.indTexIndScaleT) ? Number(file.data.indTexIndScaleT.toFixed(3)) : 0}
-                title="Indirect Scale T"
-                aria-label={`${file.path} indirect scale t`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, indTexIndScaleT: next });
-                }}
-              />
-              <input
-                type="number"
-                step="0.01"
-                value={Number.isFinite(file.data.indTexScaleS) ? Number(file.data.indTexScaleS.toFixed(3)) : 0}
-                title="Texture Scale S"
-                aria-label={`${file.path} texture scale s`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, indTexScaleS: next });
-                }}
-              />
-              <input
-                type="number"
-                step="0.01"
-                value={Number.isFinite(file.data.indTexScaleT) ? Number(file.data.indTexScaleT.toFixed(3)) : 0}
-                title="Texture Scale T"
-                aria-label={`${file.path} texture scale t`}
-                onChange={(event) => {
-                  const next = Number(event.currentTarget.value);
-                  if (Number.isFinite(next)) onChangeDofFile(file.path, { ...file.data, indTexScaleT: next });
-                }}
-              />
-            </div>
-            <span>Focus plane, blur strength, and warp-scroll controls for {file.path.split('/').pop()}.</span>
-          </label>
-        ))}
-        {resources.dofFiles.length === 0 && (
-          <label>
-            DOF
-            <span>No depth-of-field files are in this archive yet. Create the main or intro file above when you need one.</span>
-          </label>
-        )}
-        {resources.blight ? (
-          <>
-            <label>
-              Lighting Base
-              <div className="postEffectEditor">
+      {resources.fogPath ? (
+        resources.fogPresets.map((preset) => {
+          const set = (patch: Partial<AreaFogPreset>) => onChangeFogPreset(preset.index, (entry) => ({ ...entry, ...patch }));
+          const name = `Fog preset ${preset.index}`;
+          return (
+            <FileGroup key={`fog-${preset.index}`} name={name} help="Type, near and far distance, colour and fade speed. Area type 2 can swap these presets in-game.">
+              <ChoiceRow label="Type" name={`${name} type`} value={preset.fogType} options={fogTypeOptions} onChange={(fogType) => set({ fogType })} />
+              <NumRow label="Start distance" name={`${name} start Z`} step={1} value={preset.startZ} onChange={(startZ) => set({ startZ })} />
+              <NumRow label="End distance" name={`${name} end Z`} step={1} value={preset.endZ} onChange={(endZ) => set({ endZ })} />
+              <PropertyRow label="Colour">
+                <RgbColorField value={preset.color} onChange={(color) => set({ color })} />
+              </PropertyRow>
+              <NumRow label="Fade speed" name={`${name} fade speed`} value={preset.fadeSpeed} onChange={(fadeSpeed) => set({ fadeSpeed })} />
+            </FileGroup>
+          );
+        })
+      ) : (
+        <CreateRow text="No fog file yet.">
+          <Button size="sm" icon={<Plus size={13} />} onClick={onCreateFog}>
+            Create fog file
+          </Button>
+        </CreateRow>
+      )}
+
+      {resources.bloomFiles.map((file) => {
+        const set = (patch: Partial<PostEffectBloomFile>) => onChangeBloomFile(file.path, { ...file.data, ...patch });
+        const base = file.path;
+        return (
+          <FileGroup key={file.path} name={`Glow preset ${file.index}`} help={`Threshold, colours, blur passes and glow scales for ${file.path.split('/').pop()}.`}>
+            <NumRow label="Threshold" name={`${base} threshold amount`} value={file.data.thresholdAmount} onChange={(thresholdAmount) => set({ thresholdAmount })} />
+            <PropertyRow label="Threshold colour">
+              <RgbaColorField value={file.data.thresholdColor} onChange={(thresholdColor) => set({ thresholdColor })} />
+            </PropertyRow>
+            <PropertyRow label="Glow colour">
+              <RgbaColorField value={file.data.compositeColor} onChange={(compositeColor) => set({ compositeColor })} />
+            </PropertyRow>
+            <NumRow label="Blur flags" name={`${base} blur flags`} step={1} integer min={0} max={0xffff} value={file.data.blurFlags} onChange={(blurFlags) => set({ blurFlags })} />
+            <NumRow label="Blur 0 radius" name={`${base} blur 0 radius`} value={file.data.blur0Radius} onChange={(blur0Radius) => set({ blur0Radius })} />
+            <NumRow label="Blur 0 intensity" name={`${base} blur 0 intensity`} value={file.data.blur0Intensity} onChange={(blur0Intensity) => set({ blur0Intensity })} />
+            <NumRow label="Blur 1 radius" name={`${base} blur 1 radius`} value={file.data.blur1Radius} onChange={(blur1Radius) => set({ blur1Radius })} />
+            <NumRow label="Blur 1 intensity" name={`${base} blur 1 intensity`} value={file.data.blur1Intensity} onChange={(blur1Intensity) => set({ blur1Intensity })} />
+            <NumRow label="Blend mode" name={`${base} blend mode`} step={1} integer min={0} max={255} value={file.data.compositeBlendMode} onChange={(compositeBlendMode) => set({ compositeBlendMode })} />
+            <NumRow label="Second blur passes" name={`${base} second blur passes`} step={1} integer min={0} max={255} value={file.data.blur1NumPasses} onChange={(blur1NumPasses) => set({ blur1NumPasses })} />
+            <NumRow label="Bokeh scale 0" name={`${base} bokeh scale 0`} value={file.data.bokehColorScale0} onChange={(bokehColorScale0) => set({ bokehColorScale0 })} />
+            <NumRow label="Bokeh scale 1" name={`${base} bokeh scale 1`} value={file.data.bokehColorScale1} onChange={(bokehColorScale1) => set({ bokehColorScale1 })} />
+          </FileGroup>
+        );
+      })}
+      <CreateRow text={resources.bloomFiles.length === 0 ? 'No glow file yet.' : 'More glow presets'}>
+        <Button size="sm" icon={<Plus size={13} />} onClick={onAddBloom}>
+          Add glow preset
+        </Button>
+      </CreateRow>
+
+      {resources.dofFiles.map((file) => {
+        const set = (patch: Partial<PostEffectDofFile>) => onChangeDofFile(file.path, { ...file.data, ...patch });
+        const base = file.path;
+        return (
+          <FileGroup key={file.path} name={file.label} help={`Focus plane, blur strength and warp-scroll controls for ${file.path.split('/').pop()}.`}>
+            <NumRow label="Flags" name={`${base} flags`} step={1} integer min={0} max={0xffff} value={file.data.flags} onChange={(flags) => set({ flags })} />
+            <ChoiceRow label="Draw mode" name={`${base} draw mode`} value={file.data.drawMode} options={dofDrawModeOptions} onChange={(drawMode) => set({ drawMode })} />
+            <ChoiceRow label="Blur amount" name={`${base} blur draw amount`} value={file.data.blurDrawAmount} options={dofDrawAmountOptions} onChange={(blurDrawAmount) => set({ blurDrawAmount })} />
+            <NumRow label="Curve type" name={`${base} curve type`} step={1} integer min={0} max={255} value={file.data.depthCurveType} onChange={(depthCurveType) => set({ depthCurveType })} />
+            <NumRow label="Inverse alpha" name={`${base} inverse alpha`} step={1} integer min={0} max={255} value={file.data.blurAlpha[0]} onChange={(next) => set({ blurAlpha: [next, file.data.blurAlpha[1]] })} />
+            <NumRow label="Alpha" name={`${base} alpha`} step={1} integer min={0} max={255} value={file.data.blurAlpha[1]} onChange={(next) => set({ blurAlpha: [file.data.blurAlpha[0], next] })} />
+            <NumRow label="Focus distance" name={`${base} focus distance`} value={file.data.focusCenter} onChange={(focusCenter) => set({ focusCenter })} />
+            <NumRow label="Focus range" name={`${base} focus range`} value={file.data.focusRange} onChange={(focusRange) => set({ focusRange })} />
+            <NumRow label="Blur radius" name={`${base} blur radius`} value={file.data.blurRadius} onChange={(blurRadius) => set({ blurRadius })} />
+            <NumRow label="Scroll S" name={`${base} scroll s`} value={file.data.indTexTransSScroll} onChange={(indTexTransSScroll) => set({ indTexTransSScroll })} />
+            <NumRow label="Scroll T" name={`${base} scroll t`} value={file.data.indTexTransTScroll} onChange={(indTexTransTScroll) => set({ indTexTransTScroll })} />
+            <NumRow label="Indirect scale S" name={`${base} indirect scale s`} value={file.data.indTexIndScaleS} onChange={(indTexIndScaleS) => set({ indTexIndScaleS })} />
+            <NumRow label="Indirect scale T" name={`${base} indirect scale t`} value={file.data.indTexIndScaleT} onChange={(indTexIndScaleT) => set({ indTexIndScaleT })} />
+            <NumRow label="Texture scale S" name={`${base} texture scale s`} value={file.data.indTexScaleS} onChange={(indTexScaleS) => set({ indTexScaleS })} />
+            <NumRow label="Texture scale T" name={`${base} texture scale t`} value={file.data.indTexScaleT} onChange={(indTexScaleT) => set({ indTexScaleT })} />
+          </FileGroup>
+        );
+      })}
+      <CreateRow text={resources.dofFiles.length === 0 ? 'No depth-of-field file yet.' : 'More depth-of-field files'}>
+        <Button size="sm" icon={<Plus size={13} />} onClick={() => onCreateDof('main')}>
+          Main
+        </Button>
+        <Button size="sm" icon={<Plus size={13} />} onClick={() => onCreateDof('demo')}>
+          Intro
+        </Button>
+      </CreateRow>
+
+      {blight ? (
+        <>
+          <FileGroup name="Lighting base" help="Global ambient-black colour from posteffect.blight.">
+            <PropertyRow label="Ambient black">
+              <RgbaColorField value={blight.ambientBlackColor} onChange={(ambientBlackColor) => onChangeBlight({ ...blight, ambientBlackColor })} />
+            </PropertyRow>
+          </FileGroup>
+          {blight.ambientLights.map((ambient, index) => (
+            <FileGroup key={`ambient-light-${index}`} name={`Ambient light ${index}`} help="Ambient light colour linked by light objects and by KCL light IDs.">
+              <PropertyRow label="Colour">
                 <RgbaColorField
-                  value={resources.blight.ambientBlackColor}
-                  onChange={(ambientBlackColor) => onChangeBlight({ ...resources.blight!, ambientBlackColor })}
+                  value={ambient}
+                  onChange={(nextAmbient) => onChangeBlight({ ...blight, ambientLights: blight.ambientLights.map((value, ambientIndex) => (ambientIndex === index ? nextAmbient : value)) })}
                 />
-              </div>
-              <span>Global ambient-black color from `posteffect.blight`.</span>
-            </label>
-            {resources.blight.ambientLights.map((ambient, index) => (
-              <label key={`ambient-light-${index}`}>
-                Ambient Light {index}
-                <div className="postEffectEditor">
-                  <RgbaColorField
-                    value={ambient}
-                    onChange={(nextAmbient) => {
-                      const ambientLights = resources.blight!.ambientLights.map((value, ambientIndex) => (ambientIndex === index ? nextAmbient : value));
-                      onChangeBlight({ ...resources.blight!, ambientLights });
-                    }}
-                  />
-                </div>
-                <span>Ambient light color linked by BLIGHT light objects and KCL light IDs.</span>
-              </label>
-            ))}
-            {resources.blight.lightObjects.slice(0, 8).map((light, index) => (
-              <label key={`light-object-${index}`}>
-                Light Object {index}
-                <div className="postEffectEditor">
-                  <select
-                    value={light.lightType}
-                    onChange={(event) => {
-                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, lightType: Number(event.currentTarget.value) } : entry));
-                      onChangeBlight({ ...resources.blight!, lightObjects });
-                    }}
-                  >
-                    {lightTypeOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    value={light.coordinateSystem}
-                    onChange={(event) => {
-                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, coordinateSystem: Number(event.currentTarget.value) } : entry));
-                      onChangeBlight({ ...resources.blight!, lightObjects });
-                    }}
-                  >
-                    {lightCoordinateOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="number"
-                    min="0"
-                    max="65535"
-                    value={light.flags}
-                    title="Flags"
-                    aria-label={`BLIGHT light ${index} flags`}
-                    onChange={(event) => {
-                      const next = Number(event.currentTarget.value);
-                      if (!Number.isFinite(next)) return;
-                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, flags: Math.max(0, Math.min(0xffff, Math.trunc(next))) } : entry));
-                      onChangeBlight({ ...resources.blight!, lightObjects });
-                    }}
-                  />
-                  <input
-                    type="number"
-                    min="0"
-                    max="15"
-                    value={light.ambientLightIndex}
-                    title="Ambient Link"
-                    aria-label={`BLIGHT light ${index} ambient link`}
-                    onChange={(event) => {
-                      const next = Number(event.currentTarget.value);
-                      if (!Number.isFinite(next)) return;
-                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, ambientLightIndex: Math.max(0, Math.min(15, Math.trunc(next))) } : entry));
-                      onChangeBlight({ ...resources.blight!, lightObjects });
-                    }}
-                  />
-                  <select
-                    value={light.spotFunction}
-                    onChange={(event) => {
-                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, spotFunction: Number(event.currentTarget.value) } : entry));
-                      onChangeBlight({ ...resources.blight!, lightObjects });
-                    }}
-                  >
-                    {lightSpotFunctionOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    value={light.distAttnFunction}
-                    onChange={(event) => {
-                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, distAttnFunction: Number(event.currentTarget.value) } : entry));
-                      onChangeBlight({ ...resources.blight!, lightObjects });
-                    }}
-                  >
-                    {lightDistanceOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={Number.isFinite(light.intensity) ? Number(light.intensity.toFixed(3)) : 0}
-                    title="Intensity"
-                    aria-label={`BLIGHT light ${index} intensity`}
-                    onChange={(event) => {
-                      const next = Number(event.currentTarget.value);
-                      if (!Number.isFinite(next)) return;
-                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, intensity: next } : entry));
-                      onChangeBlight({ ...resources.blight!, lightObjects });
-                    }}
-                  />
-                  <RgbaColorField
-                    value={light.color}
-                    onChange={(color) => {
-                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, color } : entry));
-                      onChangeBlight({ ...resources.blight!, lightObjects });
-                    }}
-                  />
-                  <RgbaColorField
-                    value={light.specColor}
-                    onChange={(specColor) => {
-                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, specColor } : entry));
-                      onChangeBlight({ ...resources.blight!, lightObjects });
-                    }}
-                  />
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={Number.isFinite(light.spotCutoff) ? Number(light.spotCutoff.toFixed(3)) : 0}
-                    title="Cutoff"
-                    aria-label={`BLIGHT light ${index} cutoff`}
-                    onChange={(event) => {
-                      const next = Number(event.currentTarget.value);
-                      if (!Number.isFinite(next)) return;
-                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, spotCutoff: next } : entry));
-                      onChangeBlight({ ...resources.blight!, lightObjects });
-                    }}
-                  />
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={Number.isFinite(light.refDist) ? Number(light.refDist.toFixed(3)) : 0}
-                    title="Reference Distance"
-                    aria-label={`BLIGHT light ${index} reference distance`}
-                    onChange={(event) => {
-                      const next = Number(event.currentTarget.value);
-                      if (!Number.isFinite(next)) return;
-                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, refDist: next } : entry));
-                      onChangeBlight({ ...resources.blight!, lightObjects });
-                    }}
-                  />
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={Number.isFinite(light.refBrightness) ? Number(light.refBrightness.toFixed(3)) : 0}
-                    title="Reference Brightness"
-                    aria-label={`BLIGHT light ${index} reference brightness`}
-                    onChange={(event) => {
-                      const next = Number(event.currentTarget.value);
-                      if (!Number.isFinite(next)) return;
-                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, refBrightness: next } : entry));
-                      onChangeBlight({ ...resources.blight!, lightObjects });
-                    }}
-                  />
-                  <input
-                    type="number"
-                    min="0"
-                    max="15"
-                    value={light.linkedLightIndex}
-                    title="Vector Shift Link"
-                    aria-label={`BLIGHT light ${index} vector shift link`}
-                    onChange={(event) => {
-                      const next = Number(event.currentTarget.value);
-                      if (!Number.isFinite(next)) return;
-                      const lightObjects = resources.blight!.lightObjects.map((entry, lightIndex) => (lightIndex === index ? { ...entry, linkedLightIndex: Math.max(0, Math.min(15, Math.trunc(next))) } : entry));
-                      onChangeBlight({ ...resources.blight!, lightObjects });
-                    }}
-                  />
-                </div>
-                <span>Core lighting setup for KCL light IDs 0 through 7: type, ambient link, color, intensity, and attenuation.</span>
-              </label>
-            ))}
-          </>
-        ) : (
-          <label>
-            Lighting
-            <button className="inlineAction" type="button" onClick={onCreateBlight}>
-              Create Lighting File
-            </button>
-          </label>
-        )}
-      </div>
+              </PropertyRow>
+            </FileGroup>
+          ))}
+          {blight.lightObjects.slice(0, 8).map((light, index) => {
+            const name = `BLIGHT light ${index}`;
+            return (
+              <FileGroup key={`light-object-${index}`} name={`Light object ${index}`} help="Core lighting setup for KCL light IDs 0 through 7: type, ambient link, colour, intensity and attenuation.">
+                <ChoiceRow label="Type" name={`${name} type`} value={light.lightType} options={lightTypeOptions} onChange={(lightType) => patchLight(index, { lightType })} />
+                <ChoiceRow label="Coordinates" name={`${name} coordinates`} value={light.coordinateSystem} options={lightCoordinateOptions} onChange={(coordinateSystem) => patchLight(index, { coordinateSystem })} />
+                <NumRow label="Flags" name={`${name} flags`} step={1} integer min={0} max={0xffff} value={light.flags} onChange={(flags) => patchLight(index, { flags })} />
+                <NumRow label="Ambient link" name={`${name} ambient link`} step={1} integer min={0} max={15} value={light.ambientLightIndex} onChange={(ambientLightIndex) => patchLight(index, { ambientLightIndex })} />
+                <ChoiceRow label="Spot function" name={`${name} spot function`} value={light.spotFunction} options={lightSpotFunctionOptions} onChange={(spotFunction) => patchLight(index, { spotFunction })} />
+                <ChoiceRow label="Distance falloff" name={`${name} distance falloff`} value={light.distAttnFunction} options={lightDistanceOptions} onChange={(distAttnFunction) => patchLight(index, { distAttnFunction })} />
+                <NumRow label="Intensity" name={`${name} intensity`} value={light.intensity} onChange={(intensity) => patchLight(index, { intensity })} />
+                <PropertyRow label="Colour">
+                  <RgbaColorField value={light.color} onChange={(color) => patchLight(index, { color })} />
+                </PropertyRow>
+                <PropertyRow label="Specular colour">
+                  <RgbaColorField value={light.specColor} onChange={(specColor) => patchLight(index, { specColor })} />
+                </PropertyRow>
+                <NumRow label="Cutoff" name={`${name} cutoff`} value={light.spotCutoff} onChange={(spotCutoff) => patchLight(index, { spotCutoff })} />
+                <NumRow label="Reference distance" name={`${name} reference distance`} value={light.refDist} onChange={(refDist) => patchLight(index, { refDist })} />
+                <NumRow label="Reference brightness" name={`${name} reference brightness`} value={light.refBrightness} onChange={(refBrightness) => patchLight(index, { refBrightness })} />
+                <NumRow label="Vector shift link" name={`${name} vector shift link`} step={1} integer min={0} max={15} value={light.linkedLightIndex} onChange={(linkedLightIndex) => patchLight(index, { linkedLightIndex })} />
+              </FileGroup>
+            );
+          })}
+        </>
+      ) : (
+        <CreateRow text="No lighting file yet.">
+          <Button size="sm" icon={<Plus size={13} />} onClick={onCreateBlight}>
+            Create lighting file
+          </Button>
+        </CreateRow>
+      )}
     </>
   );
 }

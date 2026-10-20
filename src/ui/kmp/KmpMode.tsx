@@ -33,7 +33,7 @@ export function useKmpMode(ctx: EditorModeContext): ModeUi {
   const graph = useKmpGraphActions({ track, trackRef, history, selection, setStatus });
 
   const [visibility, setVisibility] = useState<KmpVisibilityState>(() => createVisibilityState(true));
-  const [activeSection, setActiveSection] = useState<KmpOutlinerSectionKey>(() => sectionForEntityId(selection.selectedId)?.key ?? 'start');
+  const [activeSection, setActiveSection] = useState<KmpOutlinerSectionKey>(() => sectionForEntityId(selection.selectedId)?.key ?? 'object');
   const [linkSection, setLinkSection] = useState<PathLinkSection | null>(null);
   const [drawingCheckpoints, setDrawingCheckpoints] = useState(false);
   const [pathGroupColors, setPathGroupColors] = useState(true);
@@ -43,6 +43,8 @@ export function useKmpMode(ctx: EditorModeContext): ModeUi {
   const sectionVisibility = useMemo(() => {
     const state = createVisibilityState(false);
     for (const key of outlinerSection(activeSection).visibility) state[key] = visibility[key];
+    // Object markers stay pickable from every section: clicking one switches to Objects.
+    state.GOBJ = visibility.GOBJ;
     return state;
   }, [activeSection, visibility]);
 

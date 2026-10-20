@@ -1,12 +1,13 @@
 import { useId, type ReactNode } from 'react';
+import { Tooltip } from './Tooltip';
 
 function classNames(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(' ');
 }
 
 /**
- * One labelled row in a property grid: label on the left, control on the right, optional
- * help text underneath. Use inside `.propertyGrid` (or any `FieldGroup`).
+ * One labelled row in a property grid: label on the left, control on the right. `help` is a
+ * tooltip on the label, not a paragraph. Use inside `.propertyGrid` (or any `FieldGroup`).
  *
  * `Field` renders a `<label>` when the control is a single form element (the common case)
  * and falls back to a `<div role="group">` when `asGroup` is set, so multi-control rows such
@@ -22,7 +23,7 @@ export function Field({
   children,
 }: {
   label: ReactNode;
-  /** Longer explanation rendered under the control. */
+  /** Longer explanation, shown as a tooltip when the label is hovered. */
   help?: ReactNode;
   /** Short right-aligned hint next to the label (units, ranges). */
   hint?: ReactNode;
@@ -32,14 +33,25 @@ export function Field({
   children: ReactNode;
 }) {
   const labelText = typeof label === 'string' ? label : undefined;
+  const hasHelp = help !== undefined && help !== null && help !== '';
+  const name = (
+    <span className="uiFieldLabelText" title={hasHelp ? undefined : labelText}>
+      {label}
+    </span>
+  );
   const content = (
     <>
-      <span className="uiFieldLabel" title={labelText}>
-        {label}
+      <span className={classNames('uiFieldLabel', hasHelp && 'hasHelp')}>
+        {hasHelp ? (
+          <Tooltip label={help} side="left" className="uiFieldTip">
+            {name}
+          </Tooltip>
+        ) : (
+          name
+        )}
         {hint !== undefined && hint !== null && hint !== '' && <span className="uiFieldHint">{hint}</span>}
       </span>
       <span className="uiFieldControl">{children}</span>
-      {help !== undefined && help !== null && help !== '' && <span className="uiFieldHelp">{help}</span>}
     </>
   );
   if (asGroup) {

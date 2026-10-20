@@ -1,5 +1,5 @@
 import type { GxMaterialDoc } from '../../../lib/gxMaterial';
-import { ColorField, EmptyState, Field, FieldGroup } from '../../components';
+import { ColorField, Field, FieldGroup } from '../../components';
 import { AdvancedBlock } from '../AdvancedBlock';
 import { konstColorName, colorRegisterName } from '../gxOptions';
 import { colorToRgb255, registerToRgb255, rgb255ToColor, rgb255ToRegister, setColorRegister, setKonstColor } from '../materialDoc';
@@ -26,11 +26,12 @@ export function SimpleColorsSection({ doc, onChange }: { doc: GxMaterialDoc; onC
   return (
     <>
       {konst.length === 0 && registers.length === 0 ? (
-        <EmptyState
-          size="sm"
-          title="No colours in the shader"
-          description="This material's stages take everything from its textures and its lighting, so none of the stored colours change what is drawn."
-        />
+        <p
+          className="detailsNote"
+          title="This material's stages take everything from its textures and its lighting, so none of the stored colours change what is drawn."
+        >
+          No colours in the shader
+        </p>
       ) : (
         <FieldGroup>
           {konst.map(({ slot, stages }) => {

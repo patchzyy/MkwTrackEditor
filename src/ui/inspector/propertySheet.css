@@ -1,0 +1,302 @@
+/*
+ * The Details panel look, shared by every mode: search box, collapsible categories, the empty
+ * state, and the pill/label bits of a property row. The rows themselves are styled where the
+ * markup lives (`.propertyGrid label` in src/styles.css, `.uiField` in components.css,
+ * `.cameraField` in camera.css) so unconverted code gets the same look.
+ */
+
+.detailsSheet {
+  display: grid;
+  align-content: start;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+/* --- search ----------------------------------------------------------------- */
+
+.detailsSearch {
+  position: sticky;
+  top: calc(var(--space-4) * -1);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 28px;
+  margin: calc(var(--space-4) * -1) calc(var(--space-4) * -1) 0;
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-dim);
+  background: var(--surface-1);
+}
+
+.detailsSearch:focus-within {
+  color: var(--accent-text);
+}
+
+.detailsSearch input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  font-size: var(--font-size-sm);
+  outline: none;
+}
+
+.detailsSearch input::placeholder {
+  color: var(--text-dim);
+}
+
+.detailsSearchClear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.detailsSearchClear:hover {
+  color: var(--text);
+  background: var(--surface-raised);
+}
+
+.detailsSearchNone {
+  display: none;
+  margin: 0;
+  padding: var(--space-5) 0;
+  color: var(--text-dim);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
+.detailsSheet[data-searching='true']:not(:has(.detailsCategory:not(.is-filtered))) .detailsSearchNone {
+  display: block;
+}
+
+/* --- categories --------------------------------------------------------------- */
+
+.detailsCategory {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.detailsCategory.is-filtered,
+.detailsCategory:not(.isDisclosure):has(> .detailsCategoryBody:empty) {
+  display: none;
+}
+
+.detailsCategoryBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  color: var(--text);
+  background: var(--surface-3);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.detailsCategory.is-open > .detailsCategoryBar {
+  border-bottom: 1px solid var(--border);
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.detailsCategoryBar:hover {
+  background: var(--surface-4);
+}
+
+.detailsCategoryBar:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.detailsCategoryBar > svg {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.detailsCategoryName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailsCategoryHelp {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  cursor: help;
+}
+
+.detailsCategoryHelp:hover {
+  color: var(--accent-text);
+}
+
+.detailsCategoryBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.detailsCategoryBadge.isQuiet {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.detailsCategory:not(.is-open) > .detailsCategoryBody {
+  display: none;
+}
+
+/* While searching, a collapsed category still shows what matched. */
+.detailsSheet[data-searching='true'] .detailsCategory.isDisclosure.is-open > .detailsCategoryBody,
+.detailsSheet[data-searching='true'] .detailsCategory:not(.isDisclosure) > .detailsCategoryBody {
+  display: block;
+}
+
+.detailsCategoryBody {
+  display: grid;
+  min-width: 0;
+}
+
+.detailsCategoryBody:not(:empty) {
+  padding: var(--space-1) 0;
+}
+
+/* Loose content inside a category (buttons, notes, lists) keeps the row inset. */
+.detailsCategoryBody > .propertyGrid,
+.detailsCategoryBody > .cameraFields,
+.detailsCategoryBody > .detailsCategoryBody {
+  margin: 0;
+}
+
+.detailsCategoryBody > :not(.propertyGrid):not(.uiFieldGroup):not(.cameraFields):not(.cameraField):not(.uiField):not(.propRow):not(.detailsCategory) {
+  margin: 0 var(--space-3);
+}
+
+.detailsCategoryBody > .detailsNote,
+.detailsCategoryBody > .inspectorNote {
+  margin: var(--space-2) var(--space-3);
+}
+
+.detailsCategoryBody .detailsCategory {
+  margin: var(--space-2) var(--space-3);
+}
+
+/* --- rows built by PropertyRow --------------------------------------------- */
+
+.propRowLabel {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.propRowLabelText {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.propRowTip {
+  display: block;
+  min-width: 0;
+}
+
+.propRowControl {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.propRowControl > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.propRowUnit {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+/* --- empty state ------------------------------------------------------------ */
+
+.detailsEmpty {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-4) var(--space-5);
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.detailsEmpty p {
+  max-width: 220px;
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.detailsEmptyIcon {
+  display: inline-flex;
+  color: var(--text-dim);
+  opacity: 0.8;
+}
+
+.detailsLine {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* `.propertyGrid span` colours every span as a value; labels and units are not values. */
+.propertyGrid .propRowLabel,
+.propertyGrid .propRowLabelText,
+.propertyGrid .uiFieldLabel {
+  color: var(--text-muted);
+}
+
+.propertyGrid .propRowUnit,
+.propertyGrid .uiFieldHint {
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+}
+
+/* A read-only value in a property row. */
+.propRowValue {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

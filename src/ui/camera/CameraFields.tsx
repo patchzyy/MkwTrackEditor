@@ -1,6 +1,9 @@
 import type { ReactNode } from 'react';
 import type { KmpEntity, Vec3 } from '../../lib/kmp';
-import { formatFrames, framesToSeconds, getCameraTypeInfo, secondsToFrames } from '../../lib/cameraPreview';
+import { framesToSeconds, getCameraTypeInfo, secondsToFrames } from '../../lib/cameraPreview';
+import { NumberInput } from '../components/NumberInput';
+import { VectorInput } from '../components/VectorInput';
+import { DetailsCategory, PropertyRow } from '../inspector/PropertySheet';
 import { NO_CAMERA_LINK, readCameraValues, type CameraValues } from './cameraDocument';
 import {
   CAMERA_FIELD_HINTS,
@@ -12,56 +15,21 @@ import {
 } from './cameraFieldMeta';
 
 /**
- * A label + control + one-line plain-language hint, in the inspector's property grid.
- * `wide` stacks the control under the label, which the three-axis vector rows need.
+ * A label and a control in the Details panel's two-column row. `hint` is the plain-language
+ * explanation and appears as a tooltip on the label, not as a paragraph. `wide` stacks the
+ * control under the label, which the three-axis vector rows need.
  */
 export function Field({ label, hint, wide, children }: { label: string; hint: string; wide?: boolean; children: ReactNode }) {
   return (
-    <label className={wide ? 'cameraField isWide' : 'cameraField'}>
-      <span className="cameraFieldLabel">
-        {label}
-        <span className="cameraFieldHint">{hint}</span>
-      </span>
+    <PropertyRow label={label} help={hint} wide={wide}>
       {children}
-    </label>
+    </PropertyRow>
   );
 }
 
-const AXES = [
-  { key: 'x', label: 'X', hint: 'left / right' },
-  { key: 'y', label: 'Y', hint: 'up / down' },
-  { key: 'z', label: 'Z', hint: 'forward / back' },
-] as const;
-
-/**
- * A three-axis row with the axis letter printed in front of each box. `VectorInputs` (shared with
- * the KMP inspector) leaves the boxes unlabelled, which is fine in a narrow two-column row but
- * unreadable in the camera inspector's full-width placement rows.
- */
-function CameraVectorInputs({ value, onChange, step = 1 }: { value: Vec3; onChange: (value: Vec3) => void; step?: number }) {
-  return (
-    <div className="cameraVectorInputs">
-      {AXES.map((axis) => (
-        <span key={axis.key} className="cameraAxisInput" title={`${axis.label} — ${axis.hint}`}>
-          <span className="cameraAxisLetter" aria-hidden="true">
-            {axis.label}
-          </span>
-          <input
-            aria-label={axis.label}
-            type="number"
-            step={step}
-            /* Two decimals: track coordinates run to five digits, and the boxes are narrow.
-               Only the axis the user actually types into is written back, so nothing is rounded away. */
-            value={Number.isFinite(value[axis.key]) ? Number(value[axis.key].toFixed(2)) : 0}
-            onChange={(event) => {
-              const next = Number(event.currentTarget.value);
-              if (Number.isFinite(next)) onChange({ ...value, [axis.key]: next });
-            }}
-          />
-        </span>
-      ))}
-    </div>
-  );
+/** Three scrubbable axis boxes. Track coordinates run to five digits, so two decimals is plenty. */
+function CameraVectorInputs({ value, onChange, step = 1, label }: { value: Vec3; onChange: (value: Vec3) => void; step?: number; label: string }) {
+  return <VectorInput value={value} onChange={onChange} step={step} precision={2} label={label} />;
 }
 
 function NumberField({
@@ -72,6 +40,7 @@ function NumberField({
   min,
   max,
   suffix,
+  precision,
   onChange,
 }: {
   label: string;
@@ -81,27 +50,12 @@ function NumberField({
   min?: number;
   max?: number;
   suffix?: string;
+  precision?: number;
   onChange: (value: number) => void;
 }) {
   return (
     <Field label={label} hint={hint}>
-      <div className={suffix ? 'cameraNumberWithSuffix' : undefined}>
-        <input
-          type="number"
-          aria-label={label}
-          step={step}
-          min={min}
-          max={max}
-          value={Number.isFinite(value) ? Number(value.toFixed(4)) : 0}
-          onChange={(event) => {
-            const next = Number(event.currentTarget.value);
-            if (!Number.isFinite(next)) return;
-            const clamped = Math.max(min ?? -Infinity, Math.min(max ?? Infinity, next));
-            onChange(clamped);
-          }}
-        />
-        {suffix && <span className="cameraFieldSuffix">{suffix}</span>}
-      </div>
+      <NumberInput label={label} value={Number.isFinite(value) ? value : 0} step={step} min={min} max={max} unit={suffix} precision={precision} onChange={onChange} />
     </Field>
   );
 }
@@ -170,161 +124,166 @@ export function CameraFields({ entity, cameraCount, routeCount, routePointCounts
 
   return (
     <div className="cameraFields">
-      <div className="detailsSectionHeader">Behavior</div>
-      <Field label="Type" hint={CAMERA_FIELD_HINTS.type}>
-        <select aria-label="Type" value={String(values.type)} onChange={(event) => onChange({ type: Number(event.currentTarget.value) })}>
-          {!CAMERA_TYPE_OPTIONS.some((option) => option.value === values.type) && <option value={values.type}>Unknown type {values.type}</option>}
-          {groups.map(([groupLabel, options]) => (
-            <optgroup key={groupLabel} label={groupLabel}>
-              {options.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
+      <DetailsCategory name="Behavior">
+        <div className="propertyGrid">
+          <Field label="Type" hint={`${CAMERA_FIELD_HINTS.type} ${typeInfo.description}`}>
+            <select aria-label="Type" value={String(values.type)} onChange={(event) => onChange({ type: Number(event.currentTarget.value) })}>
+              {!CAMERA_TYPE_OPTIONS.some((option) => option.value === values.type) && <option value={values.type}>Unknown type {values.type}</option>}
+              {groups.map(([groupLabel, options]) => (
+                <optgroup key={groupLabel} label={groupLabel}>
+                  {options.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </Field>
+
+          {relevance.nextCamera && (
+            <CameraSelect
+              label="Hands over to"
+              hint={CAMERA_FIELD_HINTS.nextCamera}
+              value={values.nextCam}
+              count={cameraCount}
+              currentIndex={entity.index}
+              onChange={(next) => onChange({ nextCam: next })}
+            />
+          )}
+
+          <Field label="Movement path" hint={relevance.route ? CAMERA_FIELD_HINTS.route : `${CAMERA_FIELD_HINTS.route} This camera type does not follow one.`}>
+            <select
+              aria-label="Movement path"
+              value={String(values.routeIndex)}
+              disabled={!relevance.route}
+              onChange={(event) => onChange({ routeIndex: Number(event.currentTarget.value) })}
+            >
+              <option value={NO_CAMERA_LINK}>None</option>
+              {values.routeIndex !== NO_CAMERA_LINK && values.routeIndex >= routeCount && <option value={values.routeIndex}>Missing path {values.routeIndex}</option>}
+              {Array.from({ length: routeCount }, (_, index) => (
+                <option key={index} value={index}>
+                  Path {index}
+                  {routePointCounts[index] !== undefined ? ` (${routePointCounts[index]} points)` : ''}
                 </option>
               ))}
-            </optgroup>
-          ))}
-        </select>
-      </Field>
-      <p className="cameraTypeDescription">{typeInfo.description}</p>
+            </select>
+          </Field>
 
-      {relevance.nextCamera && (
-        <CameraSelect
-          label="Hands over to"
-          hint={CAMERA_FIELD_HINTS.nextCamera}
-          value={values.nextCam}
-          count={cameraCount}
-          currentIndex={entity.index}
-          onChange={(next) => onChange({ nextCam: next })}
-        />
-      )}
-
-      <Field label="Movement path" hint={CAMERA_FIELD_HINTS.route}>
-        <select
-          aria-label="Movement path"
-          value={String(values.routeIndex)}
-          disabled={!relevance.route}
-          title={relevance.route ? undefined : 'Only route cameras follow a movement path.'}
-          onChange={(event) => onChange({ routeIndex: Number(event.currentTarget.value) })}
-        >
-          <option value={NO_CAMERA_LINK}>None</option>
-          {values.routeIndex !== NO_CAMERA_LINK && values.routeIndex >= routeCount && <option value={values.routeIndex}>Missing path {values.routeIndex}</option>}
-          {Array.from({ length: routeCount }, (_, index) => (
-            <option key={index} value={index}>
-              Path {index}
-              {routePointCounts[index] !== undefined ? ` (${routePointCounts[index]} points)` : ''}
-            </option>
-          ))}
-        </select>
-      </Field>
-
-      {relevance.duration && (
-        <>
-          <NumberField
-            label="Duration"
-            hint={CAMERA_FIELD_HINTS.duration}
-            value={values.time}
-            step={1}
-            min={0}
-            suffix="frames"
-            onChange={(next) => onChange({ time: next })}
-          />
-          <NumberField
-            label="Duration (seconds)"
-            hint="The same length in seconds, if that is easier to think in."
-            value={Number(framesToSeconds(values.time).toFixed(2))}
-            step={0.1}
-            min={0}
-            suffix="s"
-            onChange={(next) => onChange({ time: secondsToFrames(next) })}
-          />
-        </>
-      )}
+          {relevance.duration && (
+            <>
+              <NumberField
+                label="Duration"
+                hint={CAMERA_FIELD_HINTS.duration}
+                value={values.time}
+                step={1}
+                min={0}
+                suffix="frames"
+                onChange={(next) => onChange({ time: next })}
+              />
+              <NumberField
+                label="Duration (seconds)"
+                hint="The same length in seconds, if that is easier to think in."
+                value={Number(framesToSeconds(values.time).toFixed(2))}
+                step={0.1}
+                precision={2}
+                min={0}
+                suffix="s"
+                onChange={(next) => onChange({ time: secondsToFrames(next) })}
+              />
+            </>
+          )}
+        </div>
+      </DetailsCategory>
 
       {showPlacement && (
-        <>
-          <div className="detailsSectionHeader">Placement</div>
-          {relevance.position && (
-            <Field label="Position" hint={CAMERA_FIELD_HINTS.position} wide>
-              <CameraVectorInputs value={values.position} onChange={setVec('position')} />
+        <DetailsCategory name="Placement">
+          <div className="propertyGrid">
+            {relevance.position && (
+              <Field label="Position" hint={CAMERA_FIELD_HINTS.position} wide>
+                <CameraVectorInputs label="Position" value={values.position} onChange={setVec('position')} />
+              </Field>
+            )}
+            <Field label="Rotation" hint={CAMERA_FIELD_HINTS.rotation} wide>
+              <CameraVectorInputs label="Rotation" value={values.rotation} onChange={setVec('rotation')} />
             </Field>
+          </div>
+        </DetailsCategory>
+      )}
+
+      <DetailsCategory name="Framing">
+        <div className="propertyGrid">
+          <Field label={getViewStartLabel(values.type)} hint={getViewStartHint(values.type)} wide>
+            <CameraVectorInputs label={getViewStartLabel(values.type)} value={values.viewStart} onChange={setVec('viewStart')} />
+          </Field>
+          {relevance.viewEnd && (
+            <>
+              <Field label="Looks at (end)" hint={CAMERA_FIELD_HINTS.viewEnd} wide>
+                <CameraVectorInputs label="Looks at (end)" value={values.viewEnd} onChange={setVec('viewEnd')} />
+              </Field>
+              <NumberField
+                label="Pan speed"
+                hint={CAMERA_FIELD_HINTS.viewSpeed}
+                value={values.vView}
+                step={10}
+                min={0}
+                max={0xffff}
+                suffix="units / 100 f"
+                onChange={(next) => onChange({ vView: Math.round(next) })}
+              />
+            </>
           )}
-          <Field label="Rotation" hint={CAMERA_FIELD_HINTS.rotation} wide>
-            <CameraVectorInputs value={values.rotation} onChange={setVec('rotation')} />
-          </Field>
-        </>
-      )}
+          {relevance.zoom && (
+            <>
+              <NumberField
+                label="Zoom start"
+                hint={CAMERA_FIELD_HINTS.zoomStart}
+                value={values.zoomStart}
+                step={1}
+                min={1}
+                max={179}
+                suffix="degrees"
+                onChange={(next) => onChange({ zoomStart: next })}
+              />
+              <NumberField
+                label="Zoom end"
+                hint={CAMERA_FIELD_HINTS.zoomEnd}
+                value={values.zoomEnd}
+                step={1}
+                min={1}
+                max={179}
+                suffix="degrees"
+                onChange={(next) => onChange({ zoomEnd: next })}
+              />
+              <NumberField
+                label="Zoom speed"
+                hint={CAMERA_FIELD_HINTS.zoomSpeed}
+                value={values.vZoom}
+                step={10}
+                min={0}
+                max={0xffff}
+                suffix="deg / 100 f"
+                onChange={(next) => onChange({ vZoom: Math.round(next) })}
+              />
+            </>
+          )}
+          {relevance.moveSpeed && (
+            <NumberField
+              label="Travel speed"
+              hint={CAMERA_FIELD_HINTS.moveSpeed}
+              value={values.vCam}
+              step={10}
+              min={0}
+              max={0xffff}
+              suffix="units / 100 f"
+              onChange={(next) => onChange({ vCam: Math.round(next) })}
+            />
+          )}
+        </div>
+      </DetailsCategory>
 
-      <div className="detailsSectionHeader">Framing</div>
-      <Field label={getViewStartLabel(values.type)} hint={getViewStartHint(values.type)} wide>
-        <CameraVectorInputs value={values.viewStart} onChange={setVec('viewStart')} />
-      </Field>
-      {relevance.viewEnd && (
-        <>
-          <Field label="Looks at (end)" hint={CAMERA_FIELD_HINTS.viewEnd} wide>
-            <CameraVectorInputs value={values.viewEnd} onChange={setVec('viewEnd')} />
-          </Field>
-          <NumberField
-            label="Pan speed"
-            hint={CAMERA_FIELD_HINTS.viewSpeed}
-            value={values.vView}
-            step={10}
-            min={0}
-            max={0xffff}
-            suffix="units / 100 f"
-            onChange={(next) => onChange({ vView: Math.round(next) })}
-          />
-        </>
-      )}
-      {relevance.zoom && (
-        <>
-          <NumberField
-            label="Zoom start"
-            hint={CAMERA_FIELD_HINTS.zoomStart}
-            value={values.zoomStart}
-            step={1}
-            min={1}
-            max={179}
-            suffix="degrees"
-            onChange={(next) => onChange({ zoomStart: next })}
-          />
-          <NumberField
-            label="Zoom end"
-            hint={CAMERA_FIELD_HINTS.zoomEnd}
-            value={values.zoomEnd}
-            step={1}
-            min={1}
-            max={179}
-            suffix="degrees"
-            onChange={(next) => onChange({ zoomEnd: next })}
-          />
-          <NumberField
-            label="Zoom speed"
-            hint={CAMERA_FIELD_HINTS.zoomSpeed}
-            value={values.vZoom}
-            step={10}
-            min={0}
-            max={0xffff}
-            suffix="deg / 100 f"
-            onChange={(next) => onChange({ vZoom: Math.round(next) })}
-          />
-        </>
-      )}
-      {relevance.moveSpeed && (
-        <NumberField
-          label="Travel speed"
-          hint={CAMERA_FIELD_HINTS.moveSpeed}
-          value={values.vCam}
-          step={10}
-          min={0}
-          max={0xffff}
-          suffix="units / 100 f"
-          onChange={(next) => onChange({ vCam: Math.round(next) })}
-        />
-      )}
-
-      <details className="advancedDetails cameraAdvanced">
-        <summary>Rarely used</summary>
-        <div className="advancedDetailsBody">
+      <DetailsCategory name="Rarely used" defaultOpen={false}>
+        <div className="propertyGrid">
           <NumberField label="Shake" hint={CAMERA_FIELD_HINTS.shake} value={values.shake} min={0} max={255} onChange={(next) => onChange({ shake: Math.round(next) })} />
           <NumberField label="Start flag" hint={CAMERA_FIELD_HINTS.startFlag} value={values.start} min={0} max={255} onChange={(next) => onChange({ start: Math.round(next) })} />
           <NumberField label="Movie flag" hint={CAMERA_FIELD_HINTS.movieFlag} value={values.movie} min={0} max={255} onChange={(next) => onChange({ movie: Math.round(next) })} />
@@ -342,9 +301,7 @@ export function CameraFields({ entity, cameraCount, routeCount, routePointCounts
             />
           )}
         </div>
-      </details>
-
-      <p className="cameraFieldsFooter">Shot length: {formatFrames(values.time)}</p>
+      </DetailsCategory>
     </div>
   );
 }

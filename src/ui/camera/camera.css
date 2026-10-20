@@ -219,142 +219,31 @@
   font-size: var(--font-size-sm);
 }
 
-.cameraChainEmpty {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  line-height: 1.4;
-}
-
-.cameraChainList {
-  display: grid;
-  gap: var(--space-1);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.cameraChainItem {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) 22px;
-  align-items: center;
-  gap: var(--space-2);
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  /* One surface step lighter than the `.cameraChain` card it sits inside. */
-  background: var(--surface-3);
-}
-
-.cameraChainItem.isSelected {
-  border-color: var(--selection-border);
-}
-
-.cameraChainItem.isDropTarget {
-  border-color: var(--warning);
-  background: var(--warning-soft);
-}
-
-.cameraChainItem.hasWarning {
-  border-color: var(--warning-border);
-}
-
-.cameraChainGrip {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-dim);
-  cursor: grab;
-}
-
-.cameraChainButton {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  padding: var(--space-2) var(--space-1);
-  border: 0;
-  color: var(--text);
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-}
-
-.cameraChainOrder {
-  color: var(--warning-text);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-}
-
-.cameraChainName {
-  display: grid;
-  min-width: 0;
-  font-size: var(--font-size-sm);
-}
-
-.cameraChainType {
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cameraChainTime {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-
-.cameraChainRemove {
-  width: 20px;
-  height: 20px;
-}
-
-.cameraChainTotal {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-}
-
-.cameraChainWarning {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  margin: 0;
-  color: var(--warning-text);
-  font-size: var(--font-size-xs);
-  line-height: 1.4;
-}
-
 /* --- Inspector ----------------------------------------------------------- */
 
 .cameraInspector {
   display: grid;
   gap: var(--space-3);
+  min-width: 0;
 }
 
-.cameraInspectorActions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.cameraInspectorActions .button {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
+.cameraFields {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
 }
 
 .cameraIssues {
   display: grid;
   gap: var(--space-2);
+  padding: var(--space-3);
 }
 
 .cameraIssue {
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
-  padding: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--warning-border);
   border-radius: var(--radius-md);
   color: var(--warning-text);
@@ -373,192 +262,3 @@
   flex: 1;
 }
 
-.cameraFields {
-  display: grid;
-  gap: 0;
-  /* Field rules use --border-subtle so this grid reads the same as the shell `.propertyGrid`. */
-  border-top: 1px solid var(--border-subtle);
-}
-
-.cameraFields .detailsSectionHeader {
-  margin-top: var(--space-4);
-  padding: var(--space-4) 0 var(--space-3);
-  border-top: 1px solid var(--border-subtle);
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.cameraFields .detailsSectionHeader:first-child {
-  margin-top: 0;
-  padding-top: var(--space-3);
-  border-top: 0;
-}
-
-.cameraField {
-  display: grid;
-  grid-template-columns: minmax(120px, 42%) minmax(0, 1fr);
-  align-items: start;
-  gap: var(--space-2) var(--space-4);
-  padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-muted);
-  font-size: var(--font-size-sm);
-}
-
-/* Three-axis rows need the whole panel width, so the control drops under the label instead of
-   fighting it for the 42% column. */
-.cameraField.isWide {
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-3);
-}
-
-.cameraFieldLabel {
-  display: grid;
-  gap: var(--space-2);
-  color: var(--text);
-}
-
-.cameraFieldHint {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: 400;
-  line-height: 1.35;
-}
-
-.cameraField input,
-.cameraField select {
-  min-width: 0;
-  width: 100%;
-  height: var(--control-height);
-  border: 1px solid var(--border-strong);
-  /* Square on purpose: `.cameraAxisLetter` butts up against the input's left edge. */
-  border-radius: 0;
-  padding: 0 7px;
-  color: var(--text);
-  background: var(--surface-input);
-}
-
-.cameraField input:focus,
-.cameraField select:focus {
-  /* The field shares an edge with the axis letter, so focus recolours the border rather than
-     drawing an outline that would sit on top of it. */
-  border-color: var(--accent);
-  outline: none;
-}
-
-.cameraField select:disabled,
-.cameraField input:disabled {
-  color: var(--text-disabled);
-  background: var(--surface-2);
-}
-
-.cameraVectorInputs {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-2);
-}
-
-.cameraAxisInput {
-  display: grid;
-  grid-template-columns: 14px minmax(0, 1fr);
-  align-items: center;
-}
-
-/* Track coordinates run to five digits plus a sign, so these boxes give the number every pixel.
-   3px is deliberately below the spacing scale. */
-.cameraAxisInput input {
-  padding: 0 3px;
-}
-
-.cameraAxisLetter {
-  height: var(--control-height);
-  border: 1px solid var(--border-strong);
-  border-right: 0;
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  line-height: var(--control-height);
-  text-align: center;
-  background: var(--surface-2);
-}
-
-.cameraAxisInput:focus-within .cameraAxisLetter {
-  border-color: var(--accent);
-  color: var(--accent-text);
-}
-
-.cameraNumberWithSuffix {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.cameraFieldSuffix {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  white-space: nowrap;
-}
-
-.cameraTypeDescription {
-  margin: 0;
-  padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  line-height: 1.45;
-}
-
-.cameraAdvanced {
-  margin: var(--space-4) 0 0;
-}
-
-.cameraFieldsFooter {
-  margin: var(--space-3) 0 0;
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-
-/* --- Playback HUD -------------------------------------------------------- */
-
-.cameraPlayback,
-.cameraPlaybackIdle {
-  width: 272px;
-}
-
-.cameraPlaybackClock {
-  color: var(--accent-text);
-  font-size: var(--font-size-xs);
-  font-variant-numeric: tabular-nums;
-}
-
-.cameraPlaybackScrub {
-  width: 100%;
-  accent-color: var(--accent);
-}
-
-.cameraPlaybackButtons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.cameraPlaybackButtons .button {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex: 1 1 auto;
-  justify-content: center;
-}
-
-.cameraPlaybackButtons .button.isActive {
-  border-color: var(--accent-border);
-  background: var(--accent-soft);
-}
-
-.cameraPlaybackOpening {
-  width: 100%;
-}

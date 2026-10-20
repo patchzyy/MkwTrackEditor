@@ -2,7 +2,6 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp, Clapperboard, Copy, Film, Plus, Target, Trash2, Video } from 'lucide-react';
 import { getCameraTypeInfo } from '../../lib/cameraPreview';
 import { NO_CAMERA_LINK, filterCameraRows, type CameraRow } from './cameraDocument';
-import { ChainEditor, type ChainEditorProps } from './ChainEditor';
 
 /** One icon per camera family, so the list can be read at a glance. */
 function CameraIcon({ type }: { type: number }) {
@@ -16,8 +15,6 @@ function CameraIcon({ type }: { type: number }) {
 export interface CameraOutlinerProps {
   rows: CameraRow[];
   selectedId: string | null;
-  openingChain: ChainEditorProps;
-  selectionChain: ChainEditorProps | null;
   canEdit: boolean;
   introGenerator?: ReactNode;
   onSelect: (row: CameraRow) => void;
@@ -29,12 +26,10 @@ export interface CameraOutlinerProps {
   onSetChainStart: (kind: 'opening' | 'selection', index: number) => void;
 }
 
-/** Left rail for Camera mode: every camera in the track, plus the two pan chains. */
+/** Left rail for Camera mode: every camera in the track. The pan sequences live in the timeline dock. */
 export function CameraOutliner({
   rows,
   selectedId,
-  openingChain,
-  selectionChain,
   canEdit,
   introGenerator,
   onSelect,
@@ -142,25 +137,14 @@ export function CameraOutliner({
           <button
             type="button"
             className="button"
-            disabled={!selectedRow || selectedRow.isOpeningStart}
-            onClick={() => selectedRow && onSetChainStart('opening', selectedRow.index)}
-            title="Make the opening pan start at the selected camera"
-          >
-            Set as opening start
-          </button>
-          <button
-            type="button"
-            className="button"
             disabled={!selectedRow || selectedRow.isSelectionStart}
             onClick={() => selectedRow && onSetChainStart('selection', selectedRow.index)}
             title="Make the character-selection pan start at the selected camera"
           >
-            Set as selection-screen start
+            Use for the selection screen
           </button>
         </div>
 
-        <ChainEditor {...openingChain} />
-        {selectionChain && <ChainEditor {...selectionChain} />}
       </div>
     </aside>
   );
