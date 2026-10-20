@@ -12,6 +12,7 @@ geometry helpers in `src/lib/meshPick.ts` rather than duplicating them in the ve
 Companion documents: `docs/viewport-api.md` (the app ↔ viewport ↔ renderer contract),
 `docs/UI.md` (the design system and panel shell), `docs/PLAYTEST.md` (the in-browser playtest),
 `docs/MATERIALS.md` (the material and shader editor), `docs/STUDIO.md` (the Model Studio),
+`docs/CREATE.md` and `docs/CREATE-KIT.md` (Create mode and its asset kit),
 `docs/WORKPLAN.md` (the shared brief).
 
 ## Shell
@@ -89,6 +90,70 @@ and nothing outside `src/lib/playtest/` touches WebAssembly.
 `src/ui/viewport/` holds the mode-agnostic viewport logic that is pure enough to unit test:
 `cameraOverlay.ts` (KMP → camera gizmo overlay), `cameraPlayback.ts` (the playback clock),
 `meshSelection.ts` (the mesh selection list and its gizmo ids).
+
+## Create mode (`src/lib/create/`, `src/ui/create/`)
+
+A Mario-Maker-style track builder: pick a world, draw a road, dress it, press Test drive, export a
+`.szs`. The product spec is `docs/CREATE.md` (§1 and §6), the asset kit is `docs/CREATE-KIT.md`, the
+viewport half of the contract is section 11 of `docs/viewport-api.md`, and the single shared contract
+is `src/lib/create/types.ts`. Create is the first entry of the mode switch; it has its own undo stack
+(`designHistory.ts`) and keeps its design in IndexedDB, but what it produces is a normal
+`TrackDocument` (`sourceId` `create:<id>`), so the other modes, Playtest and Export work on it.
+
+### `src/lib/create/` — pure design → track logic (no React)
+
+| File | Responsibility |
+| --- | --- |
+| `types.ts` | The contract: `CreateProject` (the saved JSON design), `CreateKit`, `CompiledGeometry`, `CompileResult`, and the viewport's `CreateViewProps` / `CreateCameraApi` / `CreateOverlay`. |
+| `ops.ts`, `ops/` | Every design edit as a pure `(project, …) → project'` function (`addRoad`, `splitSection`, `setTheme`, `scatterProps`, `deleteSelection`, …). `ops/paramMap.ts` remaps road parameters when points are inserted or removed, `ops/sections.ts` keeps sections valid, `ops/migrate.ts` holds the defaults and loads old saved designs. |
+| `templates.ts` | The six starting layouts (`LAYOUT_TEMPLATES`), `createBlankProject` / `createProjectFromTemplate` (the ground starts at the world's `KitTheme.baseHeight`) and the default scenery scatter. |
+| `spline.ts`, `sections.ts`, `roadStyles.ts` | The road as a spline (centripetal Catmull-Rom, arc-length samples with bank, projection, parameter ↔ distance), the stretches of a road with their own cross-section, and the built-in road styles. |
+| `road.ts`, `terrain.ts`, `horizon.ts`, `pieces.ts`, `props.ts`, `meshBuilder.ts` | Geometry: per-section road meshes and collision, the sculpted and painted heightfield, the far horizon ground (a detailed ring plus flat slabs out to 2,000,000 units, so a far or low camera never looks at the empty clear colour), gameplay pieces and scenery objects. `meshBuilder.ts` holds the mesh and collision accumulators and the winding convention. |
+| `kmpGen.ts`, `kclTypes.ts` | Everything the game needs that a designer should not think about: start grid, checkpoints, respawns, driver and item routes, cameras, stage info. |
+| `analyze.ts` | `analyzeProject` → friendly `CreateIssue`s with "Show me" targets, and the build checklist. |
+| `raycast.ts` | Rays against the design's own collision (the tools click on this, not on the stale scene). |
+| `compile.ts` | `compileGeometry` (cheap, runs every drag frame), `compileProject` (adds the KMP and runs the writers), `buildPreviewModels` (one BRRES per chunk for the live viewport), `buildTrackArchive` (the playable `.szs`), file hashing. |
+| `kit/` | `loadCreateKit()` reads `public/data/MarioKartWii/Create/create-kit.szs` (worlds, surfaces, swatch BRRES, thumbnails, scenery). Built by `scripts/build-create-kit.mjs`. |
+| `writers/` | The binary writers: `modelWriter` (BRRES/MDL0 from scratch), `kclWriter`, `minimapWriter`. See `writers/README.md`. |
+| `__tests__/` | The synthetic kit and the Kinoko driving fixtures the generator tests share. |
+
+### `src/ui/create/` — the mode
+
+| File | Responsibility |
+| --- | --- |
+| `CreateMode.tsx` | `useCreateMode(ctx): ModeUi`, composition only. Wires the session, the tools and the panels into the shell's slots and into the viewport's `createView`, and frames the design when it opens (`viewport/framing.ts`: top view for a blank design, a 3/4 perspective for a template). |
+| `slots.tsx` | The four places Create plugs in: Build (left dock), Details (right dock), Palette (bottom dock) and the viewport chrome. |
+| `session/` | `useCreateSession.ts` is the state owner: kit, current project, `designHistory.ts` (snapshot undo with coalesced drags), autosave through `projectStore.ts` / `projectFile.ts` (IndexedDB plus the `.mkwcreate.json` file), the derived data (road samples, preview models, raycaster, issues, checklist) and the compile schedule. `compileClient.ts` + `compile.worker.ts` + `compileProtocol.ts` run the full compile off the main thread. `trackBridge.ts` swaps the compiled files into the `TrackDocument`; `conflicts.ts` spots hand-edits made in other modes; `SessionChrome.tsx` is the save indicator and the banners. |
+| `tools/` | The viewport tools as pure handlers (`selectTool`, `roadTool`, `sectionTool`, `pieceTool`, `paintTool`, `sculptTool`, `sceneryTool`, `startTool`; `(event, ctx) → step`) and `useCreateTools.ts`, the state machine around them (active tool, armed palette item, hover and drag, keys, palette drag-and-drop). `keys.ts` maps keys, `hints.ts` writes the hint strip, `bounds.ts` works out what "frame" means. |
+| `overlay/` | `buildCreateOverlay.ts` turns design + selection + hover + tool ghost into the `CreateOverlay` the noclip scene draws (spline, chevrons, handles, section ticks, brush circles). |
+| `home/` | The Create home (saved designs), `NewTrackWizard` (world → layout → name) and `TrackOutline` (the SVG thumbnail). |
+| `build/` | The left dock: the checklist and the layers tree. |
+| `details/` | The right dock: contextual inspectors (track, road, point, section, piece, prop, multi). `PresetField` + `presets.ts` turn raw numbers (speed, spacings) into named choices with an exact-value escape hatch. |
+| `palette/` | The bottom dock: tabs of tiles (roads, surfaces, pieces, scenery, terrain). `dockMetrics.ts` holds the row rhythm that makes the dock open on exactly one whole row and step by whole rows. |
+| `viewport/` | The floating tool bar, hint strip, health chip, coach marks, conflict banner, and `framing.ts` (the opening camera). |
+
+### Data flow
+
+The design is one JSON object. Every user action is an op that returns a new `CreateProject`; the
+session pushes it onto the design history and, on the next animation frame, recomputes the derived
+data: road samples, then `compileGeometry` (meshes by chunk, collision, bounds) on the main thread
+and `buildPreviewModels` (one small generated BRRES per chunk: `road:<id>`, `terrain`, `pieces`,
+`horizon`). Those go to the viewport as `createView.models`, which hot-swaps them without rebuilding
+the noclip scene; the loaded track's own course model is hidden. The tools raycast against that same
+collision, and the overlay is rebuilt from the project plus the tool state. About 300 ms after the
+last edit (immediately when a drag ends) the full `compileProject` runs in a worker: KMP, the
+collision octree, the course model and the minimap. `trackBridge` writes those files into the
+`TrackDocument` in place, so Playtest, the other modes and Export always see the current design.
+Opening a design for the first time creates that document through `openTrackBytes`, and a world
+change needs a scene refresh for its sky and lighting. If the user edits a generated file in another
+mode and comes back, `conflicts.ts` detects it by hash and the mode offers "Keep my changes" or
+"Rebuild from the design".
+
+The bottom dock height is the one piece of shell layout Create customises. `usePanelLayout` accepts a
+`BrowserSizing`; Create passes `CREATE_DOCK_SIZING`, so its palette opens at the height of the tab bar
+plus one section title plus one row of tiles, its drag handle snaps by whole rows, and scrolling
+inside the dock snaps to rows too. Create keeps its own persisted height; every other mode keeps the
+shared 260 px default and 150 px minimum.
 
 ## Editor state (`src/ui/state/`)
 

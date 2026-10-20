@@ -33,8 +33,10 @@ export class FontTexture {
 
         // Padding
         const extra = strokeWidth * 0.5;
-        cellWidth += extra * 2;
-        cellHeight += extra * 2;
+        // Editor extension: the canvas (and the texture array) are whole pixels. At the 12px base size
+        // the stroke padding is fractional, which made `copyExternalImageToTexture` assert.
+        cellWidth = Math.ceil(cellWidth + extra * 2);
+        cellHeight = Math.ceil(cellHeight + extra * 2);
 
         this.cellWidth = cellWidth;
         this.cellHeight = cellHeight;

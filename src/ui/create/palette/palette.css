@@ -1,0 +1,507 @@
+/* Create mode palette dock (bottom). Concept colours come from `.createMode` in create.css. */
+
+.crPalette {
+  /* The palette's vertical rhythm. dockMetrics.ts holds the same numbers: the dock is sized so it
+     shows whole rows (tab bar + title line + N tile rows), never half of one. */
+  --tile-size: 104px;
+  --tile-h: 104px;
+  --title-h: 22px;
+  /* The dock keeps an 8px strip under the scroll area: the next row's top edge never peeks in. */
+  padding-bottom: var(--space-3);
+}
+
+.crPaletteHeader {
+  gap: var(--space-4);
+}
+
+.crPaletteTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.crPaletteTitle svg {
+  color: var(--create-road);
+}
+
+.crPaletteStatus {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.crPaletteHint {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crArmedChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 2px 4px 2px 10px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.crArmedChip span {
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.crArmedChip strong {
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+
+.crArmedChip button {
+  padding: 2px 9px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.crArmedChip button:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.crPaletteBody {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: flex-start;
+  gap: var(--space-4) var(--space-6);
+  min-height: 0;
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* Scrolling lands on whole rows: every tile is a snap point, and the first row of a section
+     brings its title along. */
+  scroll-padding-top: var(--space-2);
+  scroll-snap-type: y mandatory;
+}
+
+.crTileSlot {
+  scroll-snap-align: start;
+}
+
+.crTileSlot--first {
+  scroll-margin-top: calc(var(--title-h) + var(--space-2));
+}
+
+/* A shelf's own controls (search box ...) live in the dock header. */
+.crPaletteTools {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.crPaletteTools:empty {
+  display: none;
+}
+
+.crTabNote {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.crSearch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 190px;
+  height: var(--control-height-sm);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-dim);
+  background: var(--surface-input);
+}
+
+.crSearch:focus-within {
+  border-color: var(--accent-border);
+}
+
+.crSearch input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  background: transparent;
+  font-size: var(--font-size-sm);
+}
+
+/* ---- tile shelves */
+
+.crTileSection {
+  display: flex;
+  max-width: 100%;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.crTileSectionTitle {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  height: 18px;
+  margin: 0;
+  overflow: hidden;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.crTileSectionTitle span {
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.crTileGrid {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 6), var(--tile-size));
+  gap: var(--space-2);
+}
+
+.crTileGrid--auto {
+  grid-template-columns: repeat(auto-fill, var(--tile-size));
+}
+
+.crTileSection--full {
+  flex: 1 0 100%;
+}
+
+.crTileSlot {
+  display: block;
+  min-width: 0;
+}
+
+.crTile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: var(--tile-h);
+  padding: 7px 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+
+.crTile:hover {
+  border-color: color-mix(in srgb, var(--tile-accent) 55%, var(--border-hover));
+  background: var(--surface-3);
+  transform: translateY(-1px);
+}
+
+.crTile:active {
+  transform: translateY(0);
+}
+
+.crTile.is-armed {
+  border-color: var(--tile-accent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--tile-accent) 14%, var(--surface-2));
+  box-shadow:
+    0 0 0 1px var(--tile-accent),
+    0 4px 18px color-mix(in srgb, var(--tile-accent) 25%, transparent);
+}
+
+.crTileArt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 56px;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: var(--surface-input);
+}
+
+.crTileLabel {
+  display: -webkit-box;
+  width: 100%;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  text-align: center;
+  text-wrap: balance;
+}
+
+.crTileBadge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  max-width: calc(100% - 20px);
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  color: var(--text);
+  background: rgb(10 13 18 / 78%);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.crTileCheck {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--tile-accent);
+}
+
+.crTileCheck::after {
+  position: absolute;
+  top: 3px;
+  left: 5px;
+  width: 4px;
+  height: 7px;
+  border: solid #0a0d12;
+  border-width: 0 2px 2px 0;
+  content: '';
+  transform: rotate(45deg);
+}
+
+.crTile--wide .crTileLabel {
+  -webkit-line-clamp: 1;
+}
+
+.crTileSection:has(.crTile--wide) {
+  flex: 1 0 100%;
+}
+
+.crTileGrid:has(.crTile--wide) {
+  grid-template-columns: repeat(auto-fill, 150px);
+}
+
+.crTile--wide .crTileArt {
+  height: 68px;
+}
+
+.crThumb {
+  display: block;
+  flex: none;
+  border-radius: var(--radius-md);
+  background-color: var(--surface-input);
+  background-position: center;
+  background-size: cover;
+}
+
+.crTileArt .crThumb {
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 0;
+}
+
+.crObjectArt,
+.crObjectFallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--text-dim);
+}
+
+.crObjectArt .thumbnail {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+
+.crPieceArt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--create-piece);
+  background: radial-gradient(circle at 50% 40%, var(--create-piece-soft), transparent 70%);
+}
+
+.crPieceArt--earth {
+  color: var(--create-terrain);
+  background: radial-gradient(circle at 50% 40%, var(--create-terrain-soft), transparent 70%);
+}
+
+.crPieceArt--erase {
+  color: var(--danger-text);
+  background: radial-gradient(circle at 50% 40%, var(--danger-soft), transparent 70%);
+}
+
+/* ---- road profile art: a side-on slice of the road drawn with the world's own textures */
+
+.crProfile {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(to bottom, #86bdf2, #d6ebfc 80%);
+}
+
+.crProfileRow {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  margin-bottom: -1px;
+}
+
+.crProfileRow i {
+  display: block;
+  flex: none;
+  background-color: #9aa6b4;
+  background-position: center;
+  background-size: cover;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 35%);
+}
+
+.crProfileRoad {
+  width: 78px;
+  height: 14px;
+}
+
+.crProfileCurb {
+  width: 9px;
+  height: 14px;
+}
+
+.crProfileShoulder {
+  height: 10px;
+}
+
+.crProfileWall {
+  width: 8px;
+  border-radius: 2px 2px 0 0;
+}
+
+.crProfileWall.is-fence {
+  opacity: 0.8;
+}
+
+.crProfileWall.is-invisible {
+  width: 2px;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-left: 2px dashed rgb(255 255 255 / 70%);
+}
+
+.crProfileGround {
+  display: block;
+  flex: none;
+  height: 26px;
+  background-color: #5c8f3a;
+  background-position: center;
+  background-size: 64px;
+  box-shadow: inset 0 3px 6px rgb(0 0 0 / 28%);
+}
+
+/* ---- terrain shelf: its sections join the shelf's own flow, so sculpting and the brush sit in the first row */
+
+.crInlineNote {
+  display: flex;
+  flex: 1 0 100%;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  font-size: var(--font-size-sm);
+}
+
+.crInlineNote--warn {
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
+}
+
+.crInlineNote span {
+  flex: 1 1 auto;
+}
+
+.crBrushPanel {
+  flex: 0 1 260px;
+  min-width: 220px;
+}
+
+.crBrushBody {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-3);
+  height: var(--tile-h);
+}
+
+.crBrushRow {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+/* Dragging a tile must drag the tile (our own data), never the thumbnail image inside it. */
+.crTile img,
+.crTile canvas {
+  -webkit-user-drag: none;
+  pointer-events: none;
+  user-select: none;
+}

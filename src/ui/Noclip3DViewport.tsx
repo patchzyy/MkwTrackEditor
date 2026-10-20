@@ -21,6 +21,20 @@ import {
   type ViewportTransformSelection,
 } from '../lib/brresRenderAdapter';
 import { buildU8 } from '../lib/u8';
+import type { CreateCameraApi, CreateFrameOptions, CreateHit, CreatePointerEvent, CreatePointerResult, CreateRay, CreateViewProps } from '../lib/create/types';
+import { CreateTopViewController } from './viewport/createTopView';
+import {
+  CREATE_RENDER_SCALE,
+  computeFrameView,
+  canvasPointToRay,
+  type CameraBasis,
+  diffPreviewModels,
+  pickOverlayHandle,
+  projectToCanvas,
+  resolveHit,
+  type AppliedPreviewModel,
+} from './viewport/createView';
+import { gfxDeviceGetImpl_GL } from '../../vendor/noclip.website/src/gfx/platform/GfxPlatformWebGL2';
 import {
   GRAVITY_AREA_TYPE,
   buildGravityOverlay,
@@ -129,6 +143,11 @@ interface Noclip3DViewportProps {
    * picking/transforming and hides the KMP overlays; `'visual'` hides the KMP overlays.
    */
   mode?: EditorMode;
+  /**
+   * Create mode (`mode="create"`): preview models, the design overlay, the pointer pipeline and
+   * the camera API. See "Create mode" in docs/viewport-api.md.
+   */
+  createView?: CreateViewProps | null;
   /** Drives the in-viewport CAME playback. `null` restores the free camera. */
   cameraPreview?: CameraPreviewRequest | null;
   onCameraPreviewEnd?: () => void;
@@ -251,7 +270,7 @@ export type DrawTool = 'none' | 'checkpoint';
 
 export type TransformTool = 'translate' | 'rotate' | 'scale';
 export type ViewMode = 'normal' | 'dev' | 'topdown' | 'ortho';
-export type EditorMode = 'kmp' | 'camera' | 'model' | 'visual';
+export type EditorMode = 'kmp' | 'camera' | 'model' | 'visual' | 'create';
 export interface CameraPreviewRequest {
   /** CAME entity id (`CAME-<n>`) or the raw CAME index. */
   cameraId: string;
@@ -830,7 +849,8 @@ export function Noclip3DViewport({
   transformSelection = null,
   transformSelections = [],
   showKmpEditorOverlay = true,
-  mode = 'kmp',
+  mode: modeProp = 'kmp',
+  createView: createViewProp = null,
   cameraPreview = null,
   onCameraPreviewEnd,
   onCameraPreviewProgress,
@@ -898,6 +918,10 @@ export function Noclip3DViewport({
           return Number.isFinite(parsed) ? parsed : null;
         })()
       : null;
+  // Dev hook: `window.__mkwViewport.create.inject(view)` drives Create mode without the Create UI.
+  const [devCreateView, setDevCreateView] = useState<CreateViewProps | null>(null);
+  const createView: CreateViewProps | null = (import.meta.env.DEV ? devCreateView : null) ?? createViewProp;
+  const mode: EditorMode = import.meta.env.DEV && devCreateView ? 'create' : modeProp;
   const viewportRef = useRef<HTMLElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const uiContainerRef = useRef<HTMLDivElement | null>(null);
@@ -1031,6 +1055,26 @@ export function Noclip3DViewport({
   const onChangeMeshGranularityRef = useRef(onChangeMeshGranularity);
   const onCameraPreviewEndRef = useRef(onCameraPreviewEnd);
   const modeRef = useRef<EditorMode>(mode);
+  const createViewRef = useRef<CreateViewProps | null>(createView);
+  /** The consumed pointer press the Create tools currently own (no camera, no selection). */
+  const createCaptureRef = useRef<CreateCapture | null>(null);
+  /** What the renderer currently holds per preview chunk, so a revision bump reloads only that chunk. */
+  const previewAppliedRef = useRef<Map<string, AppliedPreviewModel>>(new Map());
+  const createBoundsRef = useRef<{ min: Vec3; max: Vec3 } | null>(null);
+  const createSavedViewRef = useRef<{ controller: CameraController | null; matrix: mat4; fovY: number } | null>(null);
+  const createFrameAnimRef = useRef<CreateFrameAnimation | null>(null);
+  /**
+   * The last `frameBounds` request and the camera pose it ended at (null until the glide settles).
+   * When the canvas changes size (a dock opened or closed) and the camera is still exactly there,
+   * the request is repeated so the track is not cropped; a camera the user has moved is left alone.
+   */
+  const createLastFrameRef = useRef<{ min: Vec3; max: Vec3; options: CreateFrameOptions; fingerprint: string | null } | null>(null);
+  const createRefitRef = useRef<(() => void) | null>(null);
+  const [createTopView, setCreateTopViewState] = useState(false);
+  const createTopViewRef = useRef(false);
+  const createLastPickRef = useRef<{ handleId: string | null } | null>(null);
+  const courseHiddenByCreateRef = useRef(false);
+  const previewTimingsRef = useRef<{ key: string; revision: number; bytes: number; ms: number; ok: boolean }[]>([]);
   /** Dev-hook override so `window.__mkwViewport.setMode` survives re-renders. */
   const devModeOverrideRef = useRef<EditorMode | null>(null);
   const devCaptureRef = useRef<{ request: boolean; dataUrl: string | null }>({ request: false, dataUrl: null });
@@ -1078,6 +1122,8 @@ export function Noclip3DViewport({
   const [sceneProgress, setSceneProgress] = useState<TrackLoadProgress | null>(null);
   const [settledScene, setSettledScene] = useState<string | null>(null);
   const sceneBuildKey = sceneKey === null ? null : `${sceneKey}#${sceneRevision}`;
+  const sceneSettledRef = useRef(false);
+  sceneSettledRef.current = sceneBuildKey !== null && settledScene === sceneBuildKey;
   const gobjSignature = track ? getGobjSignature(track) : 'nogobj';
   const routeItems = track ? getRouteVisibilityItems(track) : [];
   trackRef.current = track;
@@ -1110,6 +1156,7 @@ export function Noclip3DViewport({
   onCameraPreviewEndRef.current = onCameraPreviewEnd;
   onCameraPreviewProgressRef.current = onCameraPreviewProgress;
   modeRef.current = devModeOverrideRef.current ?? mode;
+  createViewRef.current = createView;
   meshGranularityRef.current = activeMeshGranularity;
   meshSelectionsRef.current = meshSelections;
   cameraPreviewRef.current = devCameraPreviewRef.current !== undefined ? devCameraPreviewRef.current : cameraPreview;
@@ -1146,6 +1193,7 @@ export function Noclip3DViewport({
       const tick = (time: number) => {
         // A playtest owns the camera outright; the CAME preview is stopped while it runs.
         if (!stepPlaytest(time)) stepCameraPreview(time);
+        stepCreateFrame(time);
         syncNavigationController(viewer);
         const restoreSuppressedKeys = withSuppressedCameraMovementKeys(viewer);
         viewer.update({ time, webXRContext: null });
@@ -1157,6 +1205,7 @@ export function Noclip3DViewport({
             devCaptureRef.current = { request: false, dataUrl: null };
           }
         }
+        if (modeRef.current === 'create') syncCreateFrameState(canvasElement);
         const cameraPosition = getViewerCameraPosition(viewer);
         if (selectedIdRef.current && hasCameraPositionChanged(cameraPosition, overlayCameraPositionRef.current)) {
           overlayCameraPositionRef.current = cameraPosition;
@@ -1191,9 +1240,16 @@ export function Noclip3DViewport({
       cleanupResize = cleanup;
     });
 
+    let lastCanvasKey = '';
     function resizeToDisplay() {
       const rect = viewportElement.getBoundingClientRect();
       resizeCanvas(canvasElement, Math.max(1, Math.floor(rect.width)), Math.max(1, Math.floor(rect.height)), window.devicePixelRatio || 1);
+      const key = `${Math.floor(rect.width)}x${Math.floor(rect.height)}`;
+      if (key !== lastCanvasKey) {
+        const first = lastCanvasKey === '';
+        lastCanvasKey = key;
+        if (!first) createRefitRef.current?.();
+      }
     }
 
     return () => {
@@ -1261,6 +1317,15 @@ export function Noclip3DViewport({
     const handleWheel = (event: WheelEvent) => {
       const viewer = viewerRef.current;
       if (!viewer || playtestSessionRef.current || cameraPreviewStateRef.current.active) return;
+      if (viewer.cameraController instanceof CreateTopViewController) {
+        event.preventDefault();
+        const rect = canvasRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        createFrameAnimRef.current = null;
+        createLastFrameRef.current = null;
+        viewer.cameraController.zoomAtPixel(Math.sign(event.deltaY), event.clientX - rect.left, event.clientY - rect.top, rect.width, rect.height);
+        return;
+      }
       if (viewer.cameraController instanceof BlenderCameraController) {
         event.preventDefault();
         viewer.cameraController.zoom(Math.sign(event.deltaY));
@@ -1372,8 +1437,10 @@ export function Noclip3DViewport({
         appliedMeshEditsRef.current = new Map();
         appliedMeshCopiesRef.current = new Map();
         importedMeshInstancesRef.current = new Map();
+        // Preview chunks live inside the scene that was just destroyed.
+        previewAppliedRef.current = new Map();
         sceneViewer.setScene(scene);
-        (scene as SceneGfx & EditorMeshRendererScene).setEditorMode?.(modeRef.current);
+        setSceneEditorMode(scene, modeRef.current);
         deliverVisualScene(scene as SceneGfx & VisualRendererScene);
         syncSceneOverlay(loadingTrack, selectedIdRef.current);
         if (isRebuild && savedController && savedCameraMatrix) {
@@ -1420,15 +1487,102 @@ export function Noclip3DViewport({
     syncRenderedGobjTransforms(track);
   }, [track?.kmp?.entities]);
 
+  //#region Create mode effects
+
+  // Preview models: diffed by key and revision. A changed chunk is rebuilt first and the old one
+  // destroyed in the same call (see MarioKartWiiRenderer.setEditorPreviewChunk), so there is no
+  // frame without it and nothing left on the GPU.
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    const scene = sceneRef.current as (SceneGfx & CreateRendererScene) | null;
+    if (!viewer || !scene?.setEditorPreviewChunk) return;
+    const wanted = mode === 'create' && createView ? createView.models : [];
+    const applied = previewAppliedRef.current;
+    const diff = diffPreviewModels(wanted, applied);
+    for (const key of diff.remove) {
+      scene.removeEditorPreviewChunk?.(viewer.gfxDevice, key);
+      applied.delete(key);
+    }
+    for (const model of diff.upsert) {
+      const started = performance.now();
+      const ok = scene.setEditorPreviewChunk(
+        viewer.gfxDevice,
+        model.key,
+        model.revision,
+        new ArrayBufferSlice(model.brres.buffer as ArrayBuffer, model.brres.byteOffset, model.brres.byteLength),
+        model.modelName,
+      );
+      const ms = performance.now() - started;
+      previewTimingsRef.current.push({ key: model.key, revision: model.revision, bytes: model.brres.byteLength, ms, ok });
+      if (previewTimingsRef.current.length > 64) previewTimingsRef.current.shift();
+      if (!ok) console.warn(`Create preview chunk ${model.key} (revision ${model.revision}) could not be loaded`);
+      applied.set(model.key, { revision: model.revision, modelName: model.modelName, brres: model.brres });
+    }
+  }, [createView?.models, mode, viewerReady, sceneKey, sceneEpoch]);
+
+  // The generated chunks replace the track's own course model while `hideCourseModel` is set.
+  useEffect(() => {
+    const scene = sceneRef.current as (SceneGfx & VisualRendererScene) | null;
+    const hide = mode === 'create' && createView?.hideCourseModel === true;
+    if (hide) {
+      scene?.setEditorSceneModelVisible?.('./course_model.brres', false);
+      courseHiddenByCreateRef.current = true;
+    } else if (courseHiddenByCreateRef.current) {
+      scene?.setEditorSceneModelVisible?.('./course_model.brres', true);
+      courseHiddenByCreateRef.current = false;
+    }
+  }, [mode, createView?.hideCourseModel, viewerReady, sceneKey, sceneEpoch]);
+
+  useEffect(() => {
+    const scene = sceneRef.current as (SceneGfx & CreateRendererScene) | null;
+    scene?.setEditorCreateOverlay?.(mode === 'create' && createView ? createView.overlay : null);
+  }, [createView?.overlay, mode, viewerReady, sceneKey, sceneEpoch]);
+
+  useEffect(() => {
+    updateCanvasCursor();
+  }, [createView?.cursor, mode]);
+
+  // The camera API for the Create UI. It only touches refs, so one instance serves every render.
+  useEffect(() => {
+    const ref = createView?.cameraApiRef;
+    if (!ref || !viewerReady) return;
+    const api = createCameraApi();
+    ref.current = api;
+    return () => {
+      if (ref.current === api) ref.current = null;
+    };
+  }, [createView?.cameraApiRef, viewerReady]);
+
+  // Leaving Create mode puts the free camera back and gives up any tool that held the pointer.
+  useEffect(() => {
+    if (mode === 'create') return;
+    if (viewerRef.current?.cameraController instanceof CreateTopViewController) setCreateTopView(false);
+    if (createCaptureRef.current) endPointerGesture('blur');
+  }, [mode]);
+
+  //#endregion
+
   useEffect(() => {
     const viewer = viewerRef.current;
     const scene = sceneRef.current as SceneGfx & {
-      rebuildEditorGobjs?: (device: unknown, kmpBuffer: ArrayBufferSlice) => void;
+      rebuildEditorGobjs?: (device: unknown, kmpBuffer: ArrayBufferSlice, resolveFile?: (path: string) => ArrayBufferSlice | null) => void;
     } | null;
     if (!viewer || !scene?.rebuildEditorGobjs || !track?.kmp) return;
+    // Resolve object resources from the track's *current* archive entries: Create mode adds
+    // itembox.brres and scenery resources after the scene was built.
+    const entries = track.archiveEntries;
     scene.rebuildEditorGobjs(
       viewer.gfxDevice,
       new ArrayBufferSlice(track.kmp.original.buffer, track.kmp.original.byteOffset, track.kmp.original.byteLength),
+      (path) => {
+        const wanted = path.replace(/^\.\//, '').toLowerCase();
+        const entry = entries.find((candidate) => {
+          if (candidate.type !== 'file' || !candidate.data) return false;
+          const name = candidate.path.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
+          return name === wanted || name.endsWith(`/${wanted}`);
+        });
+        return entry?.data ? new ArrayBufferSlice(entry.data.buffer as ArrayBuffer, entry.data.byteOffset, entry.data.byteLength) : null;
+      },
     );
   }, [gobjSignature]);
 
@@ -1451,6 +1605,8 @@ export function Noclip3DViewport({
     tool,
     routeVisibility,
     viewMode,
+    mode,
+    createView?.showRaceLines,
   ]);
 
   useEffect(() => {
@@ -1517,21 +1673,22 @@ export function Noclip3DViewport({
     const scene = sceneRef.current as SceneGfx & {
       setEditorFogEnabled?: (enabled: boolean) => void;
     } | null;
-    scene?.setEditorFogEnabled?.(fogEnabled);
-  }, [fogEnabled, viewerReady, sceneKey, sceneEpoch]);
+    // The planning view is orthographic from a very high eye, where course fog is meaningless.
+    scene?.setEditorFogEnabled?.(fogEnabled && !(mode === 'create' && createTopView));
+  }, [fogEnabled, viewerReady, sceneKey, sceneEpoch, mode, createTopView]);
 
   useEffect(() => {
     if (mode === 'visual') return;
     const scene = sceneRef.current as (SceneGfx & VisualRendererScene) | null;
     for (const model of scene?.listEditorSceneModels?.() ?? []) {
-      if (model.kind === 'skybox') scene?.setEditorSceneModelVisible?.(model.archivePath, skyboxVisible);
+      if (model.kind === 'skybox') scene?.setEditorSceneModelVisible?.(model.archivePath, skyboxVisible && !(mode === 'create' && createTopView));
     }
-  }, [skyboxVisible, mode, viewerReady, sceneKey, sceneEpoch]);
+  }, [skyboxVisible, mode, viewerReady, sceneKey, sceneEpoch, createTopView]);
 
   // Push the editor mode into the renderer and reset mode-specific state.
   useEffect(() => {
     const scene = getMeshScene();
-    scene?.setEditorMode?.(mode);
+    setSceneEditorMode(scene, mode);
     if (mode !== 'model') {
       hoveredMeshRef.current = null;
       setHoveredMeshKey(null);
@@ -1745,7 +1902,7 @@ export function Noclip3DViewport({
   // KMP-mode keyboard: F frames the selection, H hides its layer, the numpad switches views.
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (modeRef.current === 'model') return;
+      if (modeRef.current === 'model' || modeRef.current === 'create') return;
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
       if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -1789,7 +1946,7 @@ export function Noclip3DViewport({
       setMode: (next: EditorMode | null) => {
         devModeOverrideRef.current = next;
         modeRef.current = next ?? mode;
-        getMeshScene()?.setEditorMode?.(modeRef.current);
+        setSceneEditorMode(getMeshScene(), modeRef.current);
         syncSceneOverlay(trackRef.current, selectedIdRef.current);
       },
       getMode: () => modeRef.current,
@@ -1879,6 +2036,53 @@ export function Noclip3DViewport({
         pointerLockDenied: pointerLockDeniedRef.current,
         cursor: canvasRef.current?.dataset.cursor ?? null,
       }),
+      /** Create mode probes: drive the viewport without the Create UI, and read what it did. */
+      create: {
+        /** Puts the viewport in Create mode with this `createView` (null leaves it). */
+        inject: (view: CreateViewProps | null) => setDevCreateView(view),
+        overlayStats: () => (sceneRef.current as CreateRendererScene | null)?.getEditorCreateOverlayStats?.() ?? null,
+        previewModels: () => (sceneRef.current as CreateRendererScene | null)?.listEditorPreviewChunks?.() ?? [],
+        /** Load times of recent preview chunks (parse + upload), newest last. */
+        previewTimings: () => previewTimingsRef.current.slice(),
+        /**
+         * Builds the event a pointer at canvas point (x, y) would deliver and hands it to
+         * `createView.onPointer`. No capture is started; real input does that.
+         */
+        simulatePointer: (
+          phase: CreatePointerEvent['phase'],
+          x: number,
+          y: number,
+          options: { button?: number; shift?: boolean; ctrl?: boolean; alt?: boolean } = {},
+        ) => {
+          const rect = canvasRef.current?.getBoundingClientRect();
+          if (!rect) return null;
+          const modifiers = { shiftKey: options.shift === true, ctrlKey: options.ctrl === true, altKey: options.alt === true };
+          const event = buildCreatePointerEvent(phase, options.button ?? 0, rect.left + x, rect.top + y, modifiers);
+          if (!event) return null;
+          const result = createViewRef.current?.onPointer?.(event) ?? 'pass';
+          return { event, result };
+        },
+        pickHandle: (x: number, y: number) => {
+          const rect = canvasRef.current?.getBoundingClientRect();
+          return rect ? buildCreatePointerEvent('hover', 0, rect.left + x, rect.top + y, { shiftKey: false, ctrlKey: false, altKey: false })?.handleId ?? null : null;
+        },
+        cameraApi: () => createCameraApi(),
+        /** The live renderer, for probes that need a renderer method the hook does not wrap. */
+        scene: () => sceneRef.current,
+        isCaptured: () => createCaptureRef.current !== null,
+        /** Live GPU objects by kind (dev builds track every create/destroy) plus the JS heap. */
+        gpuStats: () => {
+          const viewer = viewerRef.current;
+          if (!viewer) return null;
+          const impl = gfxDeviceGetImpl_GL(viewer.gfxDevice) as unknown as { _resourceCreationTracker: { liveObjects: Set<{ _T: number }> } | null };
+          const names = ['buffer', 'texture', 'renderTarget', 'sampler', 'program', 'bindings', 'inputLayout', 'renderPipeline', 'computePipeline', 'readback', 'queryPool'];
+          const counts: Record<string, number> = {};
+          for (const name of names) counts[name] = 0;
+          for (const object of impl._resourceCreationTracker?.liveObjects ?? []) counts[names[object._T]] = (counts[names[object._T]] ?? 0) + 1;
+          const memory = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
+          return { tracked: impl._resourceCreationTracker !== null, counts, jsHeapBytes: memory?.usedJSHeapSize ?? null };
+        },
+      },
       /** The overlay handle under a screen point — how probes locate a camera view-point handle. */
       pickHandleAt: (clientX: number, clientY: number) =>
         canvasRef.current ? pickSceneHandle(sceneRef.current, clientX, clientY, canvasRef.current) : null,
@@ -2364,6 +2568,335 @@ export function Noclip3DViewport({
     return true;
   }
 
+  //#region Create mode: pointer pipeline, camera API
+
+  function createCanvasBasis(): { basis: CameraBasis; width: number; height: number } | null {
+    const viewer = viewerRef.current;
+    const canvas = canvasRef.current;
+    if (!viewer || !canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    return {
+      basis: {
+        clipFromWorld: viewer.camera.clipFromWorldMatrix,
+        projectionMatrix: viewer.camera.projectionMatrix,
+        worldMatrix: viewer.camera.worldMatrix,
+        orthographic: viewer.camera.isOrthographic,
+      },
+      width: rect.width,
+      height: rect.height,
+    };
+  }
+
+  /** The world ray under a canvas point (CSS pixels relative to the canvas), in game units. */
+  function createScreenToRay(x: number, y: number): CreateRay {
+    const info = createCanvasBasis();
+    const ray = info ? canvasPointToRay(info.basis, x, y, info.width, info.height) : null;
+    return ray ?? { origin: { x: 0, y: 1000, z: 0 }, direction: { x: 0, y: -1, z: 0 } };
+  }
+
+  function buildCreatePointerEvent(
+    phase: CreatePointerEvent['phase'],
+    button: number,
+    clientX: number,
+    clientY: number,
+    modifiers: { shiftKey: boolean; ctrlKey: boolean; altKey: boolean },
+  ): CreatePointerEvent | null {
+    const view = createViewRef.current;
+    const canvas = canvasRef.current;
+    const info = createCanvasBasis();
+    if (!view || !canvas || !info) return null;
+    const rect = canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    const ray = canvasPointToRay(info.basis, x, y, info.width, info.height);
+    if (!ray) return null;
+    let hit: CreateHit | null = null;
+    try {
+      hit = resolveHit(ray, view.raycast, view.groundPlaneY);
+    } catch (error) {
+      console.error('createView.raycast threw', error);
+    }
+    const handleId = pickOverlayHandle(view.overlay.points, info.basis.clipFromWorld, info.width, info.height, x, y);
+    createLastPickRef.current = { handleId };
+    return {
+      phase,
+      button: phase === 'hover' || phase === 'leave' ? 0 : button,
+      shift: modifiers.shiftKey,
+      ctrl: modifiers.ctrlKey,
+      alt: modifiers.altKey,
+      screen: { x, y },
+      ray,
+      hit,
+      handleId,
+    };
+  }
+
+  function deliverCreatePointer(
+    phase: CreatePointerEvent['phase'],
+    button: number,
+    clientX: number,
+    clientY: number,
+    modifiers: { shiftKey: boolean; ctrlKey: boolean; altKey: boolean },
+  ): CreatePointerResult {
+    const view = createViewRef.current;
+    if (!view?.onPointer) return 'pass';
+    const event = buildCreatePointerEvent(phase, button, clientX, clientY, modifiers);
+    if (!event) return 'pass';
+    try {
+      return view.onPointer(event);
+    } catch (error) {
+      console.error('createView.onPointer threw', error);
+      return 'pass';
+    }
+  }
+
+  /**
+   * A press in Create mode. The Create tools see it first; when they consume it, the viewport
+   * captures the pointer for them and moves no camera, takes no pointer lock and selects nothing.
+   * Otherwise the press does what it always did to the camera. Either way `preventDefault` runs
+   * first: that is what stops noclip's own mousedown grab from taking pointer lock.
+   */
+  function handleCreatePointerDown(event: PointerEvent<HTMLCanvasElement>) {
+    const button = toViewportMouseButton(event.button);
+    if (button === 'other') return;
+    if (pointerGestureRef.current) return;
+    const canvas = event.currentTarget;
+    event.preventDefault();
+    event.stopPropagation();
+    canvas.focus({ preventScroll: true });
+    createFrameAnimRef.current = null;
+    createLastFrameRef.current = null;
+
+    const result = deliverCreatePointer('down', event.button, event.clientX, event.clientY, event);
+    if (result === 'consumed') {
+      createCaptureRef.current = {
+        pointerId: event.pointerId,
+        button: event.button,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        shiftKey: event.shiftKey,
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+      };
+      beginPointerGesture(canvas, event, 'drag');
+      return;
+    }
+    if (navigationPresetRef.current === 'blender27' && button === 'right') {
+      beginPointerGesture(canvas, event, 'select');
+      return;
+    }
+    if (button !== 'left') {
+      const cameraMode = cameraModeForButton(button, cameraGestureOptions(readModifiers(event)));
+      if (cameraMode) beginPointerGesture(canvas, event, 'camera', cameraMode);
+      return;
+    }
+    // Left press the tools passed on: a click does nothing (there is no selection in Create mode),
+    // a drag turns into the camera.
+    beginPointerGesture(canvas, event, 'select');
+  }
+
+  /** The capture ended: `up` when the button came up, `cancel` for anything else. */
+  function finishCreateCapture(reason: GestureEndReason, event?: PointerEvent<HTMLCanvasElement>) {
+    const capture = createCaptureRef.current;
+    if (!capture) return;
+    createCaptureRef.current = null;
+    const clientX = event?.clientX ?? capture.clientX;
+    const clientY = event?.clientY ?? capture.clientY;
+    deliverCreatePointer(reason === 'pointerup' ? 'up' : 'cancel', capture.button, clientX, clientY, event ?? capture);
+  }
+
+  function handleCreatePointerMove(event: PointerEvent<HTMLCanvasElement>, hasGesture: boolean): boolean {
+    const capture = createCaptureRef.current;
+    if (capture) {
+      if (event.pointerId !== capture.pointerId) return true;
+      capture.clientX = event.clientX;
+      capture.clientY = event.clientY;
+      capture.shiftKey = event.shiftKey;
+      capture.ctrlKey = event.ctrlKey;
+      capture.altKey = event.altKey;
+      deliverCreatePointer('move', capture.button, event.clientX, event.clientY, event);
+      return true;
+    }
+    if (hasGesture) return false;
+    deliverCreatePointer('hover', 0, event.clientX, event.clientY, event);
+    return true;
+  }
+
+  /** Glides a framing animation of the free camera; called once per animation frame. */
+  function stepCreateFrame(_timeMs: number) {
+    const animation = createFrameAnimRef.current;
+    const viewer = viewerRef.current;
+    if (!animation || !viewer) return;
+    const controller = viewer.cameraController;
+    if (!(controller instanceof FPSCameraController)) {
+      createFrameAnimRef.current = null;
+      return;
+    }
+    const t = Math.min(1, Math.max(0, (performance.now() - animation.startMs) / animation.durationMs));
+    const eased = 1 - Math.pow(1 - t, 3);
+    const eye = vec3.lerp(vec3.create(), animation.fromEye, animation.toEye, eased);
+    const target = vec3.lerp(vec3.create(), animation.fromTarget, animation.toTarget, eased);
+    applyFPSCameraFrame(controller, { eye, target });
+    if (t >= 1) createFrameAnimRef.current = null;
+  }
+
+  /** Per-frame bookkeeping: pixel ratio for the overlay, and whether the planning view is on. */
+  function syncCreateFrameState(canvas: HTMLCanvasElement) {
+    const scene = sceneRef.current as (SceneGfx & CreateRendererScene) | null;
+    if (canvas.clientWidth > 0) scene?.setEditorCreatePixelRatio?.(canvas.width / canvas.clientWidth);
+    const top = viewerRef.current?.cameraController instanceof CreateTopViewController;
+    if (top !== createTopViewRef.current) {
+      createTopViewRef.current = top;
+      setCreateTopViewState(top);
+    }
+    // Once a requested frame has settled, remember where the camera ended up.
+    const lastFrame = createLastFrameRef.current;
+    const viewer = viewerRef.current;
+    if (lastFrame && lastFrame.fingerprint === null && viewer) {
+      const controller = viewer.cameraController;
+      const gliding = createFrameAnimRef.current !== null || (controller instanceof CreateTopViewController && controller.isGliding);
+      if (!gliding) lastFrame.fingerprint = cameraFingerprint(viewer);
+    }
+  }
+
+  /** Repeats the last frame request after the canvas changed size, if the camera has not been moved since. */
+  createRefitRef.current = () => {
+    const lastFrame = createLastFrameRef.current;
+    const viewer = viewerRef.current;
+    if (!lastFrame || lastFrame.fingerprint === null || !viewer || modeRef.current !== 'create') return;
+    if (cameraPreviewStateRef.current.active || playtestSessionRef.current) return;
+    if (cameraFingerprint(viewer) !== lastFrame.fingerprint) {
+      createLastFrameRef.current = null;
+      return;
+    }
+    frameCreateBounds(lastFrame.min, lastFrame.max, { ...lastFrame.options, animate: false });
+  };
+
+  function ensureFreeCameraController(viewer: Viewer): FPSCameraController {
+    if (viewer.cameraController instanceof FPSCameraController) return viewer.cameraController;
+    const controller = new FPSCameraController();
+    viewer.setCameraController(controller);
+    viewer.camera.setPerspective(Math.PI / 3, getViewerAspect(viewer), 4, 500000);
+    controller.cameraUpdateForced();
+    return controller;
+  }
+
+  function createDefaultBounds(): { min: Vec3; max: Vec3 } {
+    const fromTrack = trackRef.current ? getTrackGameBounds(trackRef.current) : null;
+    return fromTrack ?? { min: { x: -3000, y: 0, z: -3000 }, max: { x: 3000, y: 500, z: 3000 } };
+  }
+
+  function frameCreateBounds(min: Vec3, max: Vec3, options: CreateFrameOptions = {}) {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    createBoundsRef.current = { min, max };
+    createLastFrameRef.current = { min, max, options, fingerprint: null };
+    const S = CREATE_RENDER_SCALE;
+    const aspect = getViewerAspect(viewer);
+    const controller = viewer.cameraController;
+    if (controller instanceof CreateTopViewController) {
+      controller.frameBox(min.x * S, min.z * S, max.x * S, max.z * S, aspect, options.animate === false, options.fill ? 1 / options.fill : undefined);
+      return;
+    }
+    if (cameraPreviewStateRef.current.active || playtestSessionRef.current) return;
+    ensureFreeCameraController(viewer);
+    const forward = vec3.fromValues(-viewer.camera.worldMatrix[8], -viewer.camera.worldMatrix[9], -viewer.camera.worldMatrix[10]);
+    vec3.normalize(forward, forward);
+    const frame = computeFrameView(min, max, {
+      ...options,
+      fovY: viewer.camera.fovY || Math.PI / 3,
+      aspect,
+      currentForward: { x: forward[0], y: forward[1], z: forward[2] },
+    });
+    const toEye = vec3.fromValues(frame.eye.x * S, frame.eye.y * S, frame.eye.z * S);
+    const toTarget = vec3.fromValues(frame.target.x * S, frame.target.y * S, frame.target.z * S);
+    const eye = vec3.fromValues(viewer.camera.worldMatrix[12], viewer.camera.worldMatrix[13], viewer.camera.worldMatrix[14]);
+    if (options.animate === false) {
+      createFrameAnimRef.current = null;
+      const free = viewer.cameraController;
+      if (free instanceof FPSCameraController) applyFPSCameraFrame(free, { eye: toEye, target: toTarget });
+      return;
+    }
+    const distance = vec3.distance(toEye, toTarget);
+    createFrameAnimRef.current = {
+      fromEye: eye,
+      fromTarget: vec3.scaleAndAdd(vec3.create(), eye, forward, distance),
+      toEye,
+      toTarget,
+      startMs: performance.now(),
+      durationMs: 380,
+    };
+  }
+
+  function setCreateTopView(enabled: boolean) {
+    const viewer = viewerRef.current;
+    if (!viewer || !sceneRef.current) return;
+    const current = viewer.cameraController;
+    createFrameAnimRef.current = null;
+    if (enabled) {
+      const bounds = createBoundsRef.current ?? createDefaultBounds();
+      const S = CREATE_RENDER_SCALE;
+      const aspect = getViewerAspect(viewer);
+      createLastFrameRef.current = { min: bounds.min, max: bounds.max, options: {}, fingerprint: null };
+      if (current instanceof CreateTopViewController) {
+        current.frameBox(bounds.min.x * S, bounds.min.z * S, bounds.max.x * S, bounds.max.z * S, aspect, false);
+        return;
+      }
+      createSavedViewRef.current = { controller: current ?? null, matrix: mat4.clone(viewer.camera.worldMatrix), fovY: viewer.camera.fovY || Math.PI / 3 };
+      const controller = new CreateTopViewController();
+      viewer.setCameraController(controller);
+      controller.frameBox(bounds.min.x * S, bounds.min.z * S, bounds.max.x * S, bounds.max.z * S, aspect, true);
+      controller.update(viewer.inputManager, 0);
+      createTopViewRef.current = true;
+      setCreateTopViewState(true);
+      return;
+    }
+    if (!(current instanceof CreateTopViewController)) return;
+    createLastFrameRef.current = null;
+    const saved = createSavedViewRef.current;
+    createSavedViewRef.current = null;
+    if (saved?.controller && saved.controller !== current) {
+      viewer.setCameraController(saved.controller);
+      if (saved.controller instanceof FPSCameraController) viewer.camera.setPerspective(saved.fovY, getViewerAspect(viewer), 4, 500000);
+      mat4.copy(viewer.camera.worldMatrix, saved.matrix);
+      viewer.camera.worldMatrixUpdated();
+      saved.controller.cameraUpdateForced();
+    } else {
+      ensureFreeCameraController(viewer);
+      if (trackRef.current) applyViewMode(trackRef.current, true);
+    }
+    createTopViewRef.current = false;
+    setCreateTopViewState(false);
+  }
+
+  function createCameraApi(): CreateCameraApi {
+    return {
+      frameBounds: (min, max, options) => frameCreateBounds(min, max, options),
+      setTopView: (enabled) => setCreateTopView(enabled),
+      isTopView: () => viewerRef.current?.cameraController instanceof CreateTopViewController,
+      isSceneReady: () => sceneSettledRef.current && !!sceneRef.current,
+      getPose: () => {
+        const viewer = viewerRef.current;
+        if (!viewer) return { eye: { x: 0, y: 0, z: 0 }, forward: { x: 0, y: -1, z: 0 } };
+        const m = viewer.camera.worldMatrix;
+        const f = vec3.normalize(vec3.create(), vec3.fromValues(-m[8], -m[9], -m[10]));
+        const s = 1 / CREATE_RENDER_SCALE;
+        return { eye: { x: m[12] * s, y: m[13] * s, z: m[14] * s }, forward: { x: f[0], y: f[1], z: f[2] } };
+      },
+      project: (point) => {
+        const info = createCanvasBasis();
+        if (!info) return null;
+        const projected = projectToCanvas(info.basis.clipFromWorld, point, info.width, info.height);
+        return projected ? { x: projected.x, y: projected.y } : null;
+      },
+      screenToRay: (x, y) => createScreenToRay(x, y),
+      canvasRect: () => canvasRef.current?.getBoundingClientRect() ?? null,
+    };
+  }
+
+  //#endregion
+
   //#region Mouse model
   //
   // One code path owns the mouse (noclip's own grab is switched off in `bootViewer`). Every
@@ -2377,7 +2910,7 @@ export function Noclip3DViewport({
     return {
       preset: navigationPresetRef.current,
       modifiers,
-      orthographic: viewer ? viewer.cameraController instanceof OrthoCameraController : false,
+      orthographic: viewer ? viewer.cameraController instanceof OrthoCameraController || viewer.cameraController instanceof CreateTopViewController : false,
       // A camera preview or a playtest is driving the camera; the mouse must not fight it.
       mouseLookAllowed: !cameraPreviewStateRef.current.active && !playtestStateRef.current.active,
     };
@@ -2387,6 +2920,10 @@ export function Noclip3DViewport({
     const canvas = canvasRef.current;
     if (!canvas) return;
     canvas.dataset.cursor = cursorForGesture(pointerGestureRef.current);
+    // Create mode: the tool's cursor, except while the camera is moving.
+    const gesture = pointerGestureRef.current;
+    const toolCursor = modeRef.current === 'create' ? createViewRef.current?.cursor : undefined;
+    canvas.style.cursor = toolCursor && (!gesture || gesture.camera === null) ? toolCursor : '';
   }
 
   /**
@@ -2421,6 +2958,8 @@ export function Noclip3DViewport({
 
   function startCameraGesture(canvas: HTMLCanvasElement, gesture: ViewportGesture, clientX: number, clientY: number) {
     if (!gesture.camera) return;
+    createFrameAnimRef.current = null;
+    createLastFrameRef.current = null;
     cameraLookDragRef.current = {
       mode: gesture.camera,
       lastClientX: clientX,
@@ -2460,6 +2999,10 @@ export function Noclip3DViewport({
 
   function handleCanvasPointerDown(event: PointerEvent<HTMLCanvasElement>) {
     if (playtestSessionRef.current) return;
+    if (modeRef.current === 'create' && createViewRef.current) {
+      handleCreatePointerDown(event);
+      return;
+    }
     const button = toViewportMouseButton(event.button);
     if (button === 'other') return;
     // One gesture at a time: a second button while a drag runs must not steal the pointer.
@@ -2616,6 +3159,7 @@ export function Noclip3DViewport({
     if (playtestSessionRef.current) return;
     const gesture = pointerGestureRef.current;
     if (gesture && event.pointerId !== gesture.pointerId) return;
+    if (modeRef.current === 'create' && createViewRef.current && handleCreatePointerMove(event, gesture !== null)) return;
 
     if (gesture && !gesture.moved && movedBeyondSlop(gesture, event.clientX, event.clientY)) {
       gesture.moved = true;
@@ -2718,6 +3262,10 @@ export function Noclip3DViewport({
     if (!delta || !viewer) return;
     viewer.inputManager.buttons = event.buttons;
     const controller = viewer.cameraController;
+    if (controller instanceof CreateTopViewController) {
+      controller.panPixels(delta.dx, delta.dy, canvas?.clientHeight ?? 1);
+      return;
+    }
     if (controller instanceof BlenderCameraController) {
       // Modifiers can change while MMB remains held, as in Blender.
       const mode = cameraModeForButton('middle', cameraGestureOptions(readModifiers(event)));
@@ -2736,6 +3284,7 @@ export function Noclip3DViewport({
     if (!gesture) return;
     if (event && event.pointerId !== gesture.pointerId) return;
     pointerGestureRef.current = null;
+    if (createCaptureRef.current) finishCreateCapture(reason, event);
 
     const canvas = event?.currentTarget ?? canvasRef.current;
     releaseCameraLook(canvas);
@@ -2837,6 +3386,8 @@ export function Noclip3DViewport({
   /** A left press that never travelled: pick whatever sits under it. */
   function performSelectionClick(gesture: ViewportGesture, canvas: HTMLCanvasElement | null) {
     if (!canvas) return;
+    // Create mode has no KMP selection and no mesh picking.
+    if (modeRef.current === 'create') return;
     const clientX = gesture.startX;
     const clientY = gesture.startY;
     const modifiers: PointerModifiers = gesture.modifiers;
@@ -2868,9 +3419,13 @@ export function Noclip3DViewport({
     onSelect(picked?.id ?? null, { additive: isAdditiveSelectionModifier(modifiers) });
   }
 
-  function handleCanvasPointerLeave() {
+  function handleCanvasPointerLeave(event?: PointerEvent<HTMLCanvasElement>) {
     // A gesture owns the pointer until the button comes up; leaving the canvas must not end it.
     if (pointerGestureRef.current) return;
+    if (modeRef.current === 'create' && createViewRef.current) {
+      if (event) deliverCreatePointer('leave', 0, event.clientX, event.clientY, event);
+      return;
+    }
     setHoveredGizmoHandle(null);
     if (hoveredIdRef.current !== null) setHoveredId(null);
     lastPointerRef.current = null;
@@ -3761,27 +4316,32 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
           hoveredId: hoveredIdRef.current,
         })
       : { cameraGizmos: [], cameraChainLinks: [] };
+    // Create mode shows the generated KMP read-only when asked to: no selection, no gizmos, no
+    // hover or drag previews, whatever the editor state happens to hold.
+    const create = modeRef.current === 'create';
     return buildSceneOverlayData(
         nextTrack,
-        nextSelectedId,
-        selectedIdsRef.current,
-        transformSelectionRef.current,
-        transformSelectionsRef.current,
-        showKmpEditorOverlayRef.current && modeRef.current !== 'model' && modeRef.current !== 'visual',
-        fillBetweenPreviewPositions,
-        previewTransform,
-        hoveredIdRef.current,
-        hoveredHandleRef.current,
-        activeHandleRef.current,
+        create ? null : nextSelectedId,
+        create ? [] : selectedIdsRef.current,
+        create ? null : transformSelectionRef.current,
+        create ? [] : transformSelectionsRef.current,
+        create
+          ? createViewRef.current?.showRaceLines === true
+          : showKmpEditorOverlayRef.current && modeRef.current !== 'model' && modeRef.current !== 'visual',
+        create ? [] : fillBetweenPreviewPositions,
+        create ? null : previewTransform,
+        create ? null : hoveredIdRef.current,
+        create ? null : hoveredHandleRef.current,
+        create ? null : activeHandleRef.current,
         collisionVisibleRef.current,
         toolRef.current,
         routeVisibilityRef.current,
         viewModeRef.current,
         getViewerCameraPosition(viewerRef.current),
-        routeInsertPreview,
+        create ? null : routeInsertPreview,
         cameraOverlay.cameraGizmos,
         cameraOverlay.cameraChainLinks,
-        getMeshTransformSelections(),
+        create ? [] : getMeshTransformSelections(),
         {
           pathGroupColors,
           showCheckpointQuads,
@@ -3910,7 +4470,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
       onDrop={handleDrop}
     >
       <div ref={uiContainerRef} className="noclipUiHost" />
-      {!playtestActive && (
+      {!playtestActive && mode !== 'create' && (
       <div className="viewportToolbar">
         <div className="segmented viewportToolSegmented" aria-label="Viewport tool">
           <button
@@ -3991,7 +4551,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
         )}
       </div>
       )}
-      {!playtestActive && (
+      {!playtestActive && mode !== 'create' && (
       <div className="viewportTopRightStack">
         <div className="routeVisibilityHud">
           <button
@@ -4101,7 +4661,7 @@ function snapDraggedPositionToCollision(position: Vec3): Vec3 {
           data-smoke-mouselook={smokeMouseLookWorked}
         />
       )}
-      {!playtestActive && <div className="rendererStatus">{status}</div>}
+      {!playtestActive && mode !== 'create' && <div className="rendererStatus">{status}</div>}
       {!playtestActive && selectionHudLabel && <div className="selectionHud">{selectionHudLabel}</div>}
       {overlay}
       {!playtestActive && overlayProgress && (
@@ -4172,6 +4732,60 @@ function createPlaytestFrameState(): PlaytestFrameState {
       fovY: 60,
     },
   };
+}
+
+/** The consumed press the Create tools own until the button comes up. */
+interface CreateCapture {
+  pointerId: number;
+  button: number;
+  clientX: number;
+  clientY: number;
+  shiftKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+}
+
+interface CreateFrameAnimation {
+  fromEye: vec3;
+  fromTarget: vec3;
+  toEye: vec3;
+  toTarget: vec3;
+  startMs: number;
+  durationMs: number;
+}
+
+/** The scene methods Create mode drives (declared structurally; `src/ui` imports no vendored types). */
+interface CreateRendererScene {
+  setEditorMode?: (mode: EditorMode) => void;
+  setEditorPreviewChunk?: (device: unknown, key: string, revision: number, brres: ArrayBufferSlice, modelName: string | null) => boolean;
+  removeEditorPreviewChunk?: (device: unknown, key: string) => boolean;
+  clearEditorPreviewChunks?: (device: unknown) => void;
+  listEditorPreviewChunks?: () => unknown[];
+  setEditorCreateOverlay?: (data: CreateViewProps['overlay'] | null) => void;
+  setEditorCreatePixelRatio?: (ratio: number) => void;
+  getEditorCreateOverlayStats?: () => unknown;
+}
+
+/** `setEditorMode` for every mode, including `create` which the shared adapter type predates. */
+function setSceneEditorMode(scene: unknown, nextMode: EditorMode) {
+  (scene as CreateRendererScene | null)?.setEditorMode?.(nextMode);
+}
+
+/** Bounding box of a track's collision and KMP entities, game units. */
+function getTrackGameBounds(track: TrackDocument): { min: Vec3; max: Vec3 } | null {
+  const min = { x: Infinity, y: Infinity, z: Infinity };
+  const max = { x: -Infinity, y: -Infinity, z: -Infinity };
+  const expand = (p: Vec3) => {
+    min.x = Math.min(min.x, p.x); min.y = Math.min(min.y, p.y); min.z = Math.min(min.z, p.z);
+    max.x = Math.max(max.x, p.x); max.y = Math.max(max.y, p.y); max.z = Math.max(max.z, p.z);
+  };
+  for (const triangle of track.kcl?.triangles ?? []) {
+    expand(triangle.a);
+    expand(triangle.b);
+    expand(triangle.c);
+  }
+  for (const entity of track.kmp?.entities ?? []) expand(entity.position);
+  return Number.isFinite(min.x) && Number.isFinite(max.x) ? { min, max } : null;
 }
 
 function getSceneKey(track: TrackDocument): string {
@@ -4958,6 +5572,14 @@ export function getVisibleEntitiesForRouteFilter(
   return entities.filter((entity) => (!cameraOnly || entity.section === 'CAME'
     || (entity.section === 'POTI' && entity.routePoint && getPotiRouteVisibilityKey(entity.routePoint.routeIndex, usage) === 'POTI_CAMERA'))
     && isEntityVisibleForRouteFilter(entity, routeVisibility, kmp, usage, forcedVisibleObjectRoutes));
+}
+
+/** A string that changes whenever the camera moves, turns or (top view) zooms. */
+function cameraFingerprint(viewer: Viewer): string {
+  const m = viewer.camera.worldMatrix;
+  const controller = viewer.cameraController;
+  const zoom = controller instanceof CreateTopViewController ? controller.halfHeight : 0;
+  return [0, 1, 2, 8, 9, 10, 12, 13, 14].map((i) => m[i].toFixed(2)).join(',') + ':' + zoom.toFixed(3);
 }
 
 function getViewerAspect(viewer: Viewer): number {

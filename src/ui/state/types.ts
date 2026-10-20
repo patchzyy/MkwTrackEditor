@@ -8,4 +8,4 @@ export interface EditorSnapshot {
 }
 
 export type InspectorSection = 'object' | 'track';
-export type EditorModeStub = 'model' | 'visual' | 'material' | 'kmp' | 'camera';
+export type EditorModeStub = 'create' | 'model' | 'visual' | 'material' | 'kmp' | 'camera';

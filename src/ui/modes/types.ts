@@ -8,6 +8,7 @@ import type { TrackDocument } from '../../lib/track';
 import type { Noclip3DViewport, TransformTool, ViewMode } from '../Noclip3DViewport';
 import type { ObjectOption } from '../objects/objectCatalog';
 import type { EditorModeStub } from '../state/types';
+import type { PlaytestSession } from '../playtest/usePlaytestSession';
 import type { OpenModelStudio } from '../studio/studioLaunch';
 import type { useClipboard } from '../state/useClipboard';
 import type { useEditorHistory } from '../state/useEditorHistory';
@@ -60,6 +61,51 @@ export interface EditorModeContext {
    * Passing a track archive path opens that archive with its edits wired back into the track.
    */
   openModelStudio?: OpenModelStudio;
+  /** The playtest session (Create mode starts it from its Test drive button). */
+  playtest: PlaytestSession;
+  /**
+   * Opens a track from bytes, exactly like dropping a file. `sourceId` fixes the document's
+   * identity so later in-place updates do not rebuild the scene. Resolves `true` when it opened.
+   */
+  openTrackBytes: (bytes: Uint8Array, fileName: string, options?: { sourceId?: string }) => Promise<boolean>;
+  /** Replaces the loaded track document without a history step (Create mode's compile result). */
+  applyGeneratedTrack: (next: TrackDocument) => void;
+  /** The Create mode "New track" wizard, owned by the shell so the welcome screen can open it. */
+  createWizard: { open: boolean; setOpen: (open: boolean) => void };
+}
+
+/** What a mode wants the global keyboard handler to do. Stable object; methods read fresh state. */
+export interface ModeShortcuts {
+  undo: () => void;
+  redo: () => void;
+  deleteSelection: () => void;
+  testDrive?: () => void;
+  /**
+   * Any other key (tool letters, `[`/`]`, Escape...). Return true when handled. The shell has
+   * already skipped text inputs, playtest and Ctrl/Alt-modified keys it owns.
+   */
+  onKey?: (event: KeyboardEvent) => boolean;
+  /**
+   * True when the mode's active tool wants this key even though it is also a global command
+   * (Backspace while drawing a road takes a point back; it must not delete the selection). The
+   * shell then skips its own handling and offers the key to `onKey`.
+   */
+  ownsKey?: (event: KeyboardEvent) => boolean;
+}
+
+/** What a mode wants the shell to ask before Export writes a file that may not work. */
+export interface ExportGuard {
+  /** One plain sentence per problem. */
+  problems: string[];
+  /** Jump to the first problem ("Show me"). */
+  showMe?: () => void;
+}
+
+/** The top bar's Test drive button (shown in place of the Playtest popover). */
+export interface ModeTestDrive {
+  start: () => void;
+  disabledReason: string | null;
+  busy: boolean;
 }
 
 /**
@@ -78,6 +124,28 @@ export interface ModeBottomDock {
 
 /** What a mode contributes to the shell layout. Every field is optional. */
 export interface ModeUi {
+  /**
+   * Replaces the docks *and* the viewport with a full workspace while set (Create mode's home
+   * screen). The viewport stays mounted underneath so leaving the workspace is instant.
+   */
+  workspace?: ReactNode;
+  /** Rendered in the viewport's full-viewport overlay layer (floating tool bar, hints, banners). */
+  viewportOverlay?: ReactNode;
+  /** Mode keyboard handling (undo/redo/delete/tools); see `ModeShortcuts`. */
+  shortcuts?: ModeShortcuts;
+  /** Shows the big green Test drive button in the top bar; hides Refresh and Model Studio. */
+  testDrive?: ModeTestDrive;
+  /** Runs synchronously before Export, e.g. to flush a pending compile into the track document. */
+  prepareExport?: () => void;
+  /** Asked at Export: a non-null answer makes the shell confirm first ("Your track has 4 problems..."). */
+  exportGuard?: () => ExportGuard | null;
+  /** Why Export is unavailable right now (no design open), or null. */
+  exportDisabledReason?: string | null;
+  /**
+   * Offered by the welcome screen of any mode: carry on with the newest Create design. Returned
+   * even while Create mode is not the active mode.
+   */
+  resumeCreate?: { name: string; open: () => void };
   /** Replaces the left "Place Assets" rail while the mode is active. */
   leftPanel?: ReactNode;
   /** Replaces the inspector body (object/track tabs) while the mode is active. */

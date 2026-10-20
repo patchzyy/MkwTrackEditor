@@ -1647,3 +1647,47 @@
 .uiSpin {
   animation: uiSpin 900ms linear infinite;
 }
+
+/* ConfirmDialog: a small modal question (it reuses the shortcut sheet's scrim). */
+.uiConfirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: min(460px, 100%);
+  padding: var(--space-6);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-3, 0 18px 48px rgb(0 0 0 / 50%));
+}
+
+.uiConfirm h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--font-size-lg, 15px);
+}
+
+.uiConfirm p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.uiConfirm ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 180px;
+  margin: 0;
+  padding: 0 0 0 var(--space-5);
+  overflow-y: auto;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.uiConfirmActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}

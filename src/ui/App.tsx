@@ -1,4 +1,4 @@
-import { Boxes, Layers, Palette, Route as RouteIcon, Shapes, Video } from 'lucide-react';
+import { Boxes, Hammer, Layers, Palette, Route as RouteIcon, Shapes, Video } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getKmpCameraHeader, type KmpEntity, type Vec3 } from '../lib/kmp';
 import { gravityRecordsFromEntities } from '../lib/gravityField';
@@ -7,10 +7,11 @@ import { describeEntity, replaceArchiveFile, validateTrack, type TrackDocument }
 import objectNamesById from '../generated/mkwObjectNames.json';
 import { getAreaInspectorResources } from './areas/areaInspectorConfig';
 import { useCameraMode } from './camera/CameraMode';
+import { useCreateMode } from './create/CreateMode';
 import { useKmpMode } from './kmp/KmpMode';
 import { useMaterialMode } from './material/MaterialMode';
 import { useModelMode } from './model/ModelMode';
-import type { EditorModeContext, ModeUi } from './modes/types';
+import type { EditorModeContext, ExportGuard, ModeUi } from './modes/types';
 import { useVisualMode } from './visual/VisualMode';
 import { ContentBrowser, type ContentBrowserActions } from './contentBrowser/ContentBrowser';
 import { PlaceAssetsRail } from './contentBrowser/PlaceAssetsRail';
@@ -33,6 +34,8 @@ import { useEditorHistory } from './state/useEditorHistory';
 import { useEditorShortcuts } from './state/useEditorShortcuts';
 import { useKmpEditActions } from './state/useKmpEditActions';
 import { CONTENT_BROWSER_COLLAPSED_HEIGHT, usePanelLayout } from './state/usePanelLayout';
+import { CREATE_DOCK_SIZING } from './create/palette/dockMetrics';
+import { isPaletteDragActive } from './create/tools/useCreateTools';
 import { usePostEffectActions } from './state/usePostEffectActions';
 import { useSelection } from './state/useSelection';
 import { useSmokeHarness } from './state/useSmokeHarness';
@@ -48,6 +51,7 @@ import type { StudioTrackBridge } from './studio/useStudioSession';
 import { TopBar } from './topbar/TopBar';
 import { clearRecentTracks, readRecentTracks, rememberRecentTrack, type RecentTrack } from './topbar/recentFiles';
 import { PanelRail } from './components/Panel';
+import { ConfirmDialog } from './components/ConfirmDialog';
 import { ShortcutOverlay } from './components/ShortcutOverlay';
 import { WelcomeOverlay } from './components/WelcomeOverlay';
 import { StatusBar, useFrameRate, type StatusBarStat } from './components/StatusBar';
@@ -59,12 +63,13 @@ import { ToastProvider, ToastViewport, useToastStore } from './components/Toast'
  * file only wires them together and lays them out.
  */
 export function App() {
-  const layout = usePanelLayout();
+  const [editorMode, setEditorMode] = useState<EditorModeStub>('kmp');
+  // Create mode opens its palette on exactly one row of tiles; every other mode keeps 260 px.
+  const layout = usePanelLayout(editorMode === 'create' ? CREATE_DOCK_SIZING : undefined);
   const selection = useSelection();
   const [status, setStatus] = useState('No track loaded');
   const [tool, setTool] = useState<TransformTool>('translate');
   const [viewMode, setViewMode] = useState<ViewMode>('normal');
-  const [editorMode, setEditorMode] = useState<EditorModeStub>('kmp');
   const [collisionVisible, setCollisionVisible] = useState(false);
   const [inspectorSection, setInspectorSection] = useState<InspectorSection>('object');
   const [batchOffset, setBatchOffset] = useState<Vec3>({ x: 0, y: 0, z: 0 });
@@ -72,6 +77,8 @@ export function App() {
   const [fillBetweenCount, setFillBetweenCount] = useState(3);
   const [fillBetweenPanelOpen, setFillBetweenPanelOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  /** The Create mode new-track wizard; the welcome screen can open it before Create mode is shown. */
+  const [createWizardOpen, setCreateWizardOpen] = useState(false);
   const [dragTarget, setDragTarget] = useState(false);
   const [recentTracks, setRecentTracks] = useState<RecentTrack[]>(readRecentTracks);
   /** Bumped by "Refresh track"; the viewport rebuilds its scene whenever this changes. */
@@ -311,13 +318,28 @@ export function App() {
    */
   const [exportedTrack, setExportedTrack] = useState<TrackDocument | null>(null);
   const unsavedChanges = track !== null && track !== exportedTrack && history.historyState.undo > 0;
-  const exportTrackDocument = useCallback(() => {
-    const exported = downloadExport();
+  /** Set each render to the active mode's `prepareExport` (Create mode flushes its compile). */
+  const prepareExportRef = useRef<(() => void) | undefined>(undefined);
+  const runExport = useCallback(() => {
+    prepareExportRef.current?.();
+    // A flush may have produced a document newer than the last render; export that one.
+    const exported = downloadExport(trackRef.current);
     if (exported) setExportedTrack(trackRef.current);
     return exported;
     // `downloadExport` closes over the current track, so it is re-created on every edit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [downloadExport, trackRef]);
+  /** The active mode's question before Export ("Your track has 4 problems..."), while one is open. */
+  const exportGuardRef = useRef<(() => ExportGuard | null) | undefined>(undefined);
+  const [exportConfirm, setExportConfirm] = useState<ExportGuard | null>(null);
+  const exportTrackDocument = useCallback(() => {
+    const guard = exportGuardRef.current?.() ?? null;
+    if (guard && guard.problems.length > 0) {
+      setExportConfirm(guard);
+      return false;
+    }
+    return runExport();
+  }, [runExport]);
   const playtest = usePlaytestSession({
     track,
     commonArchive,
@@ -456,14 +478,21 @@ export function App() {
     refreshScene: refreshTrack,
     sceneRefreshing: refreshingTrack,
     openModelStudio,
+    playtest,
+    openTrackBytes: trackDocument.openTrackBytes,
+    applyGeneratedTrack: (next) => history.applyEditorChange(next, selection.selectedIdRef.current, false, selection.selectedIdsRef.current),
+    createWizard: { open: createWizardOpen, setOpen: setCreateWizardOpen },
   };
+  const createModeUi = useCreateMode(modeContext);
   const kmpModeUi = useKmpMode(modeContext);
   const cameraModeUi = useCameraMode(modeContext);
   const modelModeUi = useModelMode(modeContext);
   const visualModeUi = useVisualMode(modeContext);
   const materialModeUi = useMaterialMode(modeContext);
   const modeUi: ModeUi =
-    editorMode === 'camera'
+    editorMode === 'create'
+      ? createModeUi
+      : editorMode === 'camera'
       ? cameraModeUi
       : editorMode === 'model'
         ? modelModeUi
@@ -490,8 +519,12 @@ export function App() {
     if (!fillBetweenSelection) setFillBetweenPanelOpen(false);
   }, [fillBetweenSelection]);
 
+  prepareExportRef.current = modeUi.prepareExport;
+  exportGuardRef.current = modeUi.exportGuard;
+
   useEditorShortcuts({
     editorMode,
+    modeShortcuts: modeUi.shortcuts,
     selection,
     selected,
     track,
@@ -596,6 +629,7 @@ export function App() {
 
   // The left dock hosts a different panel per mode, so its collapsed rail is labelled per mode.
   const leftDock = useMemo(() => {
+    if (editorMode === 'create') return { title: 'Build', icon: <Hammer size={15} /> };
     if (editorMode === 'camera') return { title: 'Cameras', icon: <Video size={15} /> };
     if (editorMode === 'model') return { title: 'Outliner', icon: <Boxes size={15} /> };
     if (editorMode === 'visual') return { title: 'Archives', icon: <Layers size={15} /> };
@@ -624,7 +658,7 @@ export function App() {
       className={dragTarget ? 'appShell isDragTarget' : 'appShell'}
       onDragOver={(event) => {
         event.preventDefault();
-        if (event.dataTransfer.types.includes('Files')) setDragTarget(true);
+        if (event.dataTransfer.types.includes('Files') && !isPaletteDragActive()) setDragTarget(true);
       }}
       onDragLeave={(event) => {
         if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
@@ -633,6 +667,8 @@ export function App() {
       onDrop={(event) => {
         event.preventDefault();
         setDragTarget(false);
+        // A palette tile dragged from the Create dock can carry its thumbnail as a "file": not a track.
+        if (isPaletteDragActive()) return;
         if (event.dataTransfer.files.length > 0) void trackDocument.openFiles(event.dataTransfer.files);
       }}
     >
@@ -675,6 +711,8 @@ export function App() {
         onChangeEditorMode={setEditorMode}
         onOpenModelStudio={() => openModelStudio()}
         onOpenModelInStudio={openModelInStudioFromFiles}
+        testDrive={modeUi.testDrive}
+        exportDisabledReason={modeUi.exportDisabledReason}
         playtestControl={
           <PlaytestMenu
             options={playtest.options}
@@ -759,11 +797,18 @@ export function App() {
             overlay={
               playtest.active ? (
                 <PlaytestHud loading={playtest.loading} hudRef={playtest.hudRef} onRestart={playtest.restart} onExit={playtest.stop} />
-              ) : track === null ? (
+              ) : modeUi.viewportOverlay ? (
+                modeUi.viewportOverlay
+              ) : track === null && editorMode !== 'create' ? (
                 <WelcomeOverlay
                   onOpenTrack={openTrackPicker}
                   recentTrackName={reopenableRecentTrack?.name ?? null}
                   onOpenRecent={reopenableRecentTrack ? () => openRecent(reopenableRecentTrack) : undefined}
+                  onCreateTrack={() => {
+                    setCreateWizardOpen(true);
+                    setEditorMode('create');
+                  }}
+                  createContinue={createModeUi.resumeCreate ? { name: createModeUi.resumeCreate.name, onOpen: createModeUi.resumeCreate.open } : undefined}
                 />
               ) : null
             }
@@ -827,6 +872,10 @@ export function App() {
           />
         )}
 
+        {/* A mode may cover the docks and viewport with a full workspace (Create's home screen).
+            The viewport stays mounted underneath, so coming back is instant. */}
+        {modeUi.workspace && !playtest.active && <div className="shellWorkspace">{modeUi.workspace}</div>}
+
         {/* A mode may take the bottom dock over (Material mode puts the shader graph there); the
             shell keeps owning its size, so the content browser comes back exactly as it was. */}
         {modeUi.bottomDock ? (
@@ -865,6 +914,25 @@ export function App() {
       <StatusBar message={playtest.active ? PLAYTEST_STATUS_MESSAGE : status} stats={statusStats} />
       <ToastViewport toasts={toasts.toasts} onDismiss={toasts.dismissToast} />
       <ShortcutOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      {exportConfirm && (
+        <ConfirmDialog
+          title={`Your track has ${exportConfirm.problems.length} ${exportConfirm.problems.length === 1 ? 'problem' : 'problems'}`}
+          items={exportConfirm.problems}
+          confirmLabel="Export anyway"
+          extraLabel={exportConfirm.showMe ? 'Show me' : undefined}
+          onExtra={() => {
+            exportConfirm.showMe?.();
+            setExportConfirm(null);
+          }}
+          onCancel={() => setExportConfirm(null)}
+          onConfirm={() => {
+            setExportConfirm(null);
+            runExport();
+          }}
+        >
+          It may not work in the game. Export it anyway?
+        </ConfirmDialog>
+      )}
       {studio.open && (
         <ModelStudio
           onClose={closeModelStudio}

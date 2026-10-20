@@ -10,7 +10,7 @@ import { presentValidationIssue } from '../labels';
  * "edited, not exported yet" marker only when the user really has the bytes.
  */
 export function useTrackExport({
-  track,
+  track: currentTrack,
   commonArchive,
   setStatus,
 }: {
@@ -18,7 +18,9 @@ export function useTrackExport({
   commonArchive: CommonResourceArchive | null;
   setStatus: Dispatch<SetStateAction<string>>;
 }) {
-  function downloadExport(): boolean {
+  /** `trackOverride` exports a document newer than the last render (Create mode's fresh compile). */
+  function downloadExport(trackOverride?: TrackDocument | null): boolean {
+    const track = trackOverride ?? currentTrack;
     if (!track) return false;
     const issues = validateTrack(track, { common: commonArchive });
     if (issues.length > 0) {
@@ -61,7 +63,8 @@ export function useTrackExport({
     const url = URL.createObjectURL(new Blob([bytes.slice().buffer], { type: 'application/octet-stream' }));
     const link = document.createElement('a');
     link.href = url;
-    link.download = track.fileName.replace(/\.szs$/i, '') + '.edited.szs';
+    // A track built in Create mode is the finished file, not an edit of somebody else's.
+    link.download = track.fileName.replace(/\.szs$/i, '') + (track.sourceId?.startsWith('create:') ? '.szs' : '.edited.szs');
     link.click();
     URL.revokeObjectURL(url);
     setStatus(`Exported ${link.download} (${bytes.length.toLocaleString()} bytes).`);

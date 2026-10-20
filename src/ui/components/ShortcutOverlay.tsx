@@ -52,6 +52,28 @@ export const EDITOR_SHORTCUTS: ShortcutGroup[] = [
     ],
   },
   {
+    title: 'Create mode',
+    entries: [
+      { keys: 'F5', description: 'Test drive your track from the start line (Ctrl+Enter too)' },
+      { keys: 'Ctrl+Z', description: 'Undo the last change to your design' },
+      { keys: 'Ctrl+Shift+Z', description: 'Redo it (Ctrl+Y too)' },
+      { keys: 'Delete', description: 'Remove what is selected' },
+      { keys: 'Esc', description: 'Leave a test drive and come back to building' },
+      { keys: 'V', description: 'Select tool: click and drag things; Shift-drag a road point to raise it' },
+      { keys: 'R', description: 'Road tool: click the ground to draw; click the first point to close the loop' },
+      { keys: 'S', description: 'Sections tool: click the road to split it, drag an edge to move it' },
+      { keys: 'P', description: 'Pieces tool: place boosts, ramps, item boxes and hazards (Q / E change lane)' },
+      { keys: 'B', description: 'Paint tool: paint ground surfaces (Shift erases)' },
+      { keys: 'H', description: 'Sculpt tool: raise ground (Shift lowers, Ctrl smooths)' },
+      { keys: 'D', description: 'Scenery tool: click to place, drag to scatter, Shift-drag to erase' },
+      { keys: 'G', description: 'Start tool: click the main road to move the start line' },
+      { keys: 'T', description: 'Top view for planning (toggle)' },
+      { keys: 'F', description: 'Frame the selection, or the whole track' },
+      { keys: '[ ]', description: 'Smaller / larger brush' },
+      { keys: 'Enter', description: 'Finish drawing the road' },
+    ],
+  },
+  {
     title: 'Model mode',
     entries: [
       { keys: '[', description: 'Narrow the mesh selection' },

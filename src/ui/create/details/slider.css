@@ -1,0 +1,58 @@
+/* Range slider (palette brush, Details panel). */
+
+.crSlider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.crSliderInput {
+  flex: 1 1 auto;
+  min-width: 60px;
+  height: 18px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+}
+
+.crSliderInput::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(to right, var(--accent) var(--fill, 0%), var(--surface-4) var(--fill, 0%));
+}
+
+.crSliderInput::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 2px solid var(--surface-1);
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 0 0 1px var(--border-strong);
+  appearance: none;
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.crSliderInput:hover::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+
+.crSliderInput:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 3px;
+}
+
+.crSliderInput:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.crSliderValue {
+  min-width: 36px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}

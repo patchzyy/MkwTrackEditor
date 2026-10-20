@@ -27,6 +27,7 @@ import { BTI, BTIData } from '../Common/JSYSTEM/JUTTexture.js';
 import { GXMaterialHacks } from '../gx/gx_material.js';
 import { Cyan, Green, Magenta, Red, White, Yellow, colorNewFromRGBA, type Color } from '../Color.js';
 import { DebugDrawFlags } from '../gfx/helpers/DebugDraw.js';
+import { CreateOverlayRenderer, type CreateOverlayData, type CreateOverlayStats } from './CreateOverlay.js';
 import { AABB } from '../Geometry.js';
 import {
     EditorMeshPicker,
@@ -298,7 +299,7 @@ interface EditorOverlayData {
 
 type EditorViewMode = 'normal' | 'dev' | 'topdown' | 'ortho';
 type EditorDOFMode = 'full' | 'reduced' | 'off';
-type EditorMode = 'kmp' | 'camera' | 'model' | 'visual';
+type EditorMode = 'kmp' | 'camera' | 'model' | 'visual' | 'create';
 
 type EditorOverlayPick =
     | { kind: 'point'; id: string; }
@@ -655,6 +656,12 @@ class MarioKartWiiRenderer {
     private editorMeshHighlights: EditorOverlayMeshHighlight[] = [];
     private editorImportedInstances = new Map<string, EditorImportedModelRenderer>();
     private editorImportedInstanceSerial = 0;
+    /** Create mode: generated chunks standing in for the course model. Not in `baseObjects`, see EditorPreviewChunk. */
+    private editorPreviewChunks = new Map<string, EditorPreviewChunk>();
+    private editorPreviewSerial = 0;
+    private editorCreateOverlay = new CreateOverlayRenderer();
+    private editorCreatePixelRatio = 1;
+    private editorCreateOverlayFailed = false;
     private editorWorldFromClipMatrix = mat4.create();
     private editorCameraWorldPosition = vec3.create();
     private editorMeshPickScratchOrigin = vec3.create();
@@ -705,18 +712,32 @@ class MarioKartWiiRenderer {
         return false;
     }
 
-    public rebuildEditorGobjs(device: GfxDevice, kmpBuffer: ArrayBufferSlice): void {
+    /**
+     * Respawns every object preview from a KMP.
+     *
+     * `resolveFile` is consulted *before* the archive the scene was built from, with the same
+     * `./name.brres` paths: the editor keeps changing the track's archive entries after the scene
+     * is built (Create mode adds `itembox.brres` and scenery resources), and a rebuilt object
+     * must find those without a full scene rebuild. It returns null for files it does not have.
+     */
+    public rebuildEditorGobjs(device: GfxDevice, kmpBuffer: ArrayBufferSlice, resolveFile?: (path: string) => ArrayBufferSlice | null): void {
         for (let i = this.baseObjects.length - 1; i >= 2; i--) {
-            if (this.baseObjects[i] instanceof EditorStartPreviewRenderer)
+            // Start-grid and playtest karts and imported meshes are not KMP objects; they are
+            // managed by their own APIs and must survive an object rebuild.
+            if (this.baseObjects[i] instanceof EditorStartPreviewRenderer || this.baseObjects[i] instanceof EditorImportedModelRenderer)
                 continue;
             this.baseObjects[i].destroy(device);
             this.baseObjects.splice(i, 1);
         }
 
         const kmp = parseKMP(kmpBuffer);
+        const courseArc = this.courseArc;
+        const arc: U8.U8Archive = resolveFile === undefined ? courseArc : Object.assign(Object.create(courseArc) as U8.U8Archive, {
+            findFileData: (path: string) => resolveFile(path) ?? courseArc.findFileData(path),
+        });
         for (let i = 0; i < kmp.gobj.length; i++) {
             try {
-                MarioKartWiiSceneDesc.spawnObjectFromKMP(device, this, this.courseArc, kmp.gobj[i], kmp.poti);
+                MarioKartWiiSceneDesc.spawnObjectFromKMP(device, this, arc, kmp.gobj[i], kmp.poti);
             } catch (error) {
                 console.warn(`Failed to rebuild editor object ${hexzero(kmp.gobj[i].objectId, 4)}`, error);
             }
@@ -972,12 +993,16 @@ class MarioKartWiiRenderer {
         this.editorVertexColorsEnabled = enabled;
         for (const object of this.baseObjects)
             object.setVertexColorsEnabled(enabled);
+        for (const chunk of this.editorPreviewChunks.values())
+            chunk.setVertexColorsEnabled(enabled);
     }
 
     public setEditorTexturesEnabled(enabled: boolean): void {
         this.editorTexturesEnabled = enabled;
         for (const object of this.baseObjects)
             object.setTexturesEnabled(enabled);
+        for (const chunk of this.editorPreviewChunks.values())
+            chunk.setTexturesEnabled(enabled);
     }
 
     /** Flat / unlit look: forces every colour channel to its material colour. */
@@ -986,6 +1011,10 @@ class MarioKartWiiRenderer {
         for (const object of this.baseObjects)
             for (const modelInstance of getModelInstances(object))
                 for (const materialInstance of modelInstance.materialInstances)
+                    materialInstance.setMaterialHacks({ disableLighting: !enabled });
+        for (const chunk of this.editorPreviewChunks.values())
+            for (const instance of chunk.modelInstances)
+                for (const materialInstance of instance.materialInstances)
                     materialInstance.setMaterialHacks({ disableLighting: !enabled });
     }
 
@@ -1288,6 +1317,9 @@ class MarioKartWiiRenderer {
             for (let j = 0; j < modelInstances.length; j++)
                 modelInstances[j].setFogSettings(this.eggFogSettings);
         }
+        for (const chunk of this.editorPreviewChunks.values())
+            for (const instance of chunk.modelInstances)
+                instance.setFogSettings(this.eggFogSettings);
     }
 
     //#endregion
@@ -1583,6 +1615,112 @@ class MarioKartWiiRenderer {
 
     //#endregion
 
+    //#region Create mode: preview chunks
+
+    /**
+     * Adds or replaces one generated chunk (`road:<id>`, `terrain`, ...) of the Create mode live
+     * preview. A chunk owns *everything* it uploaded: its own texture holder (so a texture called
+     * `grass` in a chunk never collides with, or is shadowed by, the track's own `grass`), its own
+     * MDL0 models and their vertex/index buffers, and its model instances. Replacing it builds the
+     * new one first and destroys the old one in the same call, so there is never a frame without
+     * the chunk and nothing is left behind on the GPU.
+     *
+     * Nothing here goes through `modelCache`, which is keyed by MDL0 name for the whole scene: a
+     * chunk whose model happens to be called `course` can therefore never resolve to the track's
+     * own course model, and a repeated name can never alias an older chunk.
+     *
+     * Returns false when the BRRES does not parse or holds no model; the previous chunk, if any,
+     * is left untouched in that case.
+     */
+    public setEditorPreviewChunk(device: GfxDevice, key: string, revision: number, brres: ArrayBufferSlice, modelName: string | null): boolean {
+        let rres: BRRES.RRES;
+        try {
+            rres = BRRES.parse(brres);
+        } catch (error) {
+            console.warn(`Failed to parse preview chunk ${key}`, error);
+            return false;
+        }
+        const wanted = modelName !== null ? rres.mdl0.filter((mdl0) => mdl0.name === modelName) : [];
+        const mdl0s = wanted.length > 0 ? wanted : rres.mdl0;
+        if (mdl0s.length === 0)
+            return false;
+
+        const textureHolder = new RRESTextureHolder();
+        const cache = this.renderHelper.renderInstManager.gfxRenderCache;
+        const models: MDL0Model[] = [];
+        const instances: MDL0ModelInstance[] = [];
+        try {
+            textureHolder.addRRESTextures(device, rres);
+            for (const mdl0 of mdl0s) {
+                const model = new MDL0Model(device, cache, mdl0, this.materialHacks);
+                models.push(model);
+                const instance = new MDL0ModelInstance(textureHolder, model, `preview:${key}`);
+                instance.setSortKeyLayer(GfxRendererLayer.OPAQUE);
+                instance.bindRRESAnimations(this.animationController, rres, null);
+                instance.setVertexColorsEnabled(this.editorVertexColorsEnabled);
+                instance.setTexturesEnabled(this.editorTexturesEnabled);
+                if (!this.editorLightingEnabled)
+                    for (const materialInstance of instance.materialInstances)
+                        materialInstance.setMaterialHacks({ disableLighting: true });
+                instances.push(instance);
+            }
+        } catch (error) {
+            console.warn(`Failed to build preview chunk ${key}`, error);
+            for (const model of models)
+                model.destroy(device);
+            textureHolder.destroy(device);
+            return false;
+        }
+
+        const chunk = new EditorPreviewChunk(`preview-${this.editorPreviewSerial++}`, key, revision, mdl0s.map((mdl0) => mdl0.name), textureHolder, models, instances);
+        mat4.copy(chunk.modelMatrix, posMtx);
+        const previous = this.editorPreviewChunks.get(key);
+        this.editorPreviewChunks.set(key, chunk);
+        if (previous !== undefined)
+            previous.destroy(device);
+        return true;
+    }
+
+    public removeEditorPreviewChunk(device: GfxDevice, key: string): boolean {
+        const chunk = this.editorPreviewChunks.get(key);
+        if (chunk === undefined)
+            return false;
+        this.editorPreviewChunks.delete(key);
+        chunk.destroy(device);
+        return true;
+    }
+
+    public clearEditorPreviewChunks(device: GfxDevice): void {
+        for (const chunk of this.editorPreviewChunks.values())
+            chunk.destroy(device);
+        this.editorPreviewChunks.clear();
+    }
+
+    public listEditorPreviewChunks(): EditorPreviewChunkInfo[] {
+        return [...this.editorPreviewChunks.values()].map((chunk) => chunk.describe());
+    }
+
+    //#endregion
+
+    //#region Create mode: overlay
+
+    /** The design overlay (handles, lines, fills, labels), in game units. `null` clears it. */
+    public setEditorCreateOverlay(data: CreateOverlayData | null): void {
+        this.editorCreateOverlay.setData(data);
+    }
+
+    /** Device pixels per CSS pixel, so the overlay's pixel sizes are CSS pixels on any display. */
+    public setEditorCreatePixelRatio(ratio: number): void {
+        if (Number.isFinite(ratio) && ratio > 0)
+            this.editorCreatePixelRatio = ratio;
+    }
+
+    public getEditorCreateOverlayStats(): CreateOverlayStats {
+        return this.editorCreateOverlay.getStats();
+    }
+
+    //#endregion
+
     public pickEditorHandle(normalizedX: number, normalizedY: number): EditorOverlayPick | null {
         if (!Number.isFinite(normalizedX) || !Number.isFinite(normalizedY))
             return null;
@@ -1762,9 +1900,12 @@ class MarioKartWiiRenderer {
 
         if (this.eggDOF !== null)
             this.eggDOF.updateScroll(this.animationController.getTimeInFrames() * 2.0);
-        if (this.eggLightManager !== null)
+        if (this.eggLightManager !== null) {
             for (let i = 0; i < this.baseObjects.length; i++)
                 this.baseObjects[i].bindLightSetting(this.eggLightManager.lightSetting);
+            for (const chunk of this.editorPreviewChunks.values())
+                chunk.bindLightSetting(this.eggLightManager.lightSetting);
+        }
         this.applyFogSettings();
 
         const template = this.renderHelper.pushTemplateRenderInst();
@@ -1772,9 +1913,12 @@ class MarioKartWiiRenderer {
         if (this.wireframe)
             template.setMegaStateFlags({ wireframe: true });
         this.renderHelper.renderInstManager.setCurrentList(this.renderInstListMain);
-        if (this.editorViewMode !== 'dev')
+        if (this.editorViewMode !== 'dev') {
             for (let i = 0; i < this.baseObjects.length; i++)
                 this.baseObjects[i].prepareToRender(device, this.renderHelper.renderInstManager, viewerInput);
+            for (const chunk of this.editorPreviewChunks.values())
+                chunk.prepareToRender(device, this.renderHelper.renderInstManager, viewerInput);
+        }
         this.drawEditorOverlay();
         this.renderHelper.prepareToRender();
         this.renderHelper.renderInstManager.popTemplate();
@@ -1833,6 +1977,7 @@ class MarioKartWiiRenderer {
         this.modelCache.destroy(device);
         for (let i = 0; i < this.baseObjects.length; i++)
             this.baseObjects[i].destroy(device);
+        this.clearEditorPreviewChunks(device);
     }
 
     private drawEditorOverlay(): void {
@@ -1980,6 +2125,27 @@ class MarioKartWiiRenderer {
                 16,
                 editorOverlayPointOptions,
             );
+        }
+
+        // Create mode: the design layer draws last, over any read-only race lines.
+        if (this.editorMode === 'create') {
+            // A bad overlay must never take the whole viewport down with it: this runs inside the
+            // render callback, and an exception here would stop every frame from being drawn.
+            try {
+                this.editorCreateOverlay.draw(debugDraw, {
+                    clipFromWorld: this.editorOverlayClipFromWorldMatrix,
+                    width: this.editorOverlayViewportWidth,
+                    height: this.editorOverlayViewportHeight,
+                    pixelRatio: this.editorCreatePixelRatio,
+                    worldScale: scaleFactor,
+                    device: this.renderHelper.device,
+                });
+            } catch (error) {
+                if (!this.editorCreateOverlayFailed) {
+                    this.editorCreateOverlayFailed = true;
+                    console.error('Create overlay failed to draw', error);
+                }
+            }
         }
     }
 
@@ -3460,6 +3626,103 @@ class EditorImportedModelRenderer implements BaseObject {
     }
 
     public destroy(device: GfxDevice): void {
+    }
+}
+
+/** What a Create mode preview chunk reports about itself. */
+export interface EditorPreviewChunkInfo {
+    key: string;
+    revision: number;
+    /** Scene-unique id of this particular build of the chunk. */
+    uid: string;
+    modelNames: string[];
+    visible: boolean;
+    materialCount: number;
+    shapeCount: number;
+    textureCount: number;
+}
+
+/**
+ * One generated chunk of the Create mode live preview (a road section, the terrain, ...).
+ *
+ * It is a `BaseObject` so it can reuse the per-object plumbing (light setting, render toggles),
+ * but it is deliberately *not* in `MarioKartWiiRenderer.baseObjects`: `rebuildEditorGobjs` destroys
+ * everything from index 2 on, which would kill the preview, and mirror/animation/picking code that
+ * walks `baseObjects` has no business with generated geometry. The renderer keeps its chunks in
+ * their own map and drives them explicitly.
+ *
+ * Unlike `CourseBGRenderer`, a chunk owns its GPU resources: `destroy` frees the MDL0 models'
+ * vertex and index buffers and every texture its private holder uploaded. Programs and samplers
+ * come from the shared `GfxRenderCache`, which dedupes and owns them.
+ */
+class EditorPreviewChunk implements BaseObject {
+    public visible = true;
+    public modelMatrix = mat4.create();
+    private destroyed = false;
+
+    constructor(
+        public uid: string,
+        public key: string,
+        public revision: number,
+        public modelNames: string[],
+        public textureHolder: RRESTextureHolder,
+        public models: MDL0Model[],
+        public modelInstances: MDL0ModelInstance[],
+    ) {
+    }
+
+    public describe(): EditorPreviewChunkInfo {
+        let materialCount = 0;
+        let shapeCount = 0;
+        for (const model of this.models) {
+            materialCount += model.mdl0.materials.length;
+            shapeCount += model.mdl0.shapes.length;
+        }
+        return {
+            key: this.key,
+            revision: this.revision,
+            uid: this.uid,
+            modelNames: this.modelNames,
+            visible: this.visible,
+            materialCount,
+            shapeCount,
+            textureCount: this.textureHolder.gfxTextures.length,
+        };
+    }
+
+    public setVertexColorsEnabled(v: boolean): void {
+        for (const instance of this.modelInstances)
+            instance.setVertexColorsEnabled(v);
+    }
+
+    public setTexturesEnabled(v: boolean): void {
+        for (const instance of this.modelInstances)
+            instance.setTexturesEnabled(v);
+    }
+
+    public bindLightSetting(lightSetting: BRRES.LightSetting): void {
+        for (const instance of this.modelInstances)
+            instance.bindLightSetting(lightSetting);
+    }
+
+    public prepareToRender(device: GfxDevice, renderInstManager: GfxRenderInstManager, viewerInput: Viewer.ViewerRenderInput): void {
+        if (!this.visible || this.destroyed)
+            return;
+        for (const instance of this.modelInstances) {
+            mat4.copy(instance.modelMatrix, this.modelMatrix);
+            instance.prepareToRender(device, renderInstManager, viewerInput);
+        }
+    }
+
+    public destroy(device: GfxDevice): void {
+        if (this.destroyed)
+            return;
+        this.destroyed = true;
+        for (const model of this.models)
+            model.destroy(device);
+        this.textureHolder.destroy(device);
+        this.modelInstances.length = 0;
+        this.models.length = 0;
     }
 }
 

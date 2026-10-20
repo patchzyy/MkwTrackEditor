@@ -341,9 +341,21 @@ h4 {
 /* ------------------------------------------------------------ docks */
 
 .shellBody {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--inspector-width, 340px);
   grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface-0);
+}
+
+/* A mode's full-window workspace (Create mode's home) over the docks; the viewport stays mounted. */
+.shellWorkspace {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
   min-height: 0;
   overflow: hidden;
   background: var(--surface-0);

@@ -15,7 +15,7 @@ current `App.tsx` keeps compiling unchanged. Nothing was removed or renamed.
 
 | Prop | Type | Default | What it does |
 | --- | --- | --- | --- |
-| `mode` | `'kmp' \| 'camera' \| 'model' \| 'visual'` | `'kmp'` | The editor mode. `'kmp'` is exactly today's behaviour (CAME entries stay lightweight point markers). `'camera'` adds the full CAME gizmos and their picking. `'model'` turns on mesh picking/transforming and hides the KMP overlays. `'visual'` hides the KMP overlays. |
+| `mode` | `'kmp' \| 'camera' \| 'model' \| 'visual' \| 'create'` | `'kmp'` | The editor mode (`'create'`: see section 11). `'kmp'` is exactly today's behaviour (CAME entries stay lightweight point markers). `'camera'` adds the full CAME gizmos and their picking. `'model'` turns on mesh picking/transforming and hides the KMP overlays. `'visual'` hides the KMP overlays. |
 
 `showKmpEditorOverlay` still works; `mode` is ANDed with it, so KMP overlays are hidden when
 either `showKmpEditorOverlay === false` or `mode` is `'model'` / `'visual'`.
@@ -67,7 +67,7 @@ selected mesh's bounding-box centre.
 ### Types re-exported by the viewport
 
 ```ts
-export type EditorMode = 'kmp' | 'camera' | 'model' | 'visual';
+export type EditorMode = 'kmp' | 'camera' | 'model' | 'visual' | 'create';
 export interface CameraPreviewRequest { cameraId: string; playing: boolean; time: number; sequence?: boolean }
 export type { MeshSelectionGranularity, EditorMeshTarget } from '../lib/brresEditor';
 ```
@@ -507,3 +507,169 @@ not select any scenery. With the cull mode applied the same view offers 34.
 pointer lock or the compatibility mouse events. Unlike the other harnesses the probe body runs in
 Node: `scripts/probe-viewport-select.js`, `probe-viewport-gizmo-drag.js`,
 `probe-viewport-camera.js`.
+
+
+---
+
+## 11. Create mode (`createView`)
+
+Create mode gives the viewport three jobs the editor modes do not have: show generated geometry that
+changes every drag frame, draw the design (handles, spline, fills, labels) inside the scene, and
+route the mouse to the Create tools. The contract is `CreateViewProps` and friends in
+`src/lib/create/types.ts`; this section says how the viewport honours it.
+
+```tsx
+<Noclip3DViewport mode="create" createView={createView} track={track} ... />
+```
+
+`EditorMode` gained `'create'`. In Create mode there is **no KMP picking, dragging, selection,
+gizmos or hover**, no mesh picking, no numpad/F/H view shortcuts, and the viewport toolbar drops the
+transform-tool and View selectors (the planning view is `cameraApi.setTopView`). The KMP overlays
+(checkpoints, routes ...) are hidden unless `createView.showRaceLines`; then they are drawn
+read-only and are not pickable (the Create pipeline never asks the KMP picker). Fog, skybox and the
+Controls selector keep working. `mode="create"` without a `createView` is an empty Create viewport.
+
+### Preview models
+
+`createView.models` is diffed by `key`, then `revision` (and `modelName` / the byte array identity):
+new keys are added, changed ones are rebuilt, gone ones are removed. Each chunk is
+`MarioKartWiiRenderer.setEditorPreviewChunk` in the vendored scene and **owns its GPU resources**:
+
+- its own `RRESTextureHolder` (so a chunk texture called `grass` can neither collide with nor be
+  shadowed by the track's own `grass`), its own `MDL0Model`s (vertex/index buffers) and instances;
+- it is built first and the previous build of the same key destroyed in the same call: there is no
+  frame without the chunk and nothing is left on the GPU. Programs and samplers come from the
+  shared `GfxRenderCache`, which owns and dedupes them;
+- nothing goes through `modelCache` (keyed by MDL0 name for the whole scene), so a chunk can never
+  resolve to the track's own `course` model, and a repeated model name cannot alias an older chunk;
+- chunks live in their own map, **not** in `baseObjects`: `rebuildEditorGobjs` destroys
+  `baseObjects[2..]`, and the mirror/animation/picking code that walks `baseObjects` has no business
+  with generated geometry. The per-object plumbing is driven explicitly: course light setting, fog,
+  and the Visual-mode toggles (vertex colours / textures / lighting) reach chunks too;
+- they are drawn in the course model's sort layer, so opaque and translucent materials sort like
+  the course.
+
+`hideCourseModel` hides `./course_model.brres` through `setEditorSceneModelVisible`; it is put back
+when it turns false or Create mode ends. Everything is re-applied after a scene rebuild
+(`sceneRevision`): chunks, overlay, hidden course model and the top view all survive "Refresh track".
+
+Fog: chunk materials carry `fogIdx >= 0` like retail ones, so they receive the track's own fog
+(`posteffect.bfg`). A chunk seen from beyond the fog's end distance is **fully fogged**, which reads
+as a flat dark-blue colour on tracks with dense blue fog (Z0 does); it is not a light-set problem
+(`lightSetIdx = -1` materials are unlit and render their texture correctly with fog off). The toolbar
+fog button toggles it; the top view always turns fog off.
+
+Measured (Z0 in real Edge, 2.2 MB / 3-shape chunk, `scripts/probe-viewport-create-preview-swap.js`):
+parse + upload median 13.4 ms, max 21.5 ms (0.9 MB chunk: median 7.5 ms); frame time while swapping
+one chunk every 100 ms: baseline 5.5 ms, p95 16.9 ms, worst 27.6 ms, i.e. the parse cost plus under
+one extra frame. 49 swaps: live GPU objects (buffers 55, textures 97, samplers 11, programs 44,
+bindings 29, input layouts 6) are identical before and after; removing the chunk frees its 2 buffers
+and 1 texture.
+
+### Overlay
+
+`createView.overlay` is drawn by `vendor/noclip.website/src/MarioKartWii/CreateOverlay.ts` through
+`renderHelper.debugDraw`, after any read-only race lines. Sizes are CSS pixels on any display
+(`devicePixelRatio` is pushed to the scene every frame).
+
+| Element | How it is drawn |
+| --- | --- |
+| `points` | A screen-space disc of exactly `radius` px (dark 1.25 px halo underneath so white dots read on snow and dark dots on asphalt); `ring` adds a 2 px ring 4.5 px outside it; `label` is a pill-backed label to the right. Off-screen and behind-camera points are skipped. |
+| `lines` | `onTop` (default true): a 2 px stroke built as a triangle strip in screen space, miter joins (no double cover at corners, so translucent colours stay even), 0.5 px alpha feather on both edges, near-plane clipping. `dashed`: 9 px on / 6 px off in screen space, anchored at the first point, so dashes stay put as the camera moves. `closed` joins the ends. `onTop: false`: world-space `DebugDraw` lines with the depth test (thicker; meant for rare use). |
+| `triangles` | World-space translucent triangles, drawn first, **ignoring depth** (lift them slightly off a surface if you want it to hide them). |
+| `labels` | Screen-space text with a dark pill, centred 14 px above the anchor. |
+
+Draw order is triangles, lines, handles, label pills, then text; within a kind, array order. Put the
+selected/hovered handle last in `points`. A bad overlay cannot stop the render loop (the scene
+catches and logs once).
+
+### Pointer pipeline
+
+Every press goes to `createView.onPointer` first, with `ray` (game units, from the camera: the eye
+for perspective, a point on the eye plane for the orthographic top view), `hit`
+(`createView.raycast(ray)`, else the ray against `y = groundPlaneY`), `handleId` (nearest pickable
+overlay point within `radius + 6` px, ties within 2 px go to the one nearer the camera), modifiers and
+canvas-relative CSS pixels.
+
+- `hover` is sent for moves with no button down and no gesture running; `leave` when the pointer leaves
+  the canvas.
+- **`consumed` on a `down`**: `preventDefault()` has already run (what stops noclip's own `mousedown`
+  grab), the canvas has pointer capture, and `move` is delivered until `up` wherever the button is
+  released (outside the canvas and window included). No camera motion, no pointer lock, no selection.
+  `cancel` (instead of `up`) on Escape, window blur, tab hidden, lost capture or unmount. Right and
+  middle presses can be consumed too. While captured, `data-cursor="drag"` is set; `createView.cursor`
+  is applied inline otherwise (and suspended during camera gestures).
+- **`pass`**: the press does what it always did to the camera: left-drag looks (promoted from a
+  click, which does nothing in Create mode), right-drag looks with pointer lock, middle-drag looks;
+  in the top view every one of them pans. The wheel dollies (perspective) or zooms about the cursor
+  (top view). Nothing is selected.
+- The mouse-model rules of section 10 are unchanged (one gesture at a time, capture not lock,
+  every end goes through `endPointerGesture`).
+
+### Camera API (`createView.cameraApiRef`)
+
+Set once the viewer is ready, cleared on unmount. Everything is **game units** (the viewport converts
+at the boundary) except canvas coordinates, which are CSS pixels relative to the canvas.
+
+| Member | Behaviour |
+| --- | --- |
+| `frameBounds(min, max, options?)` | Remembers the box. 3D: puts the camera where the box's projected corners fill `fill` of the canvas (the limiting dimension; default 0.85), looking along `pitchDegrees` below the horizon (0 level, 90 straight down, clamped to 89) and `yawDegrees` (compass heading of the look direction, clockwise from north: 0 looks towards -Z, 90 towards +X). A missing angle keeps the camera's current one, so no options just refits along the current direction. It glides (380 ms ease-out, the free camera is created if another controller is installed) unless `animate: false`. Top view: ignores the angles, glides (~90 ms) onto the box with margin `1 / fill` (12 % when `fill` is not given). A camera gesture or wheel cancels the glide. The maths is the pure `computeFrameView` in `src/ui/viewport/createView.ts` (tested in `createView.test.ts`). Create opens a template at `{ pitchDegrees: 38, yawDegrees: 0, fill: 0.8, animate: false }` on the road bounds (`ui/create/viewport/framing.ts`), which puts the track at about 70 % of the canvas. |
+| `setTopView(true)` | Saves the current controller and pose and installs `CreateTopViewController`: orthographic, looking straight down, **north-up (screen up = world -Z, right = +X)**, framing the last `frameBounds` box (else the track's collision/KMP bounds). Right/middle/unconsumed-left drag pans, the wheel zooms about the cursor. Fog and the skybox are turned off while it is active. `false` puts the previous controller, pose and field of view back. |
+| `isTopView()` | Whether that controller is installed (it also tracks a scene reload). |
+| `isSceneReady()` | True once the scene for the current track is built. The viewport puts its own default camera down at that moment, so the first `frameBounds` of a new design must wait for it (Create polls this) or it is overwritten. |
+| `getPose()` | The camera's eye and forward axis. In the top view the eye is the (very high) point above the focus. |
+| `project(point)` | Canvas CSS pixels, `null` behind the camera. |
+| `screenToRay(x, y)` | The same ray `onPointer` receives. Independent of the depth convention (it is built from the camera axes and the projection's scale terms, not from unprojected depth). |
+| `canvasRect()` | The canvas's bounding rect, to convert client coordinates (HTML5 drag-and-drop from the palette). |
+
+### Objects without a scene rebuild
+
+`rebuildEditorGobjs(device, kmpBuffer, resolveFile?)` takes a resolver consulted *before* the
+archive the scene was built from. The viewport passes one that reads the track document's
+**current** `archiveEntries`, so a resource Create mode added after the scene was built
+(`itembox.brres`, scenery) is found when the KMP's GOBJ signature changes. It also no longer destroys
+imported mesh instances (they live in `baseObjects` too and used to be removed on every object
+rebuild). Moves are still applied in place by `updateEditorGobjTransform`.
+
+### Dev hook (`window.__mkwViewport.create`, DEV only)
+
+```ts
+inject(view | null)       // put the viewport in Create mode with this createView (null leaves)
+overlayStats()            // points/lines/triangles/labels submitted and drawn, dashes, vertices
+previewModels()           // [{ key, revision, uid, modelNames, visible, materialCount, shapeCount, textureCount }]
+previewTimings()          // recent chunk loads: { key, revision, bytes, ms, ok }
+simulatePointer(phase, x, y, { button, shift, ctrl, alt })   // builds the real event, calls onPointer
+pickHandle(x, y)
+cameraApi()               // the CreateCameraApi
+scene()                   // the live renderer, for probes
+isCaptured()              // a consumed press is being tracked
+gpuStats()                // live GPU objects by kind (dev builds track every create/destroy) + JS heap
+```
+
+### Vendored changes behind it
+
+- `MarioKartWii/CreateOverlay.ts` (new): the overlay renderer and its pure geometry helpers
+  (`projectPolylineToScreen`, `dashPolyline`, `strokePolyline`, `fillDisc`, ...), unit tested in
+  `src/ui/viewport/createOverlay.test.ts`.
+- `gfx/helpers/DebugDraw.ts`: `DebugDrawFlags.NoDepthTest` (always-on-top at full strength; `DepthTint`
+  dims what is hidden to 15 %), `drawTrianglesPC` (per-vertex colour batches, which is what feathers
+  the edges), `measureText`, `findPageOrdered` (a later request is never tucked into the slack of an
+  earlier page, which drew it *before* earlier translucent geometry and punched wedges out of discs),
+  and the translucent depth-tested solid/line behaviours, which used to map to the wrong topology.
+- `gfx/helpers/FontTexture.ts`: the 12 px base font had fractional cell sizes, so creating it hit an
+  assert; they are rounded up now.
+- `MarioKartWii/Scenes_MarioKartWii.ts`: preview chunks, the overlay hook, `'create'` mode, the
+  `rebuildEditorGobjs` resolver.
+
+### Probes
+
+`scripts/viewport-harness.html` mounts the viewport alone (no app shell) so Create mode can be driven
+through `inject`:
+
+- `scripts/probe-viewport-create-input.js` (`viewport-input-probe.mjs`, real mouse input): hover/leave,
+  consumed capture outside the canvas, Escape cancel, passed presses moving the camera, top view
+  pan/zoom/restore.
+- `scripts/probe-viewport-create-preview-swap.js` (`ui-shell-probe.mjs`): the swap/leak measurement.
+- `scripts/probe-viewport-create-overlay.js` (`ui-shell-probe.mjs`): overlay and top-view screenshots with
+  magnified crops. A `shot()` is taken asynchronously by the harness: `await sleep(600)` after it before
+  changing the view, or the picture shows the next state.

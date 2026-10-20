@@ -65,14 +65,12 @@ export interface PlaytestViewportSession {
   onError(error: unknown): void;
 }
 
-/** The subset of `usePanelLayout` the session borrows while the race is on. */
+/**
+ * The subset of `usePanelLayout` the session borrows while the race is on: one switch that draws
+ * every dock closed without changing (or saving) the user's own open/closed choices.
+ */
 export interface PlaytestLayoutControl {
-  placeAssetsOpen: boolean;
-  setPlaceAssetsOpen: (open: boolean) => void;
-  inspectorOpen: boolean;
-  setInspectorOpen: (open: boolean) => void;
-  browserOpen: boolean;
-  setBrowserOpen: (open: boolean) => void;
+  setDocksHidden: (hidden: boolean) => void;
 }
 
 export interface PlaytestSession {
@@ -130,10 +128,11 @@ export function usePlaytestSession({
   const [viewportSession, setViewportSession] = useState<PlaytestViewportSession | null>(null);
 
   const hudRef = useRef<PlaytestHudSample>(emptyHudSample());
+  /** Mirrors `phase` synchronously, so two Starts in the same tick cannot both go through. */
+  const phaseRef = useRef<PlaytestPhase>('idle');
   const pressedKeysRef = useRef<Set<string>>(new Set());
   const runtimeRef = useRef<PlaytestRuntime | null>(null);
   const startTokenRef = useRef(0);
-  const savedLayoutRef = useRef<{ placeAssets: boolean; inspector: boolean; browser: boolean } | null>(null);
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
   const trackRef = useRef(track);
@@ -153,14 +152,9 @@ export function usePlaytestSession({
     writeStoredPlaytestOptions(next);
   }, []);
 
-  /** Puts the docks back the way the user had them. Safe to call when nothing was borrowed. */
+  /** Puts the docks back exactly as the user had them. Safe to call when nothing was borrowed. */
   const restoreLayout = useCallback(() => {
-    const saved = savedLayoutRef.current;
-    savedLayoutRef.current = null;
-    if (!saved) return;
-    layoutRef.current.setPlaceAssetsOpen(saved.placeAssets);
-    layoutRef.current.setInspectorOpen(saved.inspector);
-    layoutRef.current.setBrowserOpen(saved.browser);
+    layoutRef.current.setDocksHidden(false);
   }, []);
 
   const stop = useCallback(() => {
@@ -168,6 +162,7 @@ export function usePlaytestSession({
     const runtime = runtimeRef.current;
     runtimeRef.current = null;
     setViewportSession(null);
+    phaseRef.current = 'idle';
     setPhase('idle');
     pressedKeysRef.current.clear();
     restoreLayout();
@@ -198,17 +193,13 @@ export function usePlaytestSession({
       showToastRef.current({ tone: 'warning', title: 'Cannot playtest', detail: reason ?? 'No track loaded' });
       return;
     }
+    // A second Start while one is loading or running (F5 pressed twice, a double click) is ignored.
+    if (phaseRef.current !== 'idle') return;
     const token = ++startTokenRef.current;
-    savedLayoutRef.current = {
-      placeAssets: layoutRef.current.placeAssetsOpen,
-      inspector: layoutRef.current.inspectorOpen,
-      browser: layoutRef.current.browserOpen,
-    };
-    layoutRef.current.setPlaceAssetsOpen(false);
-    layoutRef.current.setInspectorOpen(false);
-    layoutRef.current.setBrowserOpen(false);
+    layoutRef.current.setDocksHidden(true);
     pressedKeysRef.current.clear();
     Object.assign(hudRef.current, emptyHudSample());
+    phaseRef.current = 'loading';
     setPhase('loading');
 
     void (async () => {
@@ -252,6 +243,7 @@ export function usePlaytestSession({
           },
           onError: (error) => failSessionRef.current(error),
         });
+        phaseRef.current = 'running';
         setPhase('running');
       } catch (error) {
         if (startTokenRef.current !== token) return;

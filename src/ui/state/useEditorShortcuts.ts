@@ -5,6 +5,8 @@ import type { TrackDocument } from '../../lib/track';
 import type { FillBetweenSelection } from '../fillBetween';
 import { browserObjectTitle } from '../objects/objectCatalog';
 import type { TransformTool } from '../Noclip3DViewport';
+import type { ModeShortcuts } from '../modes/types';
+import { resolveCreateShortcut } from './createShortcuts';
 import type { EditorSelection } from './useSelection';
 import type { EditorModeStub } from './types';
 
@@ -31,6 +33,7 @@ export function useEditorShortcuts({
   downloadExport,
   refreshTrack,
   openTrackPicker,
+  modeShortcuts,
 }: {
   editorMode: EditorModeStub;
   selection: EditorSelection;
@@ -52,6 +55,12 @@ export function useEditorShortcuts({
   refreshTrack: () => void;
   /** Opens the "open a track" file picker, the same one the File menu uses. */
   openTrackPicker: () => void;
+  /**
+   * The active mode's own key handling. In Create mode every key goes through it (the design has
+   * its own undo history and its tools own the letter keys); the KMP gizmo/clipboard keys below
+   * are never reached.
+   */
+  modeShortcuts?: ModeShortcuts | null;
 }) {
   useEffect(() => {
     const isViewportCameraLookActive = () => document.documentElement.dataset.viewportCameraLook === 'active';
@@ -61,6 +70,23 @@ export function useEditorShortcuts({
       if (isPlaytesting()) return;
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
+      if (editorMode === 'create') {
+        const action = resolveCreateShortcut(event, modeShortcuts?.ownsKey?.(event) === true);
+        if (action) {
+          event.preventDefault();
+          if (action === 'undo') modeShortcuts?.undo();
+          else if (action === 'redo') modeShortcuts?.redo();
+          else if (action === 'delete') modeShortcuts?.deleteSelection();
+          else if (action === 'testDrive') modeShortcuts?.testDrive?.();
+          else if (action === 'export') downloadExport();
+          else if (action === 'open') openTrackPicker();
+          // 'swallow': nothing to do, the browser just must not act on the key.
+          return;
+        }
+        const plain = !(event.ctrlKey || event.metaKey || event.altKey);
+        if (plain && !isViewportCameraLookActive() && modeShortcuts?.onKey?.(event)) event.preventDefault();
+        return;
+      }
       const meta = event.ctrlKey || event.metaKey;
       if (meta && event.altKey && event.key.toLowerCase() === 'r') {
         event.preventDefault();
@@ -144,5 +170,5 @@ export function useEditorShortcuts({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editorMode, fillBetweenSelection, objFlow, selected, track]);
+  }, [editorMode, fillBetweenSelection, modeShortcuts, objFlow, selected, track]);
 }

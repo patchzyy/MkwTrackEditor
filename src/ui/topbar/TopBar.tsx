@@ -7,8 +7,10 @@ import {
   Palette,
   PanelLeft,
   PanelRight,
+  Play,
   Redo2,
   Route,
+  Sparkles,
   Undo2,
   Video,
 } from 'lucide-react';
@@ -17,11 +19,13 @@ import { Button, IconButton } from '../components/Button';
 import { RefreshTrackButton } from '../components/RefreshTrackButton';
 import { SegmentedControl, type SegmentedOption } from '../components/SegmentedControl';
 import { ToolbarSeparator } from '../components/Toolbar';
+import type { ModeTestDrive } from '../modes/types';
 import type { EditorModeStub } from '../state/types';
 import { FileMenu } from './FileMenu';
 import type { RecentTrack } from './recentFiles';
 
 const MODE_OPTIONS: ReadonlyArray<SegmentedOption<EditorModeStub>> = [
+  { value: 'create', label: 'Create', icon: <Sparkles size={14} />, tooltip: 'Build a brand-new track from scratch: draw the road, pick a world, add boosts and scenery, then test drive it.' },
   { value: 'kmp', label: 'KMP', icon: <Route size={14} />, tooltip: 'Lay out the race: driving routes, checkpoints, start points, objects and areas.' },
   { value: 'camera', label: 'Camera', icon: <Video size={14} />, tooltip: 'Set up the cameras the game flies: the opening pan, replays and the character-select shot.' },
   { value: 'model', label: 'Model', icon: <Boxes size={14} />, tooltip: 'Change the course geometry: move, hide, duplicate or delete a mesh, and place new scenery.' },
@@ -63,6 +67,8 @@ export function TopBar({
   playtestControl,
   onOpenModelStudio,
   onOpenModelInStudio,
+  testDrive,
+  exportDisabledReason,
 }: {
   topBarRef: MutableRefObject<HTMLElement | null>;
   historyState: { undo: number; redo: number };
@@ -96,6 +102,10 @@ export function TopBar({
   onOpenModelStudio?: () => void;
   /** File menu: opens a picked model archive straight in the Model Studio. */
   onOpenModelInStudio?: (files: FileList | null) => void;
+  /** Create mode: the big Test drive button, shown in place of the Playtest popover. */
+  testDrive?: ModeTestDrive;
+  /** Why Export is unavailable even though a track is loaded (Create mode with no design open). */
+  exportDisabledReason?: string | null;
 }) {
   return (
     <header ref={topBarRef} className="topBar">
@@ -143,8 +153,23 @@ export function TopBar({
 
       <div className="topBarCenter">
         <SegmentedControl label="Editor mode" value={editorMode} options={MODE_OPTIONS} onChange={onChangeEditorMode} />
-        {playtestControl}
-        {onOpenModelStudio && (
+        {testDrive ? (
+          <Button
+            variant="primary"
+            className="topBarTestDrive"
+            icon={<Play size={15} />}
+            tooltip="Drive your track right now, starting from the start line. Press Esc to come back."
+            shortcut="F5"
+            disabledReason={testDrive.disabledReason ?? undefined}
+            disabled={testDrive.disabledReason !== null || testDrive.busy}
+            onClick={testDrive.start}
+          >
+            {testDrive.busy ? 'Starting...' : 'Test drive'}
+          </Button>
+        ) : (
+          playtestControl
+        )}
+        {!testDrive && onOpenModelStudio && (
           <Button
             icon={<Boxes size={15} />}
             tooltip="Open the Model Studio: one model, its animations and its shaders, in their own workspace."
@@ -176,15 +201,15 @@ export function TopBar({
           onClick={onToggleInspector}
         />
         <ToolbarSeparator />
-        <RefreshTrackButton onRefresh={onRefreshTrack} refreshing={refreshingTrack} hasTrack={canExport} />
+        {!testDrive && <RefreshTrackButton onRefresh={onRefreshTrack} refreshing={refreshingTrack} hasTrack={canExport} />}
         <IconButton icon={<Keyboard size={15} />} tooltip="Keyboard shortcuts" shortcut="?" onClick={onShowShortcuts} />
         <Button
           variant="primary"
           icon={<Download size={15} />}
           tooltip={unsavedChanges ? 'Save your edits as a playable .szs' : 'Save the track as a playable .szs'}
           shortcut="Ctrl+S"
-          disabledReason="Export needs a loaded track"
-          disabled={!canExport}
+          disabledReason={exportDisabledReason ?? 'Export needs a loaded track'}
+          disabled={!canExport || !!exportDisabledReason}
           onClick={onExport}
         >
           Export

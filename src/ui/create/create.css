@@ -1,0 +1,1095 @@
+/*
+ * Create mode. Same dark editor theme as everything else -- tokens come from styles.css -- but the
+ * friendliest corner of it: bigger targets, real thumbnails, plain sentences.
+ *
+ * One accent per concept, used everywhere (palette tiles, outliner rows, overlay colours):
+ *   road = blue, sections = violet, pieces = amber, scenery = green, terrain = earth, start = white.
+ */
+
+.createMode {
+  --create-road: var(--accent);
+  --create-road-soft: var(--accent-soft);
+  --create-section: #a58bff;
+  --create-section-soft: rgb(165 139 255 / 16%);
+  --create-piece: var(--warning);
+  --create-piece-soft: var(--warning-soft);
+  --create-scenery: var(--success);
+  --create-scenery-soft: var(--success-soft);
+  --create-terrain: #c19a6b;
+  --create-terrain-soft: rgb(193 154 107 / 16%);
+  --create-start: #ffffff;
+  --create-radius: var(--radius-lg);
+  --create-card: var(--surface-1);
+  --create-card-hover: var(--surface-2);
+}
+
+/* ------------------------------------------------------------------ top bar: Test drive */
+
+.topBarTestDrive.uiButton {
+  min-width: 118px;
+  height: 32px;
+  padding: 0 var(--space-5) 0 var(--space-4);
+  border-color: var(--success-border);
+  color: #04140d;
+  background: var(--success);
+  font-size: var(--font-size-md);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.topBarTestDrive.uiButton:hover:not(:disabled) {
+  border-color: var(--success-text);
+  background: #62dba2;
+}
+
+.topBarTestDrive.uiButton:disabled {
+  border-color: var(--border-strong);
+  color: var(--text-disabled);
+  background: var(--surface-3);
+}
+
+/* ---------------------------------------------------------------------------- home screen */
+
+.createHome {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background:
+    radial-gradient(1100px 520px at 18% -8%, rgb(71 163 255 / 11%), transparent 62%),
+    radial-gradient(900px 480px at 100% 0%, rgb(165 139 255 / 8%), transparent 60%),
+    var(--surface-0);
+}
+
+.createHomeScroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.createHomeInner {
+  width: min(1080px, 100%);
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-7) 64px;
+}
+
+.createKicker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 3px 10px 3px 8px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-pill);
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.createHeroTitle {
+  max-width: 17em;
+  margin: var(--space-4) 0 var(--space-3);
+  color: var(--text);
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.022em;
+  line-height: 1.12;
+  text-wrap: balance;
+}
+
+.createHeroLead {
+  max-width: 36em;
+  margin: 0 0 var(--space-7);
+  color: var(--text-secondary);
+  font-size: var(--font-size-lg);
+  line-height: 1.55;
+}
+
+.createNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-6);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--create-radius);
+  background: var(--surface-2);
+}
+
+.createNotice > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.createNotice p {
+  margin: var(--space-2) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.createNotice .createNoticeHint {
+  color: var(--text-dim);
+}
+
+.createNotice--error {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+}
+
+.createNotice--error > svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--danger);
+}
+
+.createStartRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+  gap: var(--space-5);
+  margin-bottom: var(--space-8);
+}
+
+.createNewCard,
+.createImportCard {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  min-width: 0;
+  padding: var(--space-6);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  color: var(--text);
+  background: var(--surface-1);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+
+.createNewCard {
+  min-height: 132px;
+  border-color: var(--accent-border);
+  background:
+    linear-gradient(120deg, rgb(71 163 255 / 22%), rgb(71 163 255 / 5%) 55%),
+    var(--surface-2);
+  box-shadow: var(--shadow-2);
+}
+
+.createNewCard:hover:not(:disabled) {
+  border-color: var(--accent-strong);
+  box-shadow:
+    var(--shadow-2),
+    0 0 0 3px rgb(71 163 255 / 14%);
+}
+
+.createNewCard:disabled,
+.createImportCard:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.createNewCard:focus-visible,
+.createImportCard:focus-visible,
+.createCardMain:focus-visible,
+.createChoice:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.createNewIcon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 68px;
+  height: 68px;
+  border-radius: 18px;
+  color: #061422;
+  background: linear-gradient(145deg, var(--accent-strong), var(--accent));
+  box-shadow: 0 6px 18px rgb(71 163 255 / 35%);
+}
+
+.createNewText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.createNewText strong {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.createNewText span {
+  color: var(--text-secondary);
+  font-size: var(--font-size-md);
+  line-height: 1.45;
+}
+
+.createNewBusy {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-5);
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+}
+
+.createImportCard {
+  gap: var(--space-4);
+  padding: var(--space-5);
+  color: var(--text-secondary);
+}
+
+.createImportCard:hover {
+  border-color: var(--border-hover);
+  background: var(--surface-2);
+}
+
+.createImportCard > svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.createImportText {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.createImportText strong {
+  color: var(--text);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+}
+
+.createImportText span {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.createSectionHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.createSectionHead h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--font-size-lg);
+  font-weight: 650;
+}
+
+.createSectionCount {
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  background: var(--surface-3);
+  font-size: var(--font-size-xs);
+}
+
+.createGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(236px, 1fr));
+  gap: var(--space-5);
+}
+
+.createCard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--create-radius);
+  background: var(--create-card);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+
+.createCard:hover {
+  border-color: var(--border-strong);
+  background: var(--create-card-hover);
+  box-shadow: var(--shadow-2);
+}
+
+.createCardMain {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.createCardMain:disabled {
+  cursor: progress;
+}
+
+.createCardThumb {
+  --outline-pad: 16px;
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 10;
+  border-bottom: 1px solid var(--border);
+}
+
+.createCardBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-4) var(--space-4);
+}
+
+.createCardTitleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.createCardName {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--font-size-lg);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.createRenameField {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: var(--surface-input);
+  font: inherit;
+  font-size: var(--font-size-md);
+  font-weight: 600;
+}
+
+.createCardMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-right: var(--space-3);
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+}
+
+.createWorldChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 62%;
+  overflow: hidden;
+  padding: 2px 9px 2px 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.createWorldDot {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 18%);
+}
+
+.createCardTime {
+  flex: none;
+}
+
+/* ------------------------------------------------------------------- track outline (svg) */
+
+/* The drawing fills its (positioned) frame; the square viewBox is centred inside it. */
+.createOutline {
+  position: absolute;
+  inset: var(--outline-pad, 12px);
+  display: block;
+  width: calc(100% - 2 * var(--outline-pad, 12px));
+  height: calc(100% - 2 * var(--outline-pad, 12px));
+  overflow: visible;
+}
+
+.createOutline path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.createOutlineCasing {
+  stroke: rgb(5 10 16 / 55%);
+  stroke-width: 9px;
+}
+
+.createOutlineRoad {
+  stroke: rgb(255 255 255 / 92%);
+  stroke-width: 5.5px;
+}
+
+.createOutlineCenter {
+  stroke: rgb(20 30 44 / 38%);
+  stroke-width: 1px;
+  stroke-dasharray: 3 4;
+}
+
+.createOutlineStart {
+  fill: #fff;
+  stroke: rgb(5 10 16 / 80%);
+  stroke-width: 1.5px;
+  vector-effect: non-scaling-stroke;
+}
+
+.createOutlineEmpty {
+  fill: rgb(255 255 255 / 70%);
+  font-size: 7.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* ----------------------------------------------------------------------- dialogs + wizard */
+
+.createScrim {
+  position: fixed;
+  inset: 0;
+  z-index: 700;
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+  background: rgb(4 7 11 / 68%);
+  backdrop-filter: blur(3px);
+}
+
+.createDialog {
+  width: min(420px, 100%);
+  padding: var(--space-6);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  background: var(--surface-menu);
+  box-shadow: var(--shadow-3);
+}
+
+.createDialogTitle {
+  margin: 0 0 var(--space-3);
+  font-size: var(--font-size-lg);
+  font-weight: 650;
+}
+
+.createDialogText {
+  margin: 0 0 var(--space-6);
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.createDialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+.createWizard {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  width: min(940px, 100%);
+  max-height: min(900px, 100%);
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-3);
+}
+
+.createWizardHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-5) var(--space-3) var(--space-6);
+}
+
+.createWizardTitle {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.012em;
+}
+
+.createWizardSub {
+  margin: var(--space-2) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+  line-height: 1.45;
+}
+
+.createSteps {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3) var(--space-6) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  list-style: none;
+}
+
+.createStep {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-dim);
+}
+
+.createStep + .createStep::before {
+  content: '';
+  width: 36px;
+  height: 1px;
+  margin-right: var(--space-2);
+  background: var(--border-strong);
+}
+
+.createStepButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 2px 8px 2px 2px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  color: inherit;
+  background: none;
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.createStepButton:disabled {
+  cursor: default;
+}
+
+.createStepButton:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.createStepNum {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  font-size: var(--font-size-xs);
+  background: var(--surface-2);
+}
+
+.createStep.is-current {
+  color: var(--text);
+}
+
+.createStep.is-current .createStepNum {
+  border-color: var(--accent);
+  color: #061422;
+  background: var(--accent);
+}
+
+.createStep.is-done {
+  color: var(--text-secondary);
+}
+
+.createStep.is-done .createStepNum {
+  border-color: var(--success-border);
+  color: var(--success-text);
+  background: var(--success-soft);
+}
+
+.createWizardBody {
+  min-height: 0;
+  padding: var(--space-5) var(--space-6);
+  overflow-y: auto;
+}
+
+.createWizardLoading {
+  margin: var(--space-8) 0;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.createWizardFoot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.createWizardFoot .uiButton {
+  min-width: 92px;
+  height: 34px;
+}
+
+.createWizardFoot .uiButtonLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.createWizardError {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--danger-text);
+  font-size: var(--font-size-sm);
+}
+
+.createCardGrid {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.createCardGrid--worlds {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.createCardGrid--layouts {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.createChoice {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--create-radius);
+  color: var(--text);
+  background: var(--surface-2);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+
+.createChoice:hover {
+  border-color: var(--border-hover);
+  background: var(--surface-3);
+}
+
+.createChoice.is-selected {
+  border-color: var(--accent);
+  background: var(--surface-3);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.createChoiceImage {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+}
+
+.createChoiceImage img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.createChoiceImage--outline {
+  --outline-pad: 12px;
+  aspect-ratio: 16 / 10;
+}
+
+.createChoiceCheck {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: #061422;
+  background: var(--accent);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 45%);
+}
+
+.createChoiceText {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+.createChoiceText strong {
+  font-size: var(--font-size-md);
+  font-weight: 650;
+}
+
+.createChoiceText span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.createNameStep {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: var(--space-7);
+  align-items: start;
+}
+
+.createNameFields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.createFieldLabel {
+  margin-top: var(--space-3);
+  color: var(--text);
+  font-size: var(--font-size-md);
+  font-weight: 650;
+}
+
+.createFieldLabel:first-child {
+  margin-top: 0;
+}
+
+.createFieldHelp {
+  color: var(--text-dim);
+  font-size: var(--font-size-sm);
+}
+
+.createTextInput {
+  height: 40px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  background: var(--surface-input);
+  font: inherit;
+  font-size: var(--font-size-lg);
+}
+
+.createTextInput:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.createStepper {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: var(--space-2);
+  padding: 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-input);
+}
+
+.createStepperValue {
+  min-width: 44px;
+  font-size: 18px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.createNamePreview {
+  --outline-pad: 22px;
+  position: relative;
+  display: block;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--create-radius);
+}
+
+.createNamePreviewLabel {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: var(--space-3) var(--space-4);
+  color: #fff;
+  background: linear-gradient(transparent, rgb(0 0 0 / 55%));
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
+}
+
+/* ------------------------------------------------------------------- viewport-side chrome */
+
+.createViewportLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.createViewportLayer > * {
+  pointer-events: none;
+}
+
+.createViewportLayer button,
+.createViewportLayer [role='alertdialog'],
+.createViewportLayer [role='alert'] {
+  pointer-events: auto;
+}
+
+.createBanners {
+  position: absolute;
+  bottom: var(--space-5);
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  width: min(720px, calc(100% - 48px));
+  transform: translateX(-50%);
+}
+
+.createBanner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-overlay);
+  border-radius: var(--radius-lg);
+  color: var(--text);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-2);
+  backdrop-filter: blur(8px);
+}
+
+.createBanner > svg {
+  flex: none;
+}
+
+.createBannerText {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+}
+
+.createBannerText span {
+  color: var(--text-muted);
+}
+
+.createBanner--warning {
+  border-color: var(--warning-border);
+}
+
+.createBanner--warning > svg {
+  color: var(--warning);
+}
+
+.createBanner--error {
+  border-color: var(--danger-border);
+}
+
+.createBanner--error > svg {
+  color: var(--danger);
+}
+
+.createCorner {
+  position: absolute;
+  right: var(--space-4);
+  bottom: var(--space-4);
+}
+
+.createSavePill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px 3px 8px;
+  border: 1px solid var(--border-overlay);
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  background: var(--surface-overlay);
+  font-size: var(--font-size-xs);
+  backdrop-filter: blur(6px);
+}
+
+.createSavePill.is-saved svg {
+  color: var(--success);
+}
+
+.createSavePill.is-error {
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+}
+
+.createSpin {
+  animation: createSpin 900ms linear infinite;
+}
+
+@keyframes createSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .createSpin {
+    animation-duration: 3s;
+  }
+}
+
+/* -------------------------------------------------------- left / right docks (stand-ins) */
+
+.createChecklist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.createChecklistLead {
+  margin: 0 0 var(--space-2);
+  color: var(--text);
+  font-size: var(--font-size-lg);
+  font-weight: 650;
+}
+
+.createCheckItem {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.createCheckIcon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  color: var(--text-dim);
+}
+
+.createCheckItem.is-done .createCheckIcon {
+  border-color: var(--success-border);
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.createCheckItem.is-warning .createCheckIcon {
+  border-color: var(--warning-border);
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.createCheckItem.is-error .createCheckIcon {
+  border-color: var(--danger-border);
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.createCheckText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.createCheckText strong {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+}
+
+.createCheckText span {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+}
+
+.createPanelFoot {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+.createDetails {
+  padding: var(--space-4);
+}
+
+.createDetailsTitle {
+  margin: 0 0 var(--space-4);
+  font-size: var(--font-size-lg);
+  font-weight: 650;
+}
+
+.createFacts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-3) var(--space-5);
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+.createFacts dt {
+  color: var(--text-muted);
+}
+
+.createFacts dd {
+  margin: 0;
+  color: var(--text);
+}
+
+@media (max-width: 900px) {
+  .createStartRow {
+    grid-template-columns: 1fr;
+  }
+
+  .createCardGrid--worlds {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .createCardGrid--layouts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .createNameStep {
+    grid-template-columns: 1fr;
+  }
+}

@@ -43,9 +43,21 @@ export interface TrackDocumentState extends EditorUrlParams {
   courseAssetDb: CourseAssetDatabase | null;
   objFlow: CommonResourceArchive['objFlow'] | null;
   openFiles: (files: FileList | null) => Promise<void>;
+  /**
+   * Opens a track from bytes (the one way any track gets opened). `sourceId` pins the document's
+   * identity, which Create mode uses so that later in-place updates keep the viewport's scene.
+   * Resolves `true` once the document is in place, `false` when the load failed or was replaced.
+   */
+  openTrackBytes: (bytes: Uint8Array, fileName: string, options?: OpenTrackBytesOptions) => Promise<boolean>;
   importCommonArchive: (files: FileList | null) => Promise<void>;
   /** Wires the history stack in; called from the component body before any effect runs. */
   bindHistory: (history: EditorHistory) => void;
+}
+
+export interface OpenTrackBytesOptions {
+  brresSummaryLimit?: number;
+  /** Overrides the content fingerprint the loader computed. */
+  sourceId?: string;
 }
 
 function readUrlParam(name: string): string | null {
@@ -116,29 +128,32 @@ export function useTrackDocument({ setStatus }: { setStatus: Dispatch<SetStateAc
    * come through here. Reading happens in `trackLoad.worker.ts` when the browser has workers, so
    * the page keeps painting and the overlay's bar moves with real progress.
    */
-  async function openTrackBytes(bytes: Uint8Array, fileName: string, options: { brresSummaryLimit?: number } = {}) {
+  async function openTrackBytes(bytes: Uint8Array, fileName: string, options: OpenTrackBytesOptions = {}): Promise<boolean> {
     loadAbortRef.current?.abort();
     const controller = new AbortController();
     loadAbortRef.current = controller;
     setLoadProgress({ stage: 'fetching', label: `Opening ${fileName}`, fraction: 0 });
     try {
-      const { track: loaded, projectState: loadedProjectState } = await loadTrack(bytes, fileName, {
+      const { track: loadedTrack, projectState: loadedProjectState } = await loadTrack(bytes, fileName, {
         brresSummaryLimit: options.brresSummaryLimit,
         signal: controller.signal,
         onProgress: (progress) => {
           if (!controller.signal.aborted) setLoadProgress(progress);
         },
       });
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) return false;
+      const opened = options.sourceId ? { ...loadedTrack, sourceId: options.sourceId } : loadedTrack;
       // Seed the Model-mode project state the worker already built, and record which entry list
       // it belongs to so the effect below leaves it alone.
-      projectStateEntriesRef.current = loaded.archiveEntries;
+      projectStateEntriesRef.current = opened.archiveEntries;
       setProjectState(loadedProjectState);
-      acceptLoadedTrack(loaded, fileName);
-      void fillInModelPreviews(loaded);
+      acceptLoadedTrack(opened, fileName);
+      void fillInModelPreviews(opened);
+      return true;
     } catch (error) {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) return false;
       setStatus(error instanceof Error ? error.message : String(error));
+      return false;
     } finally {
       if (loadAbortRef.current === controller) {
         loadAbortRef.current = null;
@@ -419,6 +434,7 @@ export function useTrackDocument({ setStatus }: { setStatus: Dispatch<SetStateAc
     courseAssetDb,
     objFlow,
     openFiles,
+    openTrackBytes,
     importCommonArchive,
     bindHistory,
   };

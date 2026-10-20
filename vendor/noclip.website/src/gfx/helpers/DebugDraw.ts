@@ -29,6 +29,12 @@ export enum DebugDrawFlags {
     DepthTint = 1 << 2,
     Font = 1 << 3,
     AutoFlipText = 1 << 4,
+    /**
+     * Editor extension: draw on top of everything. Unlike `DepthTint` (which also ignores the depth
+     * test but dims whatever is hidden to 15 %), the geometry is drawn at full strength whether or
+     * not something is in front of it. Used by the Create mode overlay.
+     */
+    NoDepthTest = 1 << 5,
 
     Default = DepthTint | AutoFlipText,
 };
@@ -196,6 +202,9 @@ enum BehaviorType {
     SolidDepthTint,
     Font,
     FontDepthTint,
+    LinesAlways,
+    SolidAlways,
+    FontAlways,
     Count,
 };
 
@@ -269,7 +278,7 @@ class BufferPage {
 
         this.renderInst.setVertexInput(this.inputLayout, [vertexBuffer], indexBuffer);
 
-        const isLines = this.behaviorType === BehaviorType.LinesDepthWrite || this.behaviorType === BehaviorType.LinesDepthTint;
+        const isLines = this.behaviorType === BehaviorType.Lines || this.behaviorType === BehaviorType.LinesDepthWrite || this.behaviorType === BehaviorType.LinesDepthTint || this.behaviorType === BehaviorType.LinesAlways;
         const isDepthWrite = this.behaviorType === BehaviorType.LinesDepthWrite || this.behaviorType === BehaviorType.SolidDepthWrite;
         const isDepthTint = this.behaviorType === BehaviorType.LinesDepthTint || this.behaviorType === BehaviorType.SolidDepthTint || this.behaviorType === BehaviorType.FontDepthTint;
 
@@ -280,7 +289,8 @@ class BufferPage {
             this.renderInst.setInstanceCount(1 + (this.lineThickness - 1) * 4);
 
         this.renderInst.setMegaStateFlags({ depthWrite: isDepthWrite });
-        if (isDepthTint)
+        const isAlways = this.behaviorType === BehaviorType.LinesAlways || this.behaviorType === BehaviorType.SolidAlways || this.behaviorType === BehaviorType.FontAlways;
+        if (isDepthTint || isAlways)
             this.renderInst.setMegaStateFlags({ depthCompare: GfxCompareMode.Always });
 
         this.renderInst.setDrawCount(this.indexDataOffs);
@@ -300,6 +310,7 @@ export class DebugDraw {
     private depthSampler: GfxSampler;
     private fontSampler: GfxSampler;
     private currentPage: BufferPage | null = null; // for the batch system
+    private orderedPageCursor = 0;
     private lineThickness = 3;
     private viewFromWorldMatrix = mat4.create();
     private screenTextPosition = vec2.create();
@@ -335,14 +346,18 @@ export class DebugDraw {
     }
 
     private getBehaviorType(isLines: boolean, isOpaque: boolean, options: DebugDrawOptions) {
-        const isDepthTint = (options.flags ?? DebugDrawFlags.Default) & DebugDrawFlags.DepthTint;
+        const flags = options.flags ?? DebugDrawFlags.Default;
+        if (flags & DebugDrawFlags.NoDepthTest)
+            return isLines ? BehaviorType.LinesAlways : BehaviorType.SolidAlways;
+        const isDepthTint = flags & DebugDrawFlags.DepthTint;
         if (isLines)
             return isDepthTint ? BehaviorType.LinesDepthTint : isOpaque ? BehaviorType.LinesDepthWrite : BehaviorType.Lines;
         else
-            return isDepthTint ? BehaviorType.SolidDepthTint : isOpaque ? BehaviorType.SolidDepthWrite : BehaviorType.Lines;
+            return isDepthTint ? BehaviorType.SolidDepthTint : isOpaque ? BehaviorType.SolidDepthWrite : BehaviorType.Solid;
     }
 
     public beginFrame(clipFromViewMatrix: ReadonlyMat4, viewFromWorldMatrix: ReadonlyMat4, width: number, height: number): void {
+        this.orderedPageCursor = 0;
         let offs = this.templateRenderInst.allocateUniformBuffer(0, 16 + 12 + 4);
         const d = this.templateRenderInst.mapUniformBufferF32(0);
         mat4.copy(this.viewFromWorldMatrix, viewFromWorldMatrix);
@@ -393,6 +408,32 @@ export class DebugDraw {
         const page = new BufferPage(this.renderCache, behaviorType, vertexCount, indexCount, this.lineThickness);
         page.fontTexture = fontTexture;
         this.pages.push(page);
+        return page;
+    }
+
+    /**
+     * Like `findPage`, but never returns a page earlier than the one the previous ordered draw of
+     * this frame used. Pages are drawn in index order, and `findPage` happily tucks a small later
+     * request into the slack of an earlier page, which draws it *before* geometry submitted earlier
+     * -- invisible for opaque debug lines, but it punches wedges out of stacked translucent shapes.
+     */
+    private findPageOrdered(behaviorType: BehaviorType, vertexCount: number, indexCount: number): BufferPage {
+        for (let i = this.orderedPageCursor; i < this.pages.length; i++) {
+            const page = this.pages[i];
+            if (!page.canAllocVertices(vertexCount, indexCount))
+                continue;
+            if (page.indexDataOffs === 0) {
+                page.behaviorType = behaviorType;
+                page.fontTexture = null;
+            } else if (page.behaviorType !== behaviorType || page.fontTexture !== null) {
+                continue;
+            }
+            this.orderedPageCursor = i;
+            return page;
+        }
+        const page = new BufferPage(this.renderCache, behaviorType, align(vertexCount, this.defaultPageVertexCount), align(indexCount, this.defaultPageIndexCount), this.lineThickness);
+        this.pages.push(page);
+        this.orderedPageCursor = this.pages.length - 1;
         return page;
     }
 
@@ -636,6 +677,56 @@ export class DebugDraw {
             page.index(baseVertex + i);
     }
 
+    /**
+     * Editor extension: a batch of triangles with a colour per vertex, written straight into the
+     * page buffers. `data` holds `vertexCount` vertices of seven floats each (x, y, z, r, g, b, a),
+     * three vertices per triangle. With `DebugDrawFlags.ScreenSpace` the positions are backbuffer
+     * pixels (origin top-left); that is how the Create mode overlay draws crisp, exactly sized
+     * strokes and discs, and the per-vertex alpha is what feathers their edges.
+     */
+    public drawTrianglesPC(data: Float32Array, vertexCount: number, options: DebugDrawOptions = defaultOptions): void {
+        const flagsOffset = (options.flags ?? DebugDrawFlags.Default) * 2;
+        let done = 0;
+        while (done < vertexCount) {
+            // Pages hold at least 1024 vertices; stay a multiple of three so a triangle never splits.
+            const count = Math.min(vertexCount - done, 1023);
+            const n = count - (count % 3);
+            if (n <= 0)
+                break;
+            const page = this.findPageOrdered(this.getBehaviorType(false, false, options), n, n);
+            const baseVertex = page.getCurrentVertexID();
+            const vertexData = page.vertexData;
+            let dst = page.vertexDataOffs;
+            let src = done * 7;
+            for (let i = 0; i < n; i++) {
+                vertexData[dst + 0] = data[src + 0];
+                vertexData[dst + 1] = data[src + 1];
+                vertexData[dst + 2] = data[src + 2];
+                vertexData[dst + 3] = data[src + 3];
+                vertexData[dst + 4] = data[src + 4];
+                vertexData[dst + 5] = data[src + 5];
+                vertexData[dst + 6] = data[src + 6] + flagsOffset;
+                dst += 7;
+                src += 7;
+                page.index(baseVertex + i);
+            }
+            page.vertexDataOffs = dst;
+            done += n;
+        }
+    }
+
+    /** Editor extension: the size a string will take when drawn with `options.fontSize`. */
+    public measureText(str: string, options: DebugDrawOptions = defaultOptions): { width: number; height: number } {
+        const [fontTexture, fontScale] = this.getFontTexture(options);
+        let width = 0;
+        for (let i = 0; i < str.length; i++) {
+            const charIdx = fontTexture.getCharacterIndex(str.charAt(i));
+            if (charIdx >= 0)
+                width += fontTexture.getCharacterAdvanceX(charIdx) * fontScale;
+        }
+        return { width, height: fontTexture.cellHeight * fontScale };
+    }
+
     public drawRectLineP(p0: ReadonlyVec3, p1: ReadonlyVec3, p2: ReadonlyVec3, p3: ReadonlyVec3, color: Readonly<Color>, options: DebugDrawOptions = defaultOptions): void {
         const page = this.findPage(this.getBehaviorType(true, color.a >= 1.0, options), 4, 8);
 
@@ -706,7 +797,8 @@ export class DebugDraw {
             charCount++;
         });
 
-        const behaviorType = ((options.flags ?? DebugDrawFlags.Default) & DebugDrawFlags.DepthTint) ? BehaviorType.FontDepthTint : BehaviorType.Font;
+        const textFlags = options.flags ?? DebugDrawFlags.Default;
+        const behaviorType = (textFlags & DebugDrawFlags.NoDepthTest) ? BehaviorType.FontAlways : (textFlags & DebugDrawFlags.DepthTint) ? BehaviorType.FontDepthTint : BehaviorType.Font;
         const page = this.findPage(behaviorType, charCount * 4, charCount * 6);
         page.fontTexture = fontTexture;
 

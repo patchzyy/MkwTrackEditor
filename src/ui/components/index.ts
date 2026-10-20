@@ -52,3 +52,4 @@ export {
   type TreeWindow,
 } from './treeModel';
 export { VectorInput, type Vector3Value } from './VectorInput';
+export { ConfirmDialog } from './ConfirmDialog';

@@ -1,0 +1,255 @@
+/* Create mode Build dock (left): checklist + Layers. */
+
+.crBuild .uiPanel {
+  height: 100%;
+}
+
+.crBuildBody {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  /* In a short window the checklist and Layers no longer both fit: the dock scrolls rather than
+     squeezing Layers out of sight. */
+  overflow-y: auto;
+}
+
+.crSectionTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* ---- checklist */
+
+.crChecklist {
+  flex: none;
+  padding: var(--space-4) var(--space-3) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.crChecklistHead {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-2);
+  border: 0;
+  color: inherit;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.crChecklistHead > svg {
+  flex: none;
+  color: var(--text-dim);
+}
+
+.crChecklist.is-collapsed .crChecklistNext {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crChecklistHead strong {
+  flex: none;
+  color: var(--text);
+  font-size: var(--font-size-md);
+}
+
+.crProgress {
+  flex: 1 1 auto;
+  height: 4px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--surface-4);
+}
+
+.crProgress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--success);
+  transition: width var(--dur-base) var(--ease);
+}
+
+.crChecklistNext {
+  margin: var(--space-2) 0 var(--space-3);
+  padding: 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.crChecklistWait {
+  margin: 0;
+  padding: var(--space-3);
+  color: var(--text-dim);
+  font-size: var(--font-size-sm);
+}
+
+.crCheckList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.crCheckItem {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  width: 100%;
+  padding: 7px var(--space-3) 7px var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  color: var(--text-secondary);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+
+.crCheckItem:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.crCheckItem:disabled {
+  cursor: default;
+}
+
+.crCheckIcon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 50%;
+  color: var(--text-dim);
+}
+
+.crCheckItem.is-done .crCheckIcon {
+  border-color: var(--success);
+  color: #04140d;
+  background: var(--success);
+}
+
+.crCheckItem.is-warning .crCheckIcon {
+  border-color: var(--warning-border);
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.crCheckItem.is-error .crCheckIcon {
+  border-color: var(--danger-border);
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.crCheckText {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.crCheckText strong {
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.crCheckText span {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.crCheckItem.is-done .crCheckText strong {
+  color: var(--text-secondary);
+}
+
+.crCheckGo {
+  flex: none;
+  margin-top: 3px;
+  color: var(--text-dim);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.crCheckItem:hover .crCheckGo {
+  opacity: 1;
+}
+
+/* ---- layers */
+
+.crLayers {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  gap: var(--space-2);
+  /* Layers always keep a usable list, whatever the window height. */
+  min-height: 190px;
+  padding: var(--space-3) var(--space-2) 0;
+}
+
+.crLayers .crSectionTitle {
+  padding: 0 var(--space-3);
+}
+
+.crLayersTree {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.crLayerTree {
+  flex: 1 1 auto;
+}
+
+.crBuildFoot {
+  display: flex;
+  flex: none;
+  padding: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.crRenameForm {
+  padding: var(--space-3);
+}
+
+.crRenameForm label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.crRenameForm input {
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  outline: 0;
+  color: var(--text);
+  background: var(--surface-input);
+  font-size: var(--font-size-md);
+}

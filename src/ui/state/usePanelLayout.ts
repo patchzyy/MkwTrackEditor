@@ -7,6 +7,35 @@ export const DOCK_RAIL_WIDTH = 40;
 
 const CONTENT_BROWSER_DEFAULT_HEIGHT = 260;
 const CONTENT_BROWSER_MIN_HEIGHT = 150;
+
+/**
+ * How a mode wants the bottom dock sized. Modes that do not ask get the shared 260 / 150 px
+ * defaults. Each mode remembers its own height, so Create's one-row palette and the content
+ * browser's taller shelf never overwrite each other.
+ */
+export interface BrowserSizing {
+  /** Persistence key for this mode's height. */
+  key: string;
+  defaultHeight: number;
+  minHeight: number;
+  /** Dragging snaps the height to `base + n * pitch` so the dock always shows whole rows. */
+  rowSnap?: { base: number; pitch: number };
+}
+
+const DEFAULT_BROWSER_SIZING: BrowserSizing = {
+  key: 'default',
+  defaultHeight: CONTENT_BROWSER_DEFAULT_HEIGHT,
+  minHeight: CONTENT_BROWSER_MIN_HEIGHT,
+};
+
+/** The nearest allowed height for a requested one (pure, so it can be unit tested). */
+export function snapBrowserHeight(raw: number, sizing: BrowserSizing, maxHeight: number): number {
+  const rowSnap = sizing.rowSnap;
+  if (!rowSnap) return clamp(Math.round(raw), sizing.minHeight, maxHeight);
+  const rows = Math.round((raw - rowSnap.base) / rowSnap.pitch);
+  const maxRows = Math.max(0, Math.floor((maxHeight - rowSnap.base) / rowSnap.pitch));
+  return rowSnap.base + clamp(rows, 0, maxRows) * rowSnap.pitch;
+}
 const WORKSPACE_MIN_HEIGHT = 180;
 // The left dock hosts KMP's outliner (section > group > point, three levels deep) and the
 // camera / model / visual outliners, which carry a filter box plus a row of actions. 272px is
@@ -26,6 +55,8 @@ export type SidebarSide = 'placeAssets' | 'inspector';
 interface PersistedLayout {
   browserOpen: boolean;
   browserHeight: number;
+  /** Heights of modes with their own dock sizing (see `BrowserSizing`), by key. */
+  modeBrowserHeights: Record<string, number>;
   placeAssetsOpen: boolean;
   placeAssetsWidth: number;
   inspectorOpen: boolean;
@@ -35,6 +66,7 @@ interface PersistedLayout {
 const DEFAULT_LAYOUT: PersistedLayout = {
   browserOpen: true,
   browserHeight: CONTENT_BROWSER_DEFAULT_HEIGHT,
+  modeBrowserHeights: {},
   placeAssetsOpen: true,
   placeAssetsWidth: PLACE_ASSETS_DEFAULT_WIDTH,
   inspectorOpen: true,
@@ -43,6 +75,16 @@ const DEFAULT_LAYOUT: PersistedLayout = {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function readHeightMap(value: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (value && typeof value === 'object') {
+    for (const [key, height] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof height === 'number' && Number.isFinite(height)) out[key] = clamp(height, 60, 900);
+    }
+  }
+  return out;
 }
 
 /** Reads the persisted dock layout, ignoring anything malformed or out of range. */
@@ -57,6 +99,7 @@ function readStoredLayout(): PersistedLayout {
       browserHeight: Number.isFinite(parsed.browserHeight)
         ? clamp(Number(parsed.browserHeight), CONTENT_BROWSER_MIN_HEIGHT, 900)
         : DEFAULT_LAYOUT.browserHeight,
+      modeBrowserHeights: readHeightMap(parsed.modeBrowserHeights),
       placeAssetsOpen: typeof parsed.placeAssetsOpen === 'boolean' ? parsed.placeAssetsOpen : DEFAULT_LAYOUT.placeAssetsOpen,
       placeAssetsWidth: Number.isFinite(parsed.placeAssetsWidth)
         ? clamp(Number(parsed.placeAssetsWidth), PLACE_ASSETS_MIN_WIDTH, 720)
@@ -78,14 +121,36 @@ function readStoredLayout(): PersistedLayout {
  * way the user left it. Collapsed docks keep a slim rail instead of disappearing, so
  * collapsing never reflows the viewport contents.
  */
-export function usePanelLayout() {
+export function usePanelLayout(browserSizing: BrowserSizing = DEFAULT_BROWSER_SIZING) {
   const initial = useMemo(readStoredLayout, []);
-  const [browserOpen, setBrowserOpen] = useState(initial.browserOpen);
-  const [browserHeight, setBrowserHeight] = useState(initial.browserHeight);
+  const [browserOpenStored, setBrowserOpen] = useState(initial.browserOpen);
+  /**
+   * True while a playtest borrows the whole window. The docks are drawn closed, but the flags
+   * below (and so what is saved to local storage) are never touched: leaving the playtest simply
+   * stops hiding them, so the layout comes back exactly as it was, on a reload too.
+   */
+  const [docksHidden, setDocksHidden] = useState(false);
+  const browserOpen = browserOpenStored && !docksHidden;
+  const [sharedBrowserHeight, setSharedBrowserHeight] = useState(initial.browserHeight);
+  const [modeBrowserHeights, setModeBrowserHeights] = useState(initial.modeBrowserHeights);
+  const sizingKey = browserSizing.key;
+  const ownsHeight = sizingKey !== DEFAULT_BROWSER_SIZING.key;
+  const browserHeight = ownsHeight
+    ? snapBrowserHeight(modeBrowserHeights[sizingKey] ?? browserSizing.defaultHeight, browserSizing, 900)
+    : sharedBrowserHeight;
+  const sizingRef = useRef(browserSizing);
+  sizingRef.current = browserSizing;
+  const setBrowserHeight = useCallback((height: number) => {
+    const sizing = sizingRef.current;
+    if (sizing.key === DEFAULT_BROWSER_SIZING.key) setSharedBrowserHeight(height);
+    else setModeBrowserHeights((current) => ({ ...current, [sizing.key]: height }));
+  }, []);
   const [browserResizing, setBrowserResizing] = useState(false);
-  const [placeAssetsOpen, setPlaceAssetsOpen] = useState(initial.placeAssetsOpen);
+  const [placeAssetsOpenStored, setPlaceAssetsOpen] = useState(initial.placeAssetsOpen);
+  const placeAssetsOpen = placeAssetsOpenStored && !docksHidden;
   const [placeAssetsWidth, setPlaceAssetsWidth] = useState(initial.placeAssetsWidth);
-  const [inspectorOpen, setInspectorOpen] = useState(initial.inspectorOpen);
+  const [inspectorOpenStored, setInspectorOpen] = useState(initial.inspectorOpen);
+  const inspectorOpen = inspectorOpenStored && !docksHidden;
   const [inspectorWidth, setInspectorWidth] = useState(initial.inspectorWidth);
   const [sidebarResizing, setSidebarResizing] = useState<SidebarSide | null>(null);
 
@@ -99,13 +164,21 @@ export function usePanelLayout() {
   // Persist on every settled change. Cheap enough that debouncing is not worth the code.
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const layout: PersistedLayout = { browserOpen, browserHeight, placeAssetsOpen, placeAssetsWidth, inspectorOpen, inspectorWidth };
+    const layout: PersistedLayout = {
+      browserOpen: browserOpenStored,
+      browserHeight: sharedBrowserHeight,
+      modeBrowserHeights,
+      placeAssetsOpen: placeAssetsOpenStored,
+      placeAssetsWidth,
+      inspectorOpen: inspectorOpenStored,
+      inspectorWidth,
+    };
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
     } catch {
       // Private-mode / quota failures must never break the editor.
     }
-  }, [browserHeight, browserOpen, inspectorOpen, inspectorWidth, placeAssetsOpen, placeAssetsWidth]);
+  }, [sharedBrowserHeight, modeBrowserHeights, browserOpenStored, inspectorOpenStored, inspectorWidth, placeAssetsOpenStored, placeAssetsWidth]);
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
@@ -113,11 +186,12 @@ export function usePanelLayout() {
       const shell = appShellRef.current;
       if (!resize || !shell) return;
       const topBarHeight = topBarRef.current?.getBoundingClientRect().height ?? 44;
+      const sizing = sizingRef.current;
       const maxHeight = Math.max(
-        CONTENT_BROWSER_MIN_HEIGHT,
+        sizing.minHeight,
         Math.floor(shell.getBoundingClientRect().height - topBarHeight - WORKSPACE_MIN_HEIGHT),
       );
-      const nextHeight = clamp(Math.round(resize.startHeight + (resize.startY - event.clientY)), CONTENT_BROWSER_MIN_HEIGHT, maxHeight);
+      const nextHeight = snapBrowserHeight(resize.startHeight + (resize.startY - event.clientY), sizing, maxHeight);
       setBrowserOpen(true);
       setBrowserHeight(nextHeight);
     };
@@ -218,8 +292,8 @@ export function usePanelLayout() {
   /** Double-clicking a drag handle puts the dock back to its default size. */
   const resetBrowserSize = useCallback(() => {
     setBrowserOpen(true);
-    setBrowserHeight(CONTENT_BROWSER_DEFAULT_HEIGHT);
-  }, []);
+    setBrowserHeight(sizingRef.current.defaultHeight);
+  }, [setBrowserHeight]);
 
   const resetSidebarSize = useCallback((side: SidebarSide) => {
     if (side === 'placeAssets') {
@@ -237,6 +311,8 @@ export function usePanelLayout() {
   } as CSSProperties;
 
   return {
+    /** Draws every dock closed (playtest) without changing, or saving, the user's own layout. */
+    setDocksHidden,
     appShellRef,
     shellBodyRef,
     topBarRef,
